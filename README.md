@@ -1,6 +1,6 @@
 # Sliver Dashboard
 
-![Coverage](./coverage_badge.svg)
+![Coverage](https://raw.githubusercontent.com/scalz/sliver_dashboard/main/coverage_badge.svg)
 [![style: very good analysis](https://img.shields.io/badge/style-very_good_analysis-B22C89.svg)](https://pub.dev/packages/very_good_analysis)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
@@ -10,7 +10,7 @@ A high-performance, customizable, and sliver-based grid dashboard for Flutter.
 
 Perfect for analytics dashboards, IoT control panels, project management tools, or any application that requires a draggable and resizable grid layout.
 
-![Sliver Dashboard Demo](https://github.com/scalz/sliver_dashboard/blob/main/img/demo.gif)
+![Sliver Dashboard Demo](https://raw.githubusercontent.com/scalz/sliver_dashboard/main/img/demo.gif)
 
 ## Features
 
