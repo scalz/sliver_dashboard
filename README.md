@@ -549,39 +549,6 @@ if (spotInLastRow != null) {
 }
 ```
 
-### TODO DashboardSliver (Work in progress)
-
-As a sliver. The dashboard can be seamlessly composed with other slivers like `SliverAppBar` and `SliverList`, or even multiple dashboards inside a `CustomScrollView`.
-
-```dart
-CustomScrollView(
-    controller: scrollController,
-    slivers: [
-        const SliverAppBar(title: Text("Mon App")),
-        
-        // Dashboard 1
-        SliverPadding(
-            padding: const EdgeInsets.all(10),
-            sliver: DashboardSliver(
-            controller: controller1,
-            itemBuilder: (ctx, item) => MyWidget(item),
-            ),
-        ),
-    
-        const SliverToBoxAdapter(child: Divider()),
-        
-        // Dashboard 2
-        SliverPadding(
-            padding: const EdgeInsets.all(10),
-            sliver: DashboardSliver(
-                controller: controller2,
-                itemBuilder: (ctx, item) => MyWidget(item),
-            ),
-        ),
-    ],
-)
-```
-
 ## Development & Quality
 
 - **Core Engine (`LayoutEngine`):** > 95% coverage
