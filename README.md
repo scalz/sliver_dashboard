@@ -1,2 +1,605 @@
-# sliver_dashboard
-High-performance, sliver-based draggable and resizable grid engine for Flutter. Supports responsive layouts and collision handling.
+# Sliver Dashboard
+
+![Coverage](./coverage_badge.svg)
+[![style: very good analysis](https://img.shields.io/badge/style-very_good_analysis-B22C89.svg)](https://pub.dev/packages/very_good_analysis)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+
+A high-performance, customizable, and sliver-based grid dashboard for Flutter.
+
+`sliver_dashboard` provides a robust foundation for building dynamic, user-configurable layouts.
+
+Perfect for analytics dashboards, IoT control panels, project management tools, or any application that requires a draggable and resizable grid layout.
+
+![Sliver Dashboard Demo](https://github.com/scalz/sliver_dashboard/blob/main/img/demo.gif)
+
+## Features
+
+- 🚀 **High Performance:** Built on Flutter's `Sliver` protocol with **smart caching**. It only renders visible items and prevents unnecessary rebuilds of children during drag/resize operations.
+- 🎨 **Fully Customizable:** Control the number of columns, aspect ratio, spacing, grid and handles style. Items can be draggable, resizable, and static.
+- ↔️ **Horizontal & Vertical Layouts:** Supports both vertical (default) and horizontal scrolling directions.
+- 💥 **Smart Collision Detection:** Choose your desired behavior:
+    - **Push:** Items push each other out of the way to avoid overlap.
+    - **Push or Shrink:** Items can be shrinked or pushed when resizing a neighbour item. In Shrink mode, if neighbour item has not enough space, then it will be pushed.
+- 🧲 **Compaction:** Choose your desired behavior:
+    - **None:** Free positioning. Items are not compacted.
+    - **Vertical:** Items are compacted to top. 
+    - **Horizontal:** Items are compacted to left.
+- 🗑️ **Built-in Trash:** Easy-to-implement drag-to-delete functionality. Or implement your own using `Dashboard` callbacks.
+- ✨ **Custom Feedback:** Customize the appearance of items while they are being dragged. Use onInteractionStart callback for haptic feedback...
+- 📥 **Drag From Outside:** Drop new items from external sources directly into the grid with auto-scrolling support.
+- 💡 **Guidance:** Optional contextual tooltips/guidance messages.
+- 📱 **Responsive Layouts:** Automatically adapt the number of columns (`slotCount`) based on the screen width using the built-in `breakpoints` property.
+- 💾 **Utilities**: Import/Export, find free cells, get last row, Auto Layout & Bulk Add..
+
+
+## Table of Contents
+
+- [Getting Started](#getting-started)
+- [API Showcase](#api-showcase)
+  - [Controlling Edit Mode](#controlling-edit-mode)
+  - [Adding and Removing Items](#adding-and-removing-items)
+  - [Scroll direction](#scroll-direction)
+  - [Allowing free positioning](#allowing-free-positioning)
+  - [Dragging From Outside](#dragging-from-outside)
+  - [Drag to Delete (Trash Bin)](#drag-to-delete-trash-bin)
+  - [Custom Drag Feedback](#custom-drag-feedback)
+  - [Interaction Callbacks](#interaction-callbacks)
+  - [Haptic Feedback](#interaction-callbacks)
+  - [Guidance Messages](#guidance-messages)
+  - [Configuration & Styles](#configuration--styles)
+  - [Import / Export (Persistence)](#import--export-persistence)
+  - [Responsive Layouts](#responsive-layouts)
+  - [Auto Layout bulk add](#auto-layout-bulk-add)
+  - [Utilities](#utilities)
+- [Unit testing](#unit-testing)
+- [Roadmap](#roadmap)
+  
+
+
+## Getting Started
+
+### 1. Add Dependency
+
+Add `sliver_dashboard` to your `pubspec.yaml`:
+
+```yaml
+dependencies:
+  sliver_dashboard: ^1.0.0 # Replace with the latest version
+```
+
+### 2. Create a Controller
+
+The DashboardController is the brain of your dashboard. It manages the layout and all interactions.
+
+```dart
+import 'package:sliver_dashboard/dashboard.dart';
+
+// Create a controller and define your initial layout.
+final controller = DashboardController(
+  initialSlotCount: 5,
+  initialLayout: [
+    const LayoutItem(id: 'a', x: 0, y: 0, w: 2, h: 2),
+    const LayoutItem(id: 'b', x: 2, y: 1, w: 1, h: 2),
+    const LayoutItem(id: 'c', x: 3, y: 0, w: 2, h: 1, isStatic: true), // A static item
+  ],
+);
+```
+
+### 3. Build the Dashboard Widget
+
+Use the Dashboard widget in your UI, passing it the controller and an itemBuilder.
+
+```dart
+import 'package:flutter/material.dart';
+import 'package:sliver_dashboard/dashboard.dart';
+
+class MyDashboardPage extends StatelessWidget {
+  const MyDashboardPage({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('My Dashboard')),
+      body: Dashboard(
+        controller: controller,
+        itemBuilder: (context, item) {
+          // Build your custom widget for each item.
+          // Ideally, look up your business data using item.id
+          return Card(
+            elevation: 4,
+            child: Center(
+              child: Text(
+                'Item ${item.id}',
+                style: const TextStyle(fontSize: 20),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+```
+
+## API Showcase
+
+### Controlling Edit Mode
+
+Toggle edit mode to enable/disable dragging and resizing.
+
+```dart
+// In your UI, for example in an AppBar action:
+IconButton(
+    icon: const Icon(Icons.edit),
+    onPressed: () {
+        // This will automatically trigger a rebuild where needed.
+        controller.toggleEditing();
+    },
+)
+```
+
+### Adding and Removing Items
+
+Programmatically add or remove items from the dashboard.
+
+```dart
+void addNewItem() {
+  final newItem = LayoutItem(
+    id: DateTime.now().millisecondsSinceEpoch.toString(),
+    x: 0,
+    y: 0, // The engine will find the best spot
+    w: 1,
+    h: 1,
+  );
+  controller.addItem(newItem);
+}
+
+void deleteItem(String id) {
+  controller.removeItem(id);
+}
+```
+
+### Scroll direction
+
+Simply change the scrollDirection. The dashboard and all interactions will adapt.
+
+```dart
+Dashboard(
+    scrollDirection: Axis.horizontal,
+    controller: controller,
+    itemBuilder: (context, item) { /* ... */ },
+)
+```
+
+### Allowing free positioning
+
+By default, items push each other. You can disable this to allow free positioning items without compaction (without overlap).
+
+```dart
+// To allow free positioning:
+controller.setCompactionType(CompactType.none);
+
+// To re-enable push behavior:
+controller.setCompactionType(CompactType.vertical);
+```
+
+### Dragging From Outside
+
+You can drag items from another widget into the Dashboard. The Dashboard handles auto-scrolling and placement.
+
+```dart
+// 1. The Source
+Draggable<MyData>(
+  data: MyData(title: 'New Item'),
+  child: Text('Drag Me'),
+  feedback: Card(child: Text('Dragging...')),
+)
+
+// 2. The Target (Dashboard)
+Dashboard<MyData>(
+  controller: controller,
+  // Called when the item is dropped.
+  // 'item' contains the target coordinates (x, y) calculated by the dashboard.
+  onDrop: (MyData data, LayoutItem item) {
+    final newId = 'new_${DateTime.now().millisecondsSinceEpoch}';
+    
+    // Add your data
+    myData[newId] = data;
+    
+    // Return the new ID to the controller to finalize the placement
+    return newId;
+  },
+  // Optional: Customize the placeholder shown while hovering
+  externalPlaceholderBuilder: (context, item) {
+    return Container(color: Colors.blue.withOpacity(0.2));
+  },
+)
+```
+
+### Drag to Delete (Trash Bin)
+
+The package handles the logic for detecting when an item is dropped over a specific area.
+It offers two ways to implement a "trash bin" to delete items by dragging them.
+
+#### Option 1: Built-in (Recommended)
+
+The easiest way. The package handles the display, the hit-testing (detecting if the item is over the trash), the arming delay (to prevent accidental deletions), and the removal logic.
+
+```dart
+Dashboard(
+  controller: controller,
+  // 1. Define how the trash bin looks. 
+  // 'isHovered': item is over the trash.
+  // 'isArmed': item has been hovered long enough to trigger deletion.
+  itemBuilder: (context, item) { /* ... */ },
+  // 1. Define how the trash bin looks. 
+  // It receives 'isHovered' to let you change the style when an item is over it.
+  trashBuilder: (context, isHovered) {
+      return Align(
+        alignment: Alignment.bottomCenter,
+        child: Container(
+          margin: const EdgeInsets.all(20),
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+          color: isArmed ? Colors.red : (isHovered ? Colors.orange : Colors.grey),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Icon(isArmed ? Icons.delete_forever : Icons.delete, color: Colors.white),
+      ),
+    );
+  },
+  // Use predefined position for the trash
+  // trashLayout: TrashLayout.bottomCenter,
+  // Or use custom
+  trashLayout: TrashLayout(
+    visible: TrashLayout.bottomCenter.visible.copyWith(bottom: 80),
+    hidden: TrashLayout.bottomCenter.hidden,
+  ),
+  // 2. Optional: Configure the delay before the trash becomes "armed".
+  // Defaults to 800ms.
+  trashHoverDelay: const Duration(seconds: 1),
+  // 3. Optional: Confirm deletion before it happens.
+  // Return true to delete, false to cancel.
+  onWillDelete: (item) async {
+    return await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Confirm Delete'),
+        content: Text('Are you sure you want to delete item ${item.id}?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    ) ?? false;
+  },
+  // 4. Handle the deletion event.
+  // The item is AUTOMATICALLY removed from the controller before this callback.
+  onItemDeleted: (LayoutItem item) {
+    // You just need to remove your corresponding business data.
+    myData.remove(item.id);
+  },
+)
+```
+
+#### Option 2: Custom Implementation (Advanced)
+
+If you need complex logic, animations, or if your trash bin is located outside the Dashboard widget tree, you can implement it from scratch using the interaction callbacks.
+
+```dart
+// 1. Define state and a GlobalKey to locate your custom trash widget
+final GlobalKey _trashKey = GlobalKey();
+bool _isHoveringTrash = false;
+
+// 2. In your build method
+Stack(
+  children: [
+    Dashboard(
+      controller: controller,
+      // Detect drag updates to perform manual hit-testing
+      onItemDragUpdate: (item, globalPosition) {
+        final renderBox = _trashKey.currentContext?.findRenderObject() as RenderBox?;
+        if (renderBox == null) return;
+        
+        // Check if the drag position is inside your custom widget
+        final localPos = renderBox.globalToLocal(globalPosition);
+        final isHovering = renderBox.hitTest(BoxHitTestResult(), position: localPos);
+        
+        if (_isHoveringTrash != isHovering) {
+          setState(() => _isHoveringTrash = isHovering);
+        }
+      },
+      // Handle the drop
+      onItemDragEnd: (item) {
+        if (_isHoveringTrash) {
+          // Manually remove the item
+          controller.removeItem(item.id);
+          myData.remove(item.id);
+        }
+        setState(() => _isHoveringTrash = false);
+      },
+      // ...
+    ),
+
+    // 3. Your Custom Trash Widget (can be anywhere)
+    Positioned(
+      bottom: 20,
+      left: 0,  
+      right: 0,
+      child: Container(
+        key: _trashKey, // Important: Attach the key!
+        color: _isHoveringTrash ? Colors.red : Colors.blue,
+        child: const Icon(Icons.delete),
+      ),
+    ),
+  ],
+)
+```
+
+### Custom Drag Feedback
+
+Customize the look of the item while it is being dragged (e.g., add transparency or elevation).
+
+```dart
+Dashboard(
+  controller: controller,
+  itemFeedbackBuilder: (context, item, child) {
+    return Opacity(
+      opacity: 0.7,
+      child: Material(
+        elevation: 10,
+        color: Colors.transparent,
+        child: child, // The original widget
+      ),
+    );
+  },
+  // ...
+)
+```
+
+### Interaction Callbacks
+
+Hook into the lifecycle of drag and resize events.
+
+```dart
+Dashboard(
+  controller: controller,
+  onItemDragStart: (item) => print('Started dragging ${item.id}'),
+  onItemDragUpdate: (item, offset) => print('Dragging at $offset'), // Useful for custom hit-testing
+  onItemDragEnd: (item) => print('Stopped dragging ${item.id}'),
+  onItemResizeStart: (item) => print('Started resizing ${item.id}'),
+  onItemResizeEnd: (item) => print('Stopped resizing ${item.id}'),
+)
+```
+
+### Haptic Feedback
+
+On mobile platforms, you may want to use haptic feedback for drag and resize start events to provide a more tactile feel.
+For this you can set and use a specific callback provided by the controller:
+
+```dart
+final controller = DashboardController(
+  // This can be used to trigger haptic feedback, logging, or other custom
+  // actions. The specific [LayoutItem] being interacted with is provided.
+  onInteractionStart: (item) {
+    // Do something
+  },
+  ...
+);
+```
+
+### Guidance Messages
+
+Display contextual help messages to users during interactions. This feature is enabled by providing a `DashboardGuidance` object. If the `guidance` parameter is `null`, the feature is disabled.
+You can also use DashboardGuidance.byDefault for default English guidance, or set your custom translated guidance as below:
+
+```dart
+Dashboard(
+  controller: controller,
+  // Provide a DashboardGuidance object to enable the feature.
+  // You can override default messages for translation or customization.
+  guidance: const DashboardGuidance(
+    move: 'Click/Drag to move',
+    tapToResize: 'Tap and hold to change size',
+  ),
+  itemBuilder: (context, item) { /* ... */ },
+)
+```
+
+### Configuration & Styles
+
+```dart
+Dashboard(
+  controller: controller,
+  scrollDirection: Axis.vertical, // or Axis.horizontal
+  resizeBehavior: ResizeBehavior.push, // or ResizeBehavior.shrink
+  gridStyle: const GridStyle(
+    lineColor: Colors.black12,
+    lineWidth: 1,
+    handleColor: Colors.blue, // Color of resize handles
+  ),
+  // Define the aspect ratio of a single slot (1x1)
+  slotAspectRatio: 1.0,
+  // Spacing between items
+  mainAxisSpacing: 10,
+  crossAxisSpacing: 10,
+  // Padding around the grid
+  padding: const EdgeInsets.all(10),
+)
+```
+
+### Import / Export (Persistence)
+
+Easily save and restore layouts using JSON-compatible Maps. Can be used for persisting the user's dashboard configuration to a database or shared preferences.
+**Note:** importLayout automatically validates the data, corrects bounds if the slot count has changed, and resolves overlaps.
+
+```dart
+// 1. Export to JSON-ready list of maps
+final List<Map<String, dynamic>> layoutData = controller.exportLayout();
+// Save to your DB...
+await myDatabase.save('dashboard_layout', layoutData);
+
+// 2. Import from JSON
+final List<dynamic> loadedData = await myDatabase.get('dashboard_layout');
+controller.importLayout(loadedData);
+```
+
+### Responsive Layouts
+
+You can automatically adapt the number of columns (`slotCount`) based on the available width by passing a `breakpoints` map directly to the `Dashboard`.
+
+```dart
+Dashboard(
+  controller: controller,
+  // Define breakpoints:
+  // Mobile: 0-599px -> 4 cols
+  // Tablet: 600-1199px -> 8 cols
+  // Desktop: 1200px+ -> 12 cols
+  breakpoints: {
+    0: 4,
+    600: 8,
+    1200: 12
+  },
+  // ...
+)
+```
+
+
+### Auto Layout bulk add
+
+Generate a layout automatically or add items without specifying positions (set x/y to -1).
+
+```dart
+// Create fresh new page with auto placement
+final items = placeNewItems(
+  existingLayout: [],
+  newItems: ['A', 'B', 'C'].map((id) => LayoutItem(
+    id: id,
+    x: -1, y: -1, // auto-placement
+    w: 2, h: 2,
+  )).toList(),
+  cols: 8,
+);
+controller.layout.value = items;
+
+// You can add items at a specific position, or let the controller place them automatically by using `-1`.
+
+// Add item at a specific position (x: 2, y: 0)
+controller.addItem(
+  LayoutItem(id: 'fixed', x: 2, y: 0, w: 2, h: 2),
+);
+
+// Add item automatically at the bottom (Auto-placement)
+// The controller will find the next available row.
+controller.addItem(
+  LayoutItem(id: 'new_item', x: -1, y: -1, w: 2, h: 2),
+);
+
+// Bulk add (Efficient)
+// Mixes fixed and auto-placed items.
+controller.addItems([
+  LayoutItem(id: 'a', x: -1, y: -1, w: 2, h: 2), // Auto
+  LayoutItem(id: 'b', x: 0, y: 0, w: 2, h: 2),   // Fixed
+]);
+```
+
+### Utilities
+
+The controller provides useful getters to help you interact with the layout programmatically.
+
+```dart
+// Gets the Y-coordinate of the bottom-most edge of the layout.
+// Useful for adding an item below all existing content.
+int nextRow = controller.lastRowNumber;
+
+// Find all empty rectangular spaces in the grid.
+List<LayoutItem> emptySpaces = controller.availableFreeAreas;
+
+// Find all contiguous horizontal free spaces in each row.
+List<LayoutItem> horizontalSpaces = controller.availableHorizontalFreeAreas;
+
+// Find the first empty space in the grid, starting top-left.
+LayoutItem? firstSpace = controller.firstFreeArea;
+
+// Find the first empty space in the last row that contains items.
+LayoutItem? spotInLastRow = controller.lastRowFreeArea;
+
+// Check if an item of a certain size can fit anywhere on the board.
+final itemToCheck = const LayoutItem(id: '_', x: 0, y: 0, w: 2, h: 2);
+if (controller.canItemFit(itemToCheck)) {
+  print("A 2x2 item can fit!");
+}
+
+// You can then use this information to add a new item precisely.
+if (spotInLastRow != null) {
+  final newItem = LayoutItem(
+    id: 'new',
+    x: spotInLastRow.x,
+    y: spotInLastRow.y,
+    w: spotInLastRow.w,
+    h: 1, // Only take 1 row of the available space
+  );
+  controller.addItem(newItem);
+}
+```
+
+### TODO DashboardSliver (Work in progress)
+
+As a sliver. The dashboard can be seamlessly composed with other slivers like `SliverAppBar` and `SliverList`, or even multiple dashboards inside a `CustomScrollView`.
+
+```dart
+CustomScrollView(
+    controller: scrollController,
+    slivers: [
+        const SliverAppBar(title: Text("Mon App")),
+        
+        // Dashboard 1
+        SliverPadding(
+            padding: const EdgeInsets.all(10),
+            sliver: DashboardSliver(
+            controller: controller1,
+            itemBuilder: (ctx, item) => MyWidget(item),
+            ),
+        ),
+    
+        const SliverToBoxAdapter(child: Divider()),
+        
+        // Dashboard 2
+        SliverPadding(
+            padding: const EdgeInsets.all(10),
+            sliver: DashboardSliver(
+                controller: controller2,
+                itemBuilder: (ctx, item) => MyWidget(item),
+            ),
+        ),
+    ],
+)
+```
+
+## Development & Quality
+
+- **Core Engine (`LayoutEngine`):** > 95% coverage
+- **Controller (`DashboardController`):** > 95% coverage
+- **Global Package:** > 90% coverage
+
+To run the tests locally:
+
+```bash
+flutter test --coverage
+# If you have lcov installed:
+genhtml coverage/lcov.info -o coverage/html
+```
+
+
+## Roadmap
+- **DashboardSliver:** Native integration to compose seamlessly with `SliverAppBar`, `SliverList`, etc.
+- **Animations:** Improved transitions when items are reordered or resized.
+- **Accessibility:** Enhanced screen reader support and keyboard navigation.
+
+Contributions are welcome! Feel free to submit a pull request.

@@ -1,0 +1,10 @@
+include: package:very_good_analysis/analysis_options.yaml
+analyzer:
+  errors:
+    lines_longer_than_80_chars: ignore
+    avoid_redundant_argument_values: ignore
+    use_setters_to_change_properties: ignore
+    specify_nonobvious_property_types: ignore
+
+# Additional information about this file can be found at
+# https://dart.dev/guides/language/analysis-options
