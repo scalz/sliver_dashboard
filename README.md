@@ -72,7 +72,7 @@ dependencies:
 The DashboardController is the brain of your dashboard. It manages the layout and all interactions.
 
 ```dart
-import 'package:sliver_dashboard/dashboard.dart';
+import 'package:sliver_dashboard/sliver_dashboard.dart';
 
 // Create a controller and define your initial layout.
 final controller = DashboardController(
@@ -91,7 +91,7 @@ Use the Dashboard widget in your UI, passing it the controller and an itemBuilde
 
 ```dart
 import 'package:flutter/material.dart';
-import 'package:sliver_dashboard/dashboard.dart';
+import 'package:sliver_dashboard/sliver_dashboard.dart';
 
 class MyDashboardPage extends StatelessWidget {
   const MyDashboardPage({super.key});
