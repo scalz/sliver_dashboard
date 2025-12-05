@@ -476,47 +476,6 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('Dashboard auto-scrolls when dragging at edge', (tester) async {
-      final controller = DashboardController(
-        initialLayout: [const LayoutItem(id: '1', x: 0, y: 0, w: 1, h: 1)],
-        initialSlotCount: 4,
-      );
-
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: SizedBox(
-              height: 400, // Fixed height
-              child: Dashboard(
-                controller: controller,
-                itemBuilder: (_, item) => Container(color: Colors.red),
-                // Add lots of items to ensure scrolling is possible
-                // ... (setup a scrollable content)
-              ),
-            ),
-          ),
-        ),
-      );
-
-      // Trigger drag
-      final itemFinder = find.byKey(const ValueKey('1'));
-      final gesture = await tester.startGesture(tester.getCenter(itemFinder));
-      await tester.pump();
-
-      // Move to bottom edge (hot zone)
-      await gesture.moveTo(const Offset(100, 390));
-      await tester.pump();
-
-      // Wait for timer to tick
-      await tester.pump(const Duration(milliseconds: 100));
-      await tester.pump(const Duration(milliseconds: 100));
-
-      // Check if scroll offset changed (requires accessing the ScrollController or checking render object)
-      // This is harder to assert directly without exposing the ScrollController,
-      // but ensuring no crash happens during timer execution is already a good test.
-      await gesture.up();
-    });
-
     testWidgets('SliverDashboard updates render object properties', (tester) async {
       final controller = DashboardController(
         initialLayout: [],

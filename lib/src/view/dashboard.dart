@@ -214,6 +214,10 @@ class _DashboardState<T extends Object> extends State<Dashboard<T>> {
   Offset _operationStartPosition = Offset.zero;
   ResizeHandle? _activeResizeHandle;
 
+  // State variables for scroll-aware resizing
+  double _initialScrollOffset = 0;
+  Offset? _lastGlobalPosition;
+
   Timer? _trashTimer;
   // Internal reactive state for trash
   final _isHoveringTrash = Beacon.writable(false);
@@ -339,15 +343,20 @@ class _DashboardState<T extends Object> extends State<Dashboard<T>> {
             },
             // Called continuously while dragging over the target
             onMove: (DragTargetDetails<T> details) {
+              // Update last known position for external drag
+              _lastGlobalPosition = details.offset;
+
               _updatePlaceholderPosition(details.offset);
               _handleAutoScroll(details.offset); // Trigger auto-scroll
             },
             onLeave: (data) {
+              _lastGlobalPosition = null;
               widget.controller.hidePlaceholder();
               _stopScrollTimer(); // Stop auto-scroll when leaving
             },
             onAcceptWithDetails: (DragTargetDetails<T> details) async {
               _stopScrollTimer();
+              _lastGlobalPosition = null;
               final placeholder = widget.controller.currentDragPlaceholder;
 
               if (placeholder != null) {
@@ -616,6 +625,11 @@ class _DashboardState<T extends Object> extends State<Dashboard<T>> {
     final scrollRenderBox = _scrollKey.currentContext?.findRenderObject() as RenderBox?;
     if (scrollRenderBox == null) return;
 
+    // Capture initial scroll offset
+    if (_scrollController.hasClients) {
+      _initialScrollOffset = _scrollController.offset;
+    }
+
     final localPosition = scrollRenderBox.globalToLocal(position);
 
     final result = BoxHitTestResult();
@@ -767,6 +781,11 @@ class _DashboardState<T extends Object> extends State<Dashboard<T>> {
           _scrollController.position.maxScrollExtent,
         ),
       );
+
+      // Force update of drag/resize logic during auto-scroll
+      if (_lastGlobalPosition != null) {
+        _performUpdate(_lastGlobalPosition!);
+      }
     });
   }
 
@@ -779,16 +798,39 @@ class _DashboardState<T extends Object> extends State<Dashboard<T>> {
   void _onPointerMove(Offset position) {
     if (_activeItemId == null || _activeItemInitialLayout == null) return;
 
-    _handleAutoScroll(position);
+    // Update last known position for the timer
+    _lastGlobalPosition = position;
 
+    _handleAutoScroll(position);
+    _performUpdate(position);
+  }
+
+  void _performUpdate(Offset position) {
     final scrollContext = _scrollKey.currentContext;
     if (scrollContext == null || !scrollContext.mounted) return;
 
     final slotSizes = _calculateSlotSize();
     if (slotSizes.slotWidth <= 0 || slotSizes.slotHeight <= 0) return;
 
+    // Case: External Drag (No active internal item)
+    if (_activeItemId == null) {
+      _updatePlaceholderPosition(position);
+      return;
+    }
+
+    // Case: Internal Resize
     if (_activeResizeHandle != null) {
-      final totalDragDelta = position - _operationStartPosition;
+      // Calculate delta adjusted for scroll
+      final currentScrollOffset = _scrollController.hasClients ? _scrollController.offset : 0.0;
+      final scrollDelta = currentScrollOffset - _initialScrollOffset;
+
+      // The delta passed to the controller must account for the fact that the
+      // content has moved under the pointer.
+      final effectiveScrollDelta =
+          widget.scrollDirection == Axis.vertical ? Offset(0, scrollDelta) : Offset(scrollDelta, 0);
+
+      final totalDragDelta = (position - _operationStartPosition) + effectiveScrollDelta;
+
       widget.controller.onResizeUpdate(
         _activeItemId!,
         _activeResizeHandle!,
@@ -798,7 +840,9 @@ class _DashboardState<T extends Object> extends State<Dashboard<T>> {
         crossAxisSpacing: widget.crossAxisSpacing,
         mainAxisSpacing: widget.mainAxisSpacing,
       );
-    } else {
+    }
+    // Case: Internal Drag
+    else {
       // Convert global cursor position to a scroll-aware content position.
       final scrollRenderBox = scrollContext.findRenderObject();
       if (scrollRenderBox is! RenderBox) return;
@@ -932,6 +976,7 @@ class _DashboardState<T extends Object> extends State<Dashboard<T>> {
     _operationStartPosition = Offset.zero;
     _activeResizeHandle = null;
     _dragGrabOffset = null;
+    _lastGlobalPosition = null; // Reset last position
 
     // Reset trash state
     _isHoveringTrash.value = false;
