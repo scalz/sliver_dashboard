@@ -1,3 +1,8 @@
+## 0.1.5
+
+* Fix secondary collisions where multiple items pushed by the resizing element would temporarily overlap at the same Y coordinate.
+* Add test to verify that multiple items pushed by a resize operation stack correctly instead of merging.
+
 ## 0.1.4
 
 * Fix resize behavior during auto-scroll

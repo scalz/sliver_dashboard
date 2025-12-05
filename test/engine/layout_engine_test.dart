@@ -273,6 +273,47 @@ void main() {
       expect(resultB.y, 2);
       expect(resultB.x, 2); // X stays same
     });
+
+    test('resizeItem resolves secondary overlaps between pushed items', () {
+      // Scenario: Item A is resizing. It pushes B and C.
+      // Without the fix, B and C are both pushed to the same Y coordinate and overlap.
+      // Setup:
+      // A [0,0] 2x2
+      // B [2,0] 2x1 (Right of A)
+      // C [2,1] 2x1 (Below B, Right of A)
+      final layout = [
+        const LayoutItem(id: 'A', x: 0, y: 0, w: 2, h: 2),
+        const LayoutItem(id: 'B', x: 2, y: 0, w: 2, h: 1),
+        const LayoutItem(id: 'C', x: 2, y: 1, w: 2, h: 1),
+      ];
+
+      // Action: Resize A to width 3. It now overlaps both B and C at x=2.
+      final resizedA = layout[0].copyWith(w: 3);
+
+      final result = resizeItem(
+        layout,
+        resizedA,
+        behavior: ResizeBehavior.push,
+        cols: 10,
+        preventCollision: true,
+      );
+
+      final b = result.firstWhere((i) => i.id == 'B');
+      final c = result.firstWhere((i) => i.id == 'C');
+
+      // Verification:
+      // 1. A should be resized
+      expect(result.firstWhere((i) => i.id == 'A').w, 3);
+
+      // 2. B and C should be pushed down (y >= 2)
+      expect(b.y, greaterThanOrEqualTo(2));
+      expect(c.y, greaterThanOrEqualTo(2));
+
+      // 3. CRITICAL: B and C should NOT overlap each other
+      // Without the fix, both end up at y=2.
+      expect(collides(b, c), isFalse, reason: 'Pushed items B and C should not overlap');
+      expect(b.y != c.y, isTrue);
+    });
   });
 
   group('Horizontal Compaction', () {

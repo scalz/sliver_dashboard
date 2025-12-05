@@ -449,7 +449,18 @@ Layout resizeItem(
       return layout; // Revert to original layout
     }
 
-    return pushedLayout;
+    // -------------------------------------------------------------------------
+    // Resolve secondary overlaps.
+    // When expanding, multiple items might be pushed to the exact same Y coordinate
+    // (e.g. items 1 and 13 both pushed to y=2).
+    // We run a compaction pass to force them to stack properly.
+    // -------------------------------------------------------------------------
+    return compact(
+      pushedLayout,
+      CompactType.vertical,
+      cols,
+      allowOverlap: false,
+    );
   }
 
   return moveElement(
