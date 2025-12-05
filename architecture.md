@@ -119,6 +119,11 @@ The biggest challenge in a grid layout is preventing the reconstruction of child
     - Implements `RenderSliverMultiBoxAdaptor`.
     - **Virtualization:** Only lays out and paints items that are currently visible in the viewport.
     - **Layout:** Calculates the exact pixel position of each item based on its grid coordinates (`x`, `y`) and the slot size.
+    - **Layout Protocol (Critical):** The `performLayout` method manages a **doubly linked list** of children. It strictly follows this sequence to ensure stability:
+        1.  **Metrics:** Calculate slot sizes.
+        2.  **Garbage Collection:** Remove invisible children *before* insertion to clear invalid references.
+        3.  **Initial Child:** Find and insert the first visible item.
+        4.  **Fill Trailing/Leading:** Insert remaining visible items outwards from the initial child.
 
 - **DashboardItemWrapper:**
     - Adds visual decorations needed for editing, such as the Resize Handles.
@@ -128,6 +133,25 @@ The biggest challenge in a grid layout is preventing the reconstruction of child
 - **GuidanceInteractor:**
     - Handles hover (desktop) and tap/long-press (mobile) events to display contextual guidance messages.
     - Manages gesture conflicts on mobile to ensure drag operations are not blocked.
+
+## 4. Core Technical Patterns
+
+### Coordinate Separation
+The system strictly separates logical grid coordinates from visual pixel coordinates to maintain precision.
+- **Engine:** Operates strictly in **Grid Coordinates** (`int x, y`). It never sees pixel values.
+- **View:** Handles translation to **Pixel Coordinates** (`double offset`) using `SlotMetrics`.
+
+### Transactional Drag State (Anti-Drift)
+To prevent floating-point rounding errors and position "drift" during drag operations:
+- The controller stores the `originalLayoutOnStart` when a gesture begins.
+- Every `onDragUpdate` calculates the new position relative to this **initial state**, not the previous frame's state.
+- The `dragOffset` beacon handles the smooth visual translation (pixels) separately from the logical grid updates (integers).
+
+### Feedback Layering
+When an item is being dragged:
+1.  **Grid:** The actual item in the grid acts as a placeholder (or is hidden/transparent).
+2.  **Overlay:** A visual copy of the item is rendered in a dedicated `Stack` above the `CustomScrollView`.
+3.  **Synchronization:** The overlay follows the finger/mouse, while the grid placeholder snaps to the nearest valid slot.
 
 #### Data Flow during a Drag Operation
 

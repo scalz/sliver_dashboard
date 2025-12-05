@@ -30,12 +30,13 @@ The project follows a strict separation of concerns. **Do not violate layer boun
 
 ### C. View Layer (`lib/src/view/`)
 - **Slivers:** The core grid uses `RenderSliverDashboard`.
+  - **DANGER ZONE:** `performLayout` implements the `RenderSliverMultiBoxAdaptor` protocol. It relies on a fragile linked-list state (`firstChild`, `childAfter`).
+  - **Rule:** Do not refactor the **order of operations** (GC -> Initial -> Trailing -> Leading). Changing this order will break the child manager and cause crashes.
 - **Caching Strategy ("The Firewall"):**
-    - `DashboardItem` caches its child based on `contentSignature`.
-    - It uses a `contentSignature` to prevent rebuilds when position (`x`, `y`) changes.
-    - **Rule:** Never remove `RepaintBoundary` or the signature check in `didUpdateWidget`.
-- **Responsive:** Logic is handled internally in `Dashboard` using `LayoutBuilder` + `addPostFrameCallback` (Skip Frame strategy). Do not use external wrappers.
-
+  - `DashboardItem` caches its child based on `contentSignature`.
+  - **Rule:** Never remove `RepaintBoundary` or the signature check in `didUpdateWidget`.
+- **Responsive:** Logic is handled internally in `Dashboard` using `LayoutBuilder` + `addPostFrameCallback` (Skip Frame strategy).
+- 
 ## 4. Coding Standards
 
 ### Dart & Flutter
@@ -63,11 +64,20 @@ The project follows a strict separation of concerns. **Do not violate layer boun
     - **View:** Handles translation to **Pixel Coordinates** (`double offset`) using `SlotMetrics`.
     - **Rule:** Never pass pixel values to the `LayoutEngine`.
 - **Feedback Layering:** The item being dragged is rendered in a dedicated overlay (`Stack`) above the `CustomScrollView`. The actual item in the grid acts as a placeholder (or is hidden) during the operation.
-
+- **Sliver Protocol Compliance:** In `RenderSliverDashboard`, the `performLayout` method manages a **doubly linked list** of children. You must strictly adhere to this sequence to avoid corrupting the chain (e.g., `assert after != null` errors):
+  1.  **Metrics:** Calculate slot sizes and visible range first.
+  2.  **Garbage Collection (GC):** Remove children outside the viewport (`collectGarbage`) **BEFORE** trying to insert new ones. This clears invalid references.
+  3.  **Initial Child:** If the list is empty, find the first visible index and add it.
+  4.  **Fill Trailing:** Insert children downwards/rightwards starting from `lastChild`.
+  5.  **Fill Leading:** Insert children upwards/leftwards starting from `firstChild`.
+  - **Rule:** Never attempt to access or insert after a child that has been garbage collected.
 
 ## 5. Testing Guidelines
 
-- **Coverage:** Maintain > 90% code coverage.
+- **Coverage:** 
+  - **Global Package:** Maintain > 90% code coverage.
+  - **Core Engine (`LayoutEngine`):** Maintain > 95% code coverage.
+  - **Controller (`DashboardController`):** Maintain > 95% code coverage.
 - **Engine Tests:** Test all edge cases (collisions, compaction, resizing) using pure unit tests.
 - **Widget Tests:** Use `flutter_test` to verify interactions (drag, drop, resize).
 - **Performance:** Ensure no regression in rebuild counts (use the `BuildCounter` pattern in tests).

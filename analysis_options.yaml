@@ -6,5 +6,8 @@ analyzer:
     use_setters_to_change_properties: ignore
     specify_nonobvious_property_types: ignore
 
+formatter:
+  page_width: 100
+
 # Additional information about this file can be found at
 # https://dart.dev/guides/language/analysis-options

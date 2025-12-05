@@ -51,7 +51,7 @@ Perfect for analytics dashboards, IoT control panels, project management tools, 
   - [Responsive Layouts](#responsive-layouts)
   - [Auto Layout bulk add](#auto-layout-bulk-add)
   - [Utilities](#utilities)
-- [Unit testing](#unit-testing)
+- [Contributing](#contributing)
 - [Roadmap](#roadmap)
   
 
@@ -549,7 +549,16 @@ if (spotInLastRow != null) {
 }
 ```
 
-## Development & Quality
+## Contributing
+
+Contributions are welcome! If you want to contribute code, please check the following resources to understand the project structure and rules:
+
+- **[Architecture Guide](https://github.com/scalz/sliver_dashboard/blob/main/architecture.md):** A deep dive into the State, Logic, and View layers, including the caching strategy and Sliver protocol.
+- **[AI Context & Rules](https://github.com/scalz/sliver_dashboard/blob/main/AGENTS.md):** Coding standards, architectural constraints, and specific patterns (useful for AI assistants).
+
+### Quality Standards
+
+This package tries to maintain strict code quality standards with high test coverage:
 
 - **Core Engine (`LayoutEngine`):** > 95% coverage
 - **Controller (`DashboardController`):** > 95% coverage
@@ -563,10 +572,7 @@ flutter test --coverage
 genhtml coverage/lcov.info -o coverage/html
 ```
 
-
 ## Roadmap
 - **DashboardSliver:** Native integration to compose seamlessly with `SliverAppBar`, `SliverList`, etc.
 - **Animations:** Improved transitions when items are reordered or resized.
 - **Accessibility:** Enhanced screen reader support and keyboard navigation.
-
-Contributions are welcome! Feel free to submit a pull request.
