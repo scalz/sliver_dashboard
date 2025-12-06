@@ -77,11 +77,11 @@ void main() {
 
       // 2. Start Dragging Item 'A'
       // Tip: use the controller directly to simulate dragging
-      controller.onDragStart('A');
+      controller.internal.onDragStart('A');
       await tester.pump();
 
       // 3. Move Item 'A' (Update)
-      controller.onDragUpdate(
+      controller.internal.onDragUpdate(
         'A',
         const Offset(10, 10),
         slotWidth: 100,
@@ -92,7 +92,7 @@ void main() {
       await tester.pump();
 
       // 4. Move Item 'A' to change grid (Collision/Push)
-      controller.onDragUpdate(
+      controller.internal.onDragUpdate(
         'A',
         const Offset(250, 0), // Move to the right (over B)
         slotWidth: 100, slotHeight: 100,
@@ -142,7 +142,7 @@ void main() {
       buildCounts.clear();
 
       // Action: Show Placeholder (simulates external drag hover)
-      controller.showPlaceholder(x: 3, y: 3, w: 2, h: 2);
+      controller.internal.showPlaceholder(x: 3, y: 3, w: 2, h: 2);
       await tester.pump();
 
       // Verification
@@ -150,11 +150,10 @@ void main() {
       expect(buildCounts['B'] ?? 0, 0, reason: 'Item B should not rebuild on placeholder show');
 
       // Action: Move Placeholder (simulates external drag move)
-      controller.showPlaceholder(x: 4, y: 4, w: 2, h: 2);
+      controller.internal.showPlaceholder(x: 4, y: 4, w: 2, h: 2);
       await tester.pump();
 
       expect(buildCounts['A'] ?? 0, 0, reason: 'Item A should not rebuild on placeholder move');
     });
-
   });
 }

@@ -25,6 +25,7 @@ The project follows a strict separation of concerns. **Do not violate layer boun
 - **Functional Style:** Prefer declarative patterns, but avoid external FP libraries (like fpdart) to keep dependencies low.
 
 ### B. State Layer (`lib/src/controller/`)
+- **Interface Separation:** `DashboardController` is a public abstract interface. The logic resides in `DashboardControllerImpl` (hidden).
 - **Reactive:** Use `Beacon` to expose state.
 - **Orchestrator:** The controller calls Engine methods and updates Beacons. It contains NO layout calculation logic.
 
@@ -36,7 +37,7 @@ The project follows a strict separation of concerns. **Do not violate layer boun
   - `DashboardItem` caches its child based on `contentSignature`.
   - **Rule:** Never remove `RepaintBoundary` or the signature check in `didUpdateWidget`.
 - **Responsive:** Logic is handled internally in `Dashboard` using `LayoutBuilder` + `addPostFrameCallback` (Skip Frame strategy).
-- 
+
 ## 4. Coding Standards
 
 ### Dart & Flutter
@@ -45,9 +46,9 @@ The project follows a strict separation of concerns. **Do not violate layer boun
 - **Trailing Commas:** Always use trailing commas for better diffs.
 - **Arrow Syntax:** Use `=>` for simple functions and getters.
 - **Widgets:**
-    - Prefer composition over inheritance.
-    - Use `const` constructors wherever possible.
-    - Use `SizedBox.shrink()` instead of `Container()` for empty widgets.
+  - Prefer composition over inheritance.
+  - Use `const` constructors wherever possible.
+  - Use `SizedBox.shrink()` instead of `Container()` for empty widgets.
 - **Types:** Explicit types for public APIs. Avoid `dynamic`.
 
 ### Models & State
@@ -60,9 +61,9 @@ The project follows a strict separation of concerns. **Do not violate layer boun
 - **Mobile Gestures:** Be careful with `GestureDetector` conflicts. On mobile, `GuidanceInteractor` must not block `onLongPress` (let the parent Dashboard handle the drag start).
 - **Transactional Drag State:** During interactions (drag/resize), layout calculations are always performed relative to `originalLayoutOnStart`, **not** the previous frame's layout. This prevents floating-point rounding errors and position "drift".
 - **Coordinate Separation:**
-    - **Engine:** Operates strictly in **Grid Coordinates** (`int x, y`).
-    - **View:** Handles translation to **Pixel Coordinates** (`double offset`) using `SlotMetrics`.
-    - **Rule:** Never pass pixel values to the `LayoutEngine`.
+  - **Engine:** Operates strictly in **Grid Coordinates** (`int x, y`).
+  - **View:** Handles translation to **Pixel Coordinates** (`double offset`) using `SlotMetrics`.
+  - **Rule:** Never pass pixel values to the `LayoutEngine`.
 - **Feedback Layering:** The item being dragged is rendered in a dedicated overlay (`Stack`) above the `CustomScrollView`. The actual item in the grid acts as a placeholder (or is hidden) during the operation.
 - **Sliver Protocol Compliance:** In `RenderSliverDashboard`, the `performLayout` method manages a **doubly linked list** of children. You must strictly adhere to this sequence to avoid corrupting the chain (e.g., `assert after != null` errors):
   1.  **Metrics:** Calculate slot sizes and visible range first.
@@ -74,7 +75,7 @@ The project follows a strict separation of concerns. **Do not violate layer boun
 
 ## 5. Testing Guidelines
 
-- **Coverage:** 
+- **Coverage:**
   - **Global Package:** Maintain > 90% code coverage.
   - **Core Engine (`LayoutEngine`):** Maintain > 95% code coverage.
   - **Controller (`DashboardController`):** Maintain > 95% code coverage.
@@ -94,13 +95,14 @@ The project follows a strict separation of concerns. **Do not violate layer boun
   ///
   /// The [x] and [y] parameters represent grid coordinates.
   int calculate(int x, int y) { ... }
-  
+  ```
+
 ## 7. Common Tasks & Snippets
 
 ### Adding a new feature to the Controller
-1. Create a new `Beacon` in `DashboardController`.
-2. Expose a public method to modify it.
-3. Watch the beacon in the View layer.
+1. Define the member/method in `DashboardController` (Interface).
+2. Implement the logic/Beacon in `DashboardControllerImpl`.
+3. **Rule:** Ensure `DashboardControllerImpl` is NOT exported in `dashboard.dart`.
 
 ### Modifying the Layout Algorithm
 1. Edit `lib/src/engine/layout_engine.dart`.
@@ -111,7 +113,7 @@ Do not create a new widget. Use the `breakpoints` map in the `Dashboard` constru
 ```dart
 Dashboard(
   breakpoints: { 0: 4, 600: 8 },
-  // ...
+// ...
 )
 ```
 

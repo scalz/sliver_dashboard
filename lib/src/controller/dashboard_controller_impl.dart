@@ -3,6 +3,7 @@ import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:sliver_dashboard/src/controller/dashboard_controller_interface.dart';
 import 'package:sliver_dashboard/src/controller/utility.dart';
 import 'package:sliver_dashboard/src/engine/layout_engine.dart' as engine;
 import 'package:sliver_dashboard/src/models/layout_item.dart';
@@ -10,34 +11,16 @@ import 'package:sliver_dashboard/src/view/guidance/dashboard_guidance.dart';
 import 'package:sliver_dashboard/src/view/resize_handle.dart';
 import 'package:state_beacon/state_beacon.dart';
 
-/// A callback that is fired when a user starts a drag or resize interaction
-/// on a dashboard item.
-///
-/// The [LayoutItem] that is being interacted with is passed as an argument.
-typedef DashboardItemInteractionCallback = void Function(LayoutItem item);
-
-/// A callback that is fired when the layout of the dashboard changes.
-///
-/// The new layout, represented as a list of [LayoutItem]s, is passed as an argument.
-typedef DashboardLayoutChangeListener = void Function(List<LayoutItem> items);
-/*
-typedef DashboardItemAddedListener = void Function(LayoutItem item, List<LayoutItem> fullLayout);
-typedef DashboardItemRemovedListener = void Function(String item, List<LayoutItem> fullLayout);
-typedef DashboardItemMovedListener = void Function(LayoutItem item, List<LayoutItem> fullLayout);
-typedef DashboardItemResizedListener = void Function(LayoutItem item, List<LayoutItem> fullLayout);
- */
-
+/// The concrete implementation of [DashboardController].
 /// Manages the state and interactions of the dashboard.
 ///
 /// This controller is the single source of truth for the dashboard's layout.
 /// It uses `state_beacon` for reactive state management, ensuring that UI
 /// updates are efficient and predictable.
-class DashboardController {
-  /// Creates a new [DashboardController].
-  ///
-  /// - [initialLayout]: The starting layout for the dashboard.
-  /// - [initialSlotCount]: The number of columns in the grid.
-  DashboardController({
+@internal
+class DashboardControllerImpl implements DashboardController {
+  /// Creates a new [DashboardControllerImpl].
+  DashboardControllerImpl({
     List<LayoutItem> initialLayout = const [],
     int initialSlotCount = 8,
     this.onInteractionStart,
@@ -47,54 +30,56 @@ class DashboardController {
     slotCount.value = initialSlotCount;
   }
 
-  /// An optional callback that is fired when a user starts a drag or resize
-  /// gesture on an item.
-  ///
-  /// This can be used to trigger haptic feedback, logging, or other custom
-  /// actions. The specific [LayoutItem] being interacted with is provided.
+  @override
   final DashboardItemInteractionCallback? onInteractionStart;
 
-  /// The set of messages to display for user guidance. Can be null if disabled.
-  DashboardGuidance? guidance;
-
-  // --- PUBLIC API ---
-  /// Default Handles color style
-  final handleColor = Beacon.writable<Color?>(null);
-
-  /// The reactive state of the dashboard layout.
-  ///
-  /// Widgets can listen to this beacon to rebuild whenever the layout changes.
-  final layout = Beacon.writable<List<LayoutItem>>([]);
-
-  /// A callback that is fired whenever the layout changes.
+  @override
   final DashboardLayoutChangeListener? onLayoutChanged;
 
-  /// The scroll direction of the dashboard.
+  @override
+  DashboardGuidance? guidance;
+
+  // --- BEACONS (Public via Interface) ---
+
+  @override
+  final handleColor = Beacon.writable<Color?>(null);
+
+  @override
+  final layout = Beacon.writable<List<LayoutItem>>([]);
+
+  @override
   final scrollDirection = Beacon.writable(Axis.vertical);
 
-  /// The reactive state for the dashboard's edit mode.
+  @override
   final isEditing = Beacon.writable<bool>(false);
 
-  /// The number of columns in the dashboard grid.
-  ///
-  /// Changing this value will trigger a relayout.
+  @override
   final slotCount = Beacon.writable<int>(8);
 
-  /// A reactive property to control collision behavior.
-  /// If `true` (default), items will push each other on drag/resize.
-  /// If `false`, items will be allowed to overlap.
+  @override
   final preventCollision = Beacon.writable<bool>(true);
 
-  /// This controls "push" direction.
-  /// If null, no compaction for precise placement.
+  @override
   final compactionType = Beacon.writable<engine.CompactType>(engine.CompactType.vertical);
+
+  @override
+  final resizeHandleSide = Beacon.writable<double>(20);
+
+  @override
+  final resizeBehavior = Beacon.writable<engine.ResizeBehavior>(
+    engine.ResizeBehavior.push,
+  );
+
+  @override
+  late final ReadableBeacon<String?> activeItemId = Beacon.derived(() => activeItem.value?.id);
+
+  // --- INTERNAL STATE (Hidden from Interface) ---
 
   /// Temporary placeholder item in the layout.
   @visibleForTesting
   final placeholder = Beacon.writable<LayoutItem?>(null);
 
-  /// Returns the current placeholder item.
-  /// Used by the view to determine the drop position.
+  @override
   LayoutItem? get currentDragPlaceholder => placeholder.value;
 
   /// A reactive property that holds the pixel offset for the actively dragged item,
@@ -104,24 +89,193 @@ class DashboardController {
   /// Indicates if the current interaction is a resize operation.
   final isResizing = Beacon.writable(false);
 
-  /// The size of the touch target for resizing handles.
-  final resizeHandleSide = Beacon.writable<double>(20);
+  /// Internal state to track the item being dragged or resized.
+  @visibleForTesting
+  final activeItem = Beacon.writable<LayoutItem?>(null);
 
-  /// Sets the resize handle side length.
+  /// Internal state to store the layout at the beginning of an operation.
+  @visibleForTesting
+  final originalLayoutOnStart = Beacon.writable<List<LayoutItem>>([]);
+
+  // --- PUBLIC METHODS IMPLEMENTATION ---
+
+  @override
   void setResizeHandleSide(double side) {
     resizeHandleSide.value = side;
   }
 
-  /// Sets the default color of handles.
+  @override
   void setHandleColor(Color? color) {
     handleColor.value = color;
   }
+
+  @override
+  void setResizeBehavior(engine.ResizeBehavior behavior) {
+    resizeBehavior.value = behavior;
+  }
+
+  @override
+  void toggleEditing() {
+    isEditing.value = !isEditing.value;
+  }
+
+  @override
+  void setEditMode(bool editing) {
+    isEditing.value = editing;
+  }
+
+  @override
+  void setSlotCount(int newSlotCount) {
+    if (slotCount.value == newSlotCount) return;
+
+    slotCount.value = newSlotCount;
+    // Correct bounds and re-compact for the new column count
+    final corrected = engine.correctBounds(layout.value, newSlotCount);
+    layout.value = engine.compact(corrected, engine.CompactType.vertical, newSlotCount);
+  }
+
+  @override
+  void setPreventCollision(bool prevent) {
+    preventCollision.value = prevent;
+  }
+
+  @override
+  void setCompactionType(engine.CompactType type) {
+    compactionType.value = type;
+  }
+
+  @override
+  void addItems(
+    List<LayoutItem> items, {
+    engine.CompactType? overrideCompactType,
+  }) {
+    final currentLayout = List<LayoutItem>.from(layout.value);
+
+    // We calculate the starting Y for auto-placed items to be at the bottom
+    var autoPlacementY = engine.bottom(currentLayout);
+    var autoPlacementX = 0;
+
+    for (final item in items) {
+      if (item.x == -1 || item.y == -1) {
+        // Auto-placement logic: try to fit in the current "bottom" row
+        if (autoPlacementX + item.w > slotCount.value) {
+          autoPlacementX = 0;
+          autoPlacementY++; // Move to next row (height 1 unit for safety)
+        }
+
+        currentLayout.add(
+          item.copyWith(
+            x: autoPlacementX,
+            y: autoPlacementY,
+          ),
+        );
+
+        // Advance cursor
+        autoPlacementX += item.w;
+      } else {
+        // Fixed position
+        currentLayout.add(item);
+      }
+    }
+
+    // Run compaction.
+    // This will pull the auto-placed items (which are at the bottom)
+    // up into any available empty spaces above them.
+    final newLayout = engine.compact(
+      currentLayout,
+      overrideCompactType ?? compactionType.value,
+      slotCount.value,
+    );
+
+    layout.value = newLayout;
+    onLayoutChanged?.call(layout.value);
+  }
+
+  @override
+  void addItem(LayoutItem newItem, {engine.CompactType? overrideCompactType}) {
+    if (newItem.x == -1 || newItem.y == -1) {
+      addItems([newItem], overrideCompactType: overrideCompactType);
+      return;
+    }
+    final currentLayout = layout.value;
+    final newLayout = engine.compact(
+      [...currentLayout, newItem],
+      overrideCompactType ?? compactionType.value,
+      slotCount.value,
+    );
+    layout.value = newLayout;
+
+    onLayoutChanged?.call(layout.value);
+  }
+
+  @override
+  void removeItem(String itemId, {engine.CompactType? overrideCompactType}) {
+    final currentLayout = layout.value;
+    final newLayout = engine.compact(
+      currentLayout.where((item) => item.id != itemId).toList(),
+      overrideCompactType ?? compactionType.value,
+      slotCount.value,
+    );
+    layout.value = newLayout;
+    onLayoutChanged?.call(layout.value);
+  }
+
+  @override
+  List<Map<String, dynamic>> exportLayout() {
+    return layout.value.map((item) => item.toMap()).toList();
+  }
+
+  @override
+  void importLayout(List<dynamic> jsonLayout) {
+    final newLayout = jsonLayout.map((e) {
+      if (e is Map<String, dynamic>) {
+        return LayoutItem.fromMap(e);
+      }
+      if (e is Map) {
+        return LayoutItem.fromMap(Map<String, dynamic>.from(e));
+      }
+      throw const FormatException('Invalid layout format: element is not a Map');
+    }).toList();
+
+    // Validate bounds and compact to ensure integrity
+    final corrected = engine.correctBounds(newLayout, slotCount.value);
+
+    // Apply compaction if configured, otherwise just resolve overlaps
+    layout.value = engine.compact(
+      corrected,
+      compactionType.value,
+      slotCount.value,
+      allowOverlap: false, // Ensure imported layout is clean
+    );
+
+    onLayoutChanged?.call(layout.value);
+  }
+
+  @override
+  void dispose() {
+    layout.dispose();
+    isEditing.dispose();
+    slotCount.dispose();
+    preventCollision.dispose();
+    compactionType.dispose();
+    activeItem.dispose();
+    placeholder.dispose();
+    resizeBehavior.dispose();
+    dragOffset.dispose();
+    originalLayoutOnStart.dispose();
+    handleColor.dispose();
+    scrollDirection.dispose();
+    isResizing.dispose();
+    resizeHandleSide.dispose();
+    activeItemId.dispose();
+  }
+
+  // --- INTERNAL METHODS (Not in Interface) ---
 
   /// Sets the pixel offset for the actively dragged item.
   ///
   /// This is used internally by the `Dashboard` widget to create a smooth
   /// drag-and-drop effect.
-  @internal
   void setDragOffset(Offset offset) {
     dragOffset.value = offset;
   }
@@ -139,8 +293,12 @@ class DashboardController {
   ///
   /// This is used during a drag-over operation from an external source.
   /// It avoids running a full compaction for better performance.
-  @internal
-  void showPlaceholder({required int x, required int y, required int w, required int h}) {
+  void showPlaceholder({
+    required int x,
+    required int y,
+    required int w,
+    required int h,
+  }) {
     final current = placeholder.value;
     if (current != null && current.x == x && current.y == y && current.w == w && current.h == h) {
       return;
@@ -200,7 +358,6 @@ class DashboardController {
   }
 
   /// Removes the temporary placeholder item from the layout.
-  @internal
   void hidePlaceholder() {
     if (placeholder.value == null) return;
     // Revert to the clean layout from before the drag-over started.
@@ -210,7 +367,6 @@ class DashboardController {
   }
 
   /// Finalizes a drop from an external source.
-  @internal
   void onDropExternal({
     required String newId,
   }) {
@@ -252,143 +408,7 @@ class DashboardController {
     onLayoutChanged?.call(layout.value);
   }
 
-  /// Adds multiple items to the dashboard.
-  ///
-  /// If an item has x = -1 or y = -1, it will be automatically placed
-  /// at the bottom of the layout.
-  ///
-  /// [overrideCompactType] allows you to force a specific compaction strategy
-  /// for this operation (e.g. force vertical compaction even if the controller is in 'none').
-  void addItems(
-    List<LayoutItem> items, {
-    engine.CompactType? overrideCompactType,
-  }) {
-    final currentLayout = List<LayoutItem>.from(layout.value);
-
-    // We calculate the starting Y for auto-placed items to be at the bottom
-    var autoPlacementY = engine.bottom(currentLayout);
-    var autoPlacementX = 0;
-
-    for (final item in items) {
-      if (item.x == -1 || item.y == -1) {
-        // Auto-placement logic: try to fit in the current "bottom" row
-        if (autoPlacementX + item.w > slotCount.value) {
-          autoPlacementX = 0;
-          autoPlacementY++; // Move to next row (height 1 unit for safety)
-        }
-
-        currentLayout.add(
-          item.copyWith(
-            x: autoPlacementX,
-            y: autoPlacementY,
-          ),
-        );
-
-        // Advance cursor
-        autoPlacementX += item.w;
-      } else {
-        // Fixed position
-        currentLayout.add(item);
-      }
-    }
-
-    // Run compaction.
-    // This will pull the auto-placed items (which are at the bottom)
-    // up into any available empty spaces above them.
-    final newLayout = engine.compact(
-      currentLayout,
-      overrideCompactType ?? compactionType.value,
-      slotCount.value,
-    );
-
-    layout.value = newLayout;
-    onLayoutChanged?.call(layout.value);
-  }
-
-  /// Adds a new item to the dashboard.
-  ///
-  /// The new item is added, and the layout is re-compacted to find a suitable
-  /// position for it.
-  void addItem(LayoutItem newItem, {engine.CompactType? overrideCompactType}) {
-    if (newItem.x == -1 || newItem.y == -1) {
-      addItems([newItem], overrideCompactType: overrideCompactType);
-      return;
-    }
-    final currentLayout = layout.value;
-    final newLayout = engine.compact(
-      [...currentLayout, newItem],
-      overrideCompactType ?? compactionType.value,
-      slotCount.value,
-    );
-    layout.value = newLayout;
-
-    onLayoutChanged?.call(layout.value);
-  }
-
-  /// Removes an item from the dashboard by its ID.
-  ///
-  /// After removal, the layout is re-compacted to fill any empty space.
-  void removeItem(String itemId, {engine.CompactType? overrideCompactType}) {
-    final currentLayout = layout.value;
-    final newLayout = engine.compact(
-      currentLayout.where((item) => item.id != itemId).toList(),
-      overrideCompactType ?? compactionType.value,
-      slotCount.value,
-    );
-    layout.value = newLayout;
-    onLayoutChanged?.call(layout.value);
-  }
-
-  /// Toggles the edit mode for the dashboard.
-  void toggleEditing() {
-    isEditing.value = !isEditing.value;
-  }
-
-  /// Sets the edit mode for the dashboard.
-  // ignore: avoid_positional_boolean_parameters
-  void setEditMode(bool editing) {
-    isEditing.value = editing;
-  }
-
-  /// Sets the number of columns for the grid and triggers a relayout.
-  void setSlotCount(int newSlotCount) {
-    if (slotCount.value == newSlotCount) return;
-
-    slotCount.value = newSlotCount;
-    // Correct bounds and re-compact for the new column count
-    final corrected = engine.correctBounds(layout.value, newSlotCount);
-    layout.value = engine.compact(corrected, engine.CompactType.vertical, newSlotCount);
-  }
-
-  /// Sets the collision behavior for the dashboard.
-  // ignore: avoid_positional_boolean_parameters
-  void setPreventCollision(bool prevent) {
-    preventCollision.value = prevent;
-  }
-
-  /// Sets the compaction behavior for the dashboard.
-  void setCompactionType(engine.CompactType type) {
-    compactionType.value = type;
-  }
-
-  // --- DRAG AND RESIZE LOGIC ---
-
-  /// A readable beacon that exposes the ID of the currently active
-  /// (dragged or resized) item.
-  ///
-  /// Returns `null` if no item is active.
-  late final ReadableBeacon<String?> activeItemId = Beacon.derived(() => activeItem.value?.id);
-
-  /// Internal state to track the item being dragged or resized.
-  @visibleForTesting
-  final activeItem = Beacon.writable<LayoutItem?>(null);
-
-  /// Internal state to store the layout at the beginning of an operation.
-  @visibleForTesting
-  final originalLayoutOnStart = Beacon.writable<List<LayoutItem>>([]);
-
   /// Call when a drag gesture starts on a dashboard item.
-  @internal
   void onDragStart(String itemId) {
     final item = layout.value.firstWhere((i) => i.id == itemId);
     if (item.isStatic) return;
@@ -398,7 +418,6 @@ class DashboardController {
   }
 
   /// Call continuously while a drag gesture is updated.
-  @internal
   void onDragUpdate(
     String itemId,
     Offset contentPosition, {
@@ -449,7 +468,6 @@ class DashboardController {
   }
 
   /// Call when a drag gesture ends.
-  @internal
   void onDragEnd(String itemId) {
     if (activeItem.value == null) return;
 
@@ -472,19 +490,7 @@ class DashboardController {
     dragOffset.value = Offset.zero;
   }
 
-  /// A reactive property to control resize behavior.
-  final WritableBeacon<engine.ResizeBehavior> resizeBehavior =
-      Beacon.writable<engine.ResizeBehavior>(
-    engine.ResizeBehavior.push,
-  );
-
-  /// Sets the resize behavior for the dashboard.
-  void setResizeBehavior(engine.ResizeBehavior behavior) {
-    resizeBehavior.value = behavior;
-  }
-
   /// Call when a resize gesture starts on a dashboard item.
-  @internal
   void onResizeStart(String itemId) {
     final item = layout.value.firstWhere((i) => i.id == itemId);
     if (item.isStatic || item.isResizable == false) return;
@@ -494,7 +500,6 @@ class DashboardController {
   }
 
   /// Call continuously while a resize gesture is updated.
-  @internal
   void onResizeUpdate(
     String itemId,
     ResizeHandle handle,
@@ -586,7 +591,6 @@ class DashboardController {
   }
 
   /// Call when a resize gesture ends.
-  @internal
   void onResizeEnd(String itemId) {
     if (activeItem.value == null) return;
 
@@ -607,58 +611,5 @@ class DashboardController {
     activeItem.value = null;
     originalLayoutOnStart.value = [];
     dragOffset.value = Offset.zero;
-  }
-
-  /// Exports the current layout state to a list of maps (JSON-ready).
-  List<Map<String, dynamic>> exportLayout() {
-    return layout.value.map((item) => item.toMap()).toList();
-  }
-
-  /// Imports a layout from a list of maps.
-  ///
-  /// This replaces the current layout.
-  /// [jsonLayout] is the list of maps (e.g. from JSON decode).
-  void importLayout(List<dynamic> jsonLayout) {
-    final newLayout = jsonLayout.map((e) {
-      if (e is Map<String, dynamic>) {
-        return LayoutItem.fromMap(e);
-      }
-      if (e is Map) {
-        return LayoutItem.fromMap(Map<String, dynamic>.from(e));
-      }
-      throw const FormatException('Invalid layout format: element is not a Map');
-    }).toList();
-
-    // Validate bounds and compact to ensure integrity
-    final corrected = engine.correctBounds(newLayout, slotCount.value);
-
-    // Apply compaction if configured, otherwise just resolve overlaps
-    layout.value = engine.compact(
-      corrected,
-      compactionType.value,
-      slotCount.value,
-      allowOverlap: false, // Ensure imported layout is clean
-    );
-
-    onLayoutChanged?.call(layout.value);
-  }
-
-  /// Disposes all the beacons to prevent memory leaks.
-  void dispose() {
-    layout.dispose();
-    isEditing.dispose();
-    slotCount.dispose();
-    preventCollision.dispose();
-    compactionType.dispose();
-    activeItem.dispose();
-    placeholder.dispose();
-    resizeBehavior.dispose();
-    dragOffset.dispose();
-    originalLayoutOnStart.dispose();
-    handleColor.dispose();
-    scrollDirection.dispose();
-    isResizing.dispose();
-    resizeHandleSide.dispose();
-    activeItemId.dispose();
   }
 }

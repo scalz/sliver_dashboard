@@ -33,7 +33,8 @@ graph TD
     end
 
     subgraph State Layer
-        H[DashboardController] --> I["Beacons (State)"];
+        H[DashboardController - Interface] --> H2[DashboardControllerImpl]
+        H2 --> I["Beacons (State)"];
     end
 
     subgraph Logic Layer
@@ -42,14 +43,15 @@ graph TD
 
     A -- "User Gestures (Drag/Resize)" --> H;
     A -- "onItemDeleted" --> H;
-    H -- Updates State --> I;
+    H2 -- Updates State --> I;
     I -- Notifies --> A;
-    H -- Calls Pure Functions --> J;
-    J -- Returns New Layout --> H;
+    H2 -- Calls Pure Functions --> J;
+    J -- Returns New Layout --> H2;
     C -- Reads State --> I;
 
     style A fill:#cde4ff,color:#000000
     style H fill:#d5e8d4,color:#000000
+    style H2 fill:#d5e8d4,color:#000000
     style J fill:#ffe6cc,color:#000000
     style E fill:#f8cecc,color:#000000
     style T fill:#ffcccc,color:#000000
@@ -58,11 +60,12 @@ graph TD
 
 ### 1. The State Layer (DashboardController)
 
-- **Location:** `lib/src/controller/dashboard_controller.dart`
+- **Location:** `lib/src/controller/`
 
 - **Responsibility:** To be the single source of truth for the dashboard's state and to expose a clean, public API.
 
 - **Implementation:**
+    - **Interface Separation:** The public `DashboardController` is an abstract interface. The logic resides in `DashboardControllerImpl`. This keeps the IDE autocomplete clean for users by hiding internal methods (like `onDragUpdate`).
     - Uses `state_beacon` to manage state (layout, edit mode, slot count, etc.).
     - **Drag Offset:** Manages a `dragOffset` beacon to provide smooth visual feedback during drags without committing every pixel change to the logical grid layout.
     - **Orchestrator:** It acts as a bridge. When an action occurs (e.g., `onDragUpdate`), it:

@@ -1,7 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
-import 'package:sliver_dashboard/src/controller/dashboard_controller.dart';
+import 'package:sliver_dashboard/src/controller/dashboard_controller_interface.dart';
 import 'package:sliver_dashboard/src/controller/dashboard_controller_provider.dart';
 import 'package:sliver_dashboard/src/models/layout_item.dart';
 import 'package:sliver_dashboard/src/view/guidance/dashboard_guidance.dart';

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:sliver_dashboard/src/controller/dashboard_controller.dart';
+import 'package:sliver_dashboard/src/controller/dashboard_controller_impl.dart';
+import 'package:sliver_dashboard/src/controller/dashboard_controller_interface.dart';
 import 'package:sliver_dashboard/src/models/layout_item.dart';
 import 'package:sliver_dashboard/src/view/dashboard_item_widget.dart';
 import 'package:sliver_dashboard/src/view/dashboard_typedefs.dart';
@@ -75,7 +76,7 @@ class DashboardFeedbackItem extends StatelessWidget {
   Widget build(BuildContext context) {
     // Watch the drag offset specifically here.
     // This limits rebuilds to just this widget during drag.
-    final dragOffset = controller.dragOffset.watch(context);
+    final dragOffset = (controller as DashboardControllerImpl).dragOffset.watch(context);
 
     return AnimatedBuilder(
       animation: scrollController,

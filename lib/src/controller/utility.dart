@@ -1,6 +1,6 @@
 import 'dart:math';
 
-import 'package:sliver_dashboard/src/controller/dashboard_controller.dart';
+import 'package:sliver_dashboard/src/controller/dashboard_controller_interface.dart';
 import 'package:sliver_dashboard/src/engine/layout_engine.dart' as engine;
 import 'package:sliver_dashboard/src/models/layout_item.dart';
 

@@ -1,4 +1,4 @@
-export 'src/controller/dashboard_controller.dart';
+export 'src/controller/dashboard_controller_interface.dart';
 export 'src/controller/dashboard_controller_provider.dart';
 export 'src/engine/layout_engine.dart';
 export 'src/models/layout_item.dart';

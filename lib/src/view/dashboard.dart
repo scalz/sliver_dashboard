@@ -4,7 +4,8 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
-import 'package:sliver_dashboard/src/controller/dashboard_controller.dart';
+import 'package:sliver_dashboard/src/controller/dashboard_controller_impl.dart';
+import 'package:sliver_dashboard/src/controller/dashboard_controller_interface.dart';
 import 'package:sliver_dashboard/src/controller/dashboard_controller_provider.dart';
 import 'package:sliver_dashboard/src/controller/layout_metrics.dart';
 import 'package:sliver_dashboard/src/controller/utility.dart';
@@ -19,6 +20,16 @@ import 'package:sliver_dashboard/src/view/guidance/dashboard_guidance.dart';
 import 'package:sliver_dashboard/src/view/resize_handle.dart';
 import 'package:sliver_dashboard/src/view/sliver_dashboard.dart';
 import 'package:state_beacon/state_beacon.dart';
+
+/// Provides access to the internal implementation of [DashboardController].
+///
+/// This extension is intended for internal use within the package (e.g., inside
+/// [Dashboard] or [SliverDashboard]) to access logic and state that are hidden
+/// from the public API (such as `onDragUpdate`, `dragOffset`, etc.).
+extension ControllerInternalAccess on DashboardController {
+  /// Casts this controller to [DashboardControllerImpl] to access internal members.
+  DashboardControllerImpl get internal => this as DashboardControllerImpl;
+}
 
 /// The main dashboard widget.
 ///
@@ -257,7 +268,7 @@ class _DashboardState<T extends Object> extends State<Dashboard<T>> {
 
     // Pass the initial resize behavior to the controller
     widget.controller.setResizeBehavior(widget.resizeBehavior);
-    widget.controller.setScrollDirection(widget.scrollDirection);
+    widget.controller.internal.setScrollDirection(widget.scrollDirection);
     widget.controller.setHandleColor(widget.gridStyle.handleColor);
     widget.controller.setResizeHandleSide(widget.resizeHandleSide);
     widget.controller.guidance = widget.guidance;
@@ -290,7 +301,7 @@ class _DashboardState<T extends Object> extends State<Dashboard<T>> {
       widget.controller.setResizeBehavior(widget.resizeBehavior);
     }
     if (widget.scrollDirection != oldWidget.scrollDirection) {
-      widget.controller.setScrollDirection(widget.scrollDirection);
+      widget.controller.internal.setScrollDirection(widget.scrollDirection);
     }
     if (widget.guidance != oldWidget.guidance) {
       widget.controller.guidance = widget.guidance;
@@ -351,7 +362,7 @@ class _DashboardState<T extends Object> extends State<Dashboard<T>> {
             },
             onLeave: (data) {
               _lastGlobalPosition = null;
-              widget.controller.hidePlaceholder();
+              widget.controller.internal.hidePlaceholder();
               _stopScrollTimer(); // Stop auto-scroll when leaving
             },
             onAcceptWithDetails: (DragTargetDetails<T> details) async {
@@ -364,14 +375,14 @@ class _DashboardState<T extends Object> extends State<Dashboard<T>> {
                 // We just need to provide the data and layoutItem from the drop.
                 final newId = await widget.onDrop?.call(details.data, placeholder);
                 if (newId != null) {
-                  widget.controller.onDropExternal(newId: newId);
+                  widget.controller.internal.onDropExternal(newId: newId);
                 } else {
                   // If user doesn't provide an ID, just hide the placeholder
-                  widget.controller.hidePlaceholder();
+                  widget.controller.internal.hidePlaceholder();
                 }
               } else {
                 // rare : if no placeholder, cancel
-                widget.controller.hidePlaceholder();
+                widget.controller.internal.hidePlaceholder();
               }
             },
             builder: (context, candidateData, rejectedData) {
@@ -504,7 +515,7 @@ class _DashboardState<T extends Object> extends State<Dashboard<T>> {
                       builder: (context) {
                         // Only show trash when dragging an item (and not resizing)
                         final activeItemId = widget.controller.activeItemId.watch(context);
-                        final isResizing = widget.controller.isResizing.watch(context);
+                        final isResizing = widget.controller.internal.isResizing.watch(context);
                         final showTrash = activeItemId != null && !isResizing;
 
                         final layout = widget.trashLayout;
@@ -570,7 +581,7 @@ class _DashboardState<T extends Object> extends State<Dashboard<T>> {
     final localPosition = scrollBox.globalToLocal(globalPosition);
     final gridCoords = _pixelToGrid(localPosition);
 
-    widget.controller.showPlaceholder(
+    widget.controller.internal.showPlaceholder(
       x: gridCoords.x,
       y: gridCoords.y,
       w: widget.placeholderWidth,
@@ -710,10 +721,10 @@ class _DashboardState<T extends Object> extends State<Dashboard<T>> {
       // Trigger Callbacks
       if (handle != null) {
         widget.onItemResizeStart?.call(foundItem);
-        widget.controller.onResizeStart(foundItem.id);
+        widget.controller.internal.onResizeStart(foundItem.id);
       } else {
         widget.onItemDragStart?.call(foundItem);
-        widget.controller.onDragStart(foundItem.id);
+        widget.controller.internal.onDragStart(foundItem.id);
       }
     }
   }
@@ -831,7 +842,7 @@ class _DashboardState<T extends Object> extends State<Dashboard<T>> {
 
       final totalDragDelta = (position - _operationStartPosition) + effectiveScrollDelta;
 
-      widget.controller.onResizeUpdate(
+      widget.controller.internal.onResizeUpdate(
         _activeItemId!,
         _activeResizeHandle!,
         totalDragDelta,
@@ -859,7 +870,7 @@ class _DashboardState<T extends Object> extends State<Dashboard<T>> {
       }
 
       // Let the controller handle all drag update logic.
-      widget.controller.onDragUpdate(
+      widget.controller.internal.onDragUpdate(
         _activeItemId!,
         contentPosition,
         slotWidth: slotSizes.slotWidth,
@@ -936,7 +947,7 @@ class _DashboardState<T extends Object> extends State<Dashboard<T>> {
     }
 
     if (_activeResizeHandle != null) {
-      widget.controller.onResizeEnd(_activeItemId!);
+      widget.controller.internal.onResizeEnd(_activeItemId!);
       widget.onItemResizeEnd?.call(currentItem);
     } else {
       // --- TRASH DROP LOGIC ---
@@ -955,13 +966,13 @@ class _DashboardState<T extends Object> extends State<Dashboard<T>> {
           // Ensure controller state is cleaned up even after deletion
           // We call onDragEnd with the deleted ID. The controller will handle the cleanup
           // of activeItem and originalLayout, even if the item is no longer in the layout list.
-          widget.controller.onDragEnd(currentItem.id);
+          widget.controller.internal.onDragEnd(currentItem.id);
         } else {
           // Cancel : end dragging which will release the item on the dashboard.
-          widget.controller.onDragEnd(currentItem.id);
+          widget.controller.internal.onDragEnd(currentItem.id);
         }
       } else {
-        widget.controller.onDragEnd(_activeItemId!);
+        widget.controller.internal.onDragEnd(_activeItemId!);
       }
       widget.onItemDragEnd?.call(currentItem);
     }
@@ -984,7 +995,7 @@ class _DashboardState<T extends Object> extends State<Dashboard<T>> {
     _trashTimer?.cancel();
 
     // Also reset the visual offset
-    widget.controller.setDragOffset(Offset.zero);
+    widget.controller.internal.setDragOffset(Offset.zero);
   }
 
   Widget _buildGridBackground(BoxConstraints constraints, LayoutItem? activeItem) {

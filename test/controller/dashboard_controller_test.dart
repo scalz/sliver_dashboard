@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart' show Axis;
 import 'package:flutter_test/flutter_test.dart';
-import 'package:sliver_dashboard/src/controller/dashboard_controller.dart';
+import 'package:sliver_dashboard/src/controller/dashboard_controller_impl.dart';
+import 'package:sliver_dashboard/src/controller/dashboard_controller_interface.dart';
 import 'package:sliver_dashboard/src/controller/utility.dart';
 import 'package:sliver_dashboard/src/engine/layout_engine.dart' show CompactType;
 import 'package:sliver_dashboard/src/models/layout_item.dart';
@@ -8,7 +9,7 @@ import 'package:sliver_dashboard/src/view/resize_handle.dart';
 
 void main() {
   group('DashboardController', () {
-    late DashboardController controller;
+    late DashboardControllerImpl controller;
     final initialLayout = [
       const LayoutItem(id: 'a', x: 0, y: 0, w: 2, h: 2, minW: 1, minH: 1),
       const LayoutItem(id: 'b', x: 2, y: 0, w: 1, h: 1),
@@ -16,7 +17,8 @@ void main() {
     ];
 
     setUp(() {
-      controller = DashboardController(initialLayout: initialLayout, initialSlotCount: 4);
+      controller = DashboardController(initialLayout: initialLayout, initialSlotCount: 4)
+          as DashboardControllerImpl;
     });
 
     test('initializes with correct values', () {
@@ -531,7 +533,7 @@ void main() {
     });
 
     group('DashboardController onResizeUpdate', () {
-      late DashboardController controller;
+      late DashboardControllerImpl controller;
       const slotWidth = 100.0;
       const slotHeight = 100.0;
       const crossAxisSpacing = 10.0;
@@ -543,7 +545,7 @@ void main() {
           initialLayout: [
             const LayoutItem(id: 'a', x: 2, y: 2, w: 4, h: 4, minW: 2, minH: 2),
           ],
-        )
+        ) as DashboardControllerImpl
           // Start a resize operation on item 'a'
           ..onResizeStart('a');
       });
@@ -703,7 +705,7 @@ void main() {
     test('onDragUpdate handles Horizontal scrolling correctly', () {
       // Setup horizontal controller
       controller.dispose(); // Clean up previous
-      controller = DashboardController(
+      controller = DashboardControllerImpl(
         initialSlotCount: 10,
         initialLayout: [const LayoutItem(id: '1', x: 0, y: 0, w: 2, h: 2)],
       )
@@ -743,7 +745,7 @@ void main() {
 
     test('onResizeUpdate handles ALL resize handles', () {
       controller.dispose();
-      controller = DashboardController(
+      controller = DashboardControllerImpl(
         initialSlotCount: 10,
         initialLayout: [const LayoutItem(id: '1', x: 2, y: 2, w: 2, h: 2, minW: 1, minH: 1)],
       );
@@ -811,7 +813,7 @@ void main() {
     test('onDragUpdate handles Horizontal scrolling correctly', () {
       // 1. Setup horizontal controller
       controller.dispose();
-      controller = DashboardController(
+      controller = DashboardControllerImpl(
         initialSlotCount: 5,
         initialLayout: [const LayoutItem(id: '1', x: 0, y: 0, w: 2, h: 2)],
       )

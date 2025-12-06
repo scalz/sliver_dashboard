@@ -1,5 +1,5 @@
 import 'package:flutter/widgets.dart';
-import 'package:sliver_dashboard/src/controller/dashboard_controller.dart';
+import 'package:sliver_dashboard/src/controller/dashboard_controller_interface.dart';
 
 /// An InheritedWidget that provides a [DashboardController] to its descendants.
 ///

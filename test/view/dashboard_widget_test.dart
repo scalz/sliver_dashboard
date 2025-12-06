@@ -3,7 +3,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
-import 'package:sliver_dashboard/src/controller/dashboard_controller.dart';
+import 'package:sliver_dashboard/src/controller/dashboard_controller_interface.dart';
 import 'package:sliver_dashboard/src/controller/dashboard_controller_provider.dart';
 import 'package:sliver_dashboard/src/models/layout_item.dart';
 import 'package:sliver_dashboard/src/view/dashboard.dart';
@@ -112,7 +112,7 @@ void main() {
       await tester.longPress(staticItemFinder);
       await tester.pump();
 
-      expect(controller.activeItem.value, isNull);
+      expect(controller.internal.activeItem.value, isNull);
     });
 
     testWidgets('dragging from center starts a drag operation', (WidgetTester tester) async {
@@ -131,8 +131,8 @@ void main() {
         await gesture.moveBy(const Offset(0, 10));
         await tester.pump();
 
-        expect(controller.activeItem.value, isNotNull);
-        expect(controller.activeItem.value?.id, 'a');
+        expect(controller.internal.activeItem.value, isNotNull);
+        expect(controller.internal.activeItem.value?.id, 'a');
 
         await gesture.up();
         await tester.pump();
@@ -158,11 +158,11 @@ void main() {
         await tester.pump();
 
         expect(
-          controller.activeItem.value,
+          controller.internal.activeItem.value,
           isNotNull,
           reason: 'Controller did not register an active item on resize start.',
         );
-        expect(controller.activeItem.value?.id, 'a');
+        expect(controller.internal.activeItem.value?.id, 'a');
 
         await gesture.moveBy(const Offset(150, 150));
         await tester.pump();
@@ -227,13 +227,13 @@ void main() {
         await gesture.moveBy(const Offset(0, 10));
         await tester.pump();
 
-        expect(controller.activeItem.value?.id, 'a');
+        expect(controller.internal.activeItem.value?.id, 'a');
 
         await gesture.cancel();
         await tester.pump();
 
         expect(
-          controller.activeItem.value,
+          controller.internal.activeItem.value,
           isNull,
           reason: 'Controller should not have an active item after gesture cancellation.',
         );
@@ -456,7 +456,7 @@ void main() {
       // 1. Start dragging item '1'
       // We simulate this by manually setting the controller state,
       // bypassing the gesture detector to create the "race condition" state.
-      controller.onDragStart('1');
+      controller.internal.onDragStart('1');
       await tester.pump();
 
       // 2. FORCE remove the item from layout while drag is active
