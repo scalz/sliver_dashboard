@@ -15,7 +15,7 @@ Perfect for analytics dashboards, IoT control panels, project management tools, 
 ## Features
 
 - 🚀 **High Performance:** Built on Flutter's `Sliver` protocol with **smart caching**. It only renders visible items and prevents unnecessary rebuilds of children during drag/resize operations.
-- 🧩 **Native Sliver Integration:** Compose your dashboard directly inside a `CustomScrollView` with `SliverAppBar`, `SliverList`, etc.
+  🧩 **Sliver Composition:** Integrate the dashboard's grid seamlessly with other slivers like `SliverAppBar` and `SliverList` within a single `CustomScrollView`.
 - 🎨 **Fully Customizable:** Control the number of columns, aspect ratio, spacing, grid and handles style. Items can be draggable, resizable, and static.
 - ↔️ **Horizontal & Vertical Layouts:** Supports both vertical (default) and horizontal scrolling directions.
 - 💥 **Smart Collision Detection:** Choose your desired behavior:
@@ -35,7 +35,7 @@ Perfect for analytics dashboards, IoT control panels, project management tools, 
 ## Table of Contents
 
 - [Getting Started](#getting-started)
-- [Native Sliver Integration](#native-sliver-integration)
+- [Advanced Sliver Composition](#advanced-sliver-composition)
 - [API Showcase](#api-showcase)
   - [Controlling Edit Mode](#controlling-edit-mode)
   - [Adding and Removing Items](#adding-and-removing-items)
@@ -113,7 +113,7 @@ class MyDashboardPage extends StatelessWidget {
 }
 ```
 
-## Native Sliver Integration
+## Advanced Sliver Composition
 
 For advanced layouts (e.g., collapsing app bars, mixed lists and grids), use `DashboardOverlay` and `SliverDashboard`.
 
@@ -633,6 +633,6 @@ genhtml coverage/lcov.info -o coverage/html
 ```
 
 ## Roadmap
-- ✅ **DashboardSliver:** Native integration with `CustomScrollView`.
+- ✅ **SliverDashboard:** Native integration with `CustomScrollView`.
 - 🔲 **Accessibility:** Enhanced screen reader support and keyboard navigation.
 - 🔲 **Animations:** Improved transitions when items are reordered.
