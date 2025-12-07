@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:sliver_dashboard/src/controller/dashboard_controller_interface.dart';
 import 'package:sliver_dashboard/src/controller/dashboard_controller_provider.dart';
+import 'package:sliver_dashboard/src/controller/utility.dart';
 import 'package:sliver_dashboard/src/models/layout_item.dart';
 import 'package:sliver_dashboard/src/view/dashboard.dart';
 import 'package:sliver_dashboard/src/view/dashboard_configuration.dart';
@@ -314,6 +315,9 @@ void main() {
       // Move to negative coordinates to guarantee exit
       await dragGesture.moveTo(const Offset(-20, -20));
       await tester.pump();
+
+      // Wait + pump to be sure widget is updated
+      await tester.pump(const Duration(milliseconds: 100));
 
       expect(find.text('__placeholder__'), findsNothing);
       expect(controller.layout.value.any((i) => i.id == '__placeholder__'), isFalse);

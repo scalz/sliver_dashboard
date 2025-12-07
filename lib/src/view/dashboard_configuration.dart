@@ -51,6 +51,19 @@ class DashboardItemStyle {
     focusColor: Colors.blueAccent,
     borderRadius: BorderRadius.all(Radius.circular(8)),
   );
+
+  /// Creates a copy of this [DashboardItemStyle] with the given fields replaced.
+  DashboardItemStyle copyWith({
+    BoxDecoration? focusDecoration,
+    Color? focusColor,
+    BorderRadius? borderRadius,
+  }) {
+    return DashboardItemStyle(
+      focusDecoration: focusDecoration ?? this.focusDecoration,
+      focusColor: focusColor ?? this.focusColor,
+      borderRadius: borderRadius ?? this.borderRadius,
+    );
+  }
 }
 
 /// Defines the position of the Trash bin in the Stack.

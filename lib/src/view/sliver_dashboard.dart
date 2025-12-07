@@ -1,8 +1,14 @@
 import 'dart:math';
 
+import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
-import 'package:flutter/widgets.dart';
+import 'package:sliver_dashboard/src/controller/dashboard_controller_interface.dart';
+import 'package:sliver_dashboard/src/controller/dashboard_controller_provider.dart';
 import 'package:sliver_dashboard/src/models/layout_item.dart';
+import 'package:sliver_dashboard/src/view/dashboard_configuration.dart';
+import 'package:sliver_dashboard/src/view/dashboard_item_widget.dart';
+import 'package:sliver_dashboard/src/view/dashboard_typedefs.dart';
+import 'package:state_beacon/state_beacon.dart';
 
 /// A callback for profiling layout performance.
 /// [duration] is the time taken for performLayout.
@@ -16,14 +22,165 @@ class SliverDashboardParentData extends SliverMultiBoxAdaptorParentData {
   late Offset paintOffset;
 }
 
-/// A sliver that displays a grid of items based on the dashboard layout.
+/// A sliver that displays the dashboard grid.
 ///
-/// This is a [MultiChildRenderObjectWidget] that uses a [RenderSliverDashboard]
-/// to perform the actual layout, ensuring high performance by only laying out
-/// and painting visible items.
-class SliverDashboard extends SliverMultiBoxAdaptorWidget {
+/// This widget connects to the [DashboardController] to listen for layout changes
+/// and renders the items using a high-performance [SliverDashboardLayout].
+///
+/// It can be used directly inside a [CustomScrollView] alongside other slivers.
+///
+/// **Note:** To enable drag-and-drop interactions, this widget must be an
+/// descendant of a DashboardOverlay (or the Dashboard wrapper).
+class SliverDashboard extends StatefulWidget {
   /// Creates a [SliverDashboard].
   const SliverDashboard({
+    required this.itemBuilder,
+    super.key,
+    this.gridStyle,
+    this.itemStyle = DashboardItemStyle.defaultStyle,
+    this.scrollDirection = Axis.vertical,
+    this.slotAspectRatio = 1.0,
+    this.mainAxisSpacing = 8.0,
+    this.crossAxisSpacing = 8.0,
+    this.breakpoints,
+    this.itemGlobalKeySuffix = '',
+    this.onPerformLayout,
+    this.fillViewport = false,
+  });
+
+  /// A builder that creates the widgets for each dashboard item.
+  final DashboardItemBuilder itemBuilder;
+
+  /// Styling options for the background grid in edit mode.
+  /// If null, no grid is painted.
+  final GridStyle? gridStyle;
+
+  /// Styling options for the item focus.
+  final DashboardItemStyle itemStyle;
+
+  /// The direction of scrolling for the dashboard.
+  final Axis scrollDirection;
+
+  /// The aspect ratio of each grid slot.
+  final double slotAspectRatio;
+
+  /// The spacing between items on the main axis (vertical).
+  final double mainAxisSpacing;
+
+  /// The spacing between items on the cross axis (horizontal).
+  final double crossAxisSpacing;
+
+  /// A map of breakpoints where the key is the minimum width and the value
+  /// is the number of columns (slotCount).
+  final Map<double, int>? breakpoints;
+
+  /// A suffix to append to global keys for dashboard items.
+  final String itemGlobalKeySuffix;
+
+  /// Callback for testing/profiling layout performance.
+  final LayoutProfileCallback? onPerformLayout;
+
+  /// If true, force grid to fill viewport
+  final bool fillViewport;
+
+  @override
+  State<SliverDashboard> createState() => _SliverDashboardState();
+}
+
+class _SliverDashboardState extends State<SliverDashboard> {
+  late final DashboardController _controller;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // REASONING: Retrieve the controller from the nearest ancestor provider (O(1) operation).
+    _controller = DashboardControllerProvider.of(context);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Watch layout changes
+    _controller.layout.watch(context);
+    final isEditing = _controller.isEditing.watch(context);
+
+    // Use SliverLayoutBuilder instead of LayoutBuilder to return a RenderSliver
+    return SliverLayoutBuilder(
+      builder: (context, constraints) {
+        // --- RESPONSIVE LOGIC ---
+        if (widget.breakpoints != null) {
+          // In a vertical sliver, crossAxisExtent is the width
+          final width = constraints.crossAxisExtent;
+          final targetSlots = _calculateSlots(width, widget.breakpoints!);
+
+          if (targetSlots != _controller.slotCount.value) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) {
+                _controller.setSlotCount(targetSlots);
+              }
+            });
+            // Skip frame optimization: Return an empty Sliver
+            return const SliverToBoxAdapter(child: SizedBox.shrink());
+          }
+        }
+
+        return SliverDashboardLayout(
+          items: _controller.layout.value,
+          slotCount: _controller.slotCount.value,
+          scrollDirection: widget.scrollDirection,
+          slotAspectRatio: widget.slotAspectRatio,
+          mainAxisSpacing: widget.mainAxisSpacing,
+          crossAxisSpacing: widget.crossAxisSpacing,
+          onPerformLayout: widget.onPerformLayout,
+          delegate: SliverChildBuilderDelegate(
+            (context, index) {
+              final activeItemId = _controller.activeItemId.watch(context);
+              final item = _controller.layout.value[index];
+              final isBeingDragged = item.id == activeItemId;
+
+              // Hide the item in the grid if it's being dragged (it's rendered in Overlay)
+              if (isBeingDragged && item.id != '__placeholder__') {
+                return const SizedBox.shrink();
+              }
+
+              return KeyedSubtree(
+                key: ValueKey('${item.id}${widget.itemGlobalKeySuffix}'),
+                child: DashboardItem(
+                  item: item,
+                  isEditing: isEditing,
+                  itemStyle: widget.itemStyle,
+                  builder: widget.itemBuilder,
+                ),
+              );
+            },
+            childCount: _controller.layout.value.length,
+          ),
+        );
+      },
+    );
+  }
+
+  int _calculateSlots(double width, Map<double, int> breakpoints) {
+    final sortedBreakpoints = breakpoints.keys.toList()..sort();
+    var slots = _controller.slotCount.value;
+
+    for (final breakpoint in sortedBreakpoints) {
+      if (width >= breakpoint) {
+        slots = breakpoints[breakpoint]!;
+      } else {
+        break;
+      }
+    }
+    return slots;
+  }
+}
+
+/// A low-level sliver that displays a grid of items based on the dashboard layout.
+///
+/// This is a [MultiChildRenderObjectWidget] that uses a [RenderSliverDashboard]
+/// to perform the actual layout.
+class SliverDashboardLayout extends SliverMultiBoxAdaptorWidget {
+  /// Creates a [SliverDashboardLayout].
+  const SliverDashboardLayout({
     required this.items,
     required this.slotCount,
     required super.delegate,
@@ -416,10 +573,8 @@ class RenderSliverDashboard extends RenderSliverMultiBoxAdaptor {
     var child = firstChild;
     while (child != null) {
       final childParentData = child.parentData;
-      if (childParentData is! SliverDashboardParentData) {
-        // This should not happen if correctly implemented.
-        break;
-      }
+      if (childParentData is! SliverDashboardParentData) break;
+
       final mainAxisLayoutOffset = childParentData.layoutOffset!;
 
       if (mainAxisLayoutOffset + (isVertical ? child.size.height : child.size.width) >=
@@ -455,10 +610,8 @@ class RenderSliverDashboard extends RenderSliverMultiBoxAdaptor {
     final isVertical = scrollDirection == Axis.vertical;
     while (child != null) {
       final parentData = child.parentData;
-      if (parentData is! SliverDashboardParentData) {
-        // This should not happen if correctly implemented.
-        break;
-      }
+      if (parentData is! SliverDashboardParentData) break;
+
       // The `mainAxisPosition` passed to hitTestChildren is relative to the
       // sliver's paint origin, which is the top of the visible portion.
       // We need to compare it against the child's position, which is also

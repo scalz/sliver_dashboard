@@ -121,5 +121,33 @@ void main() {
       expect(newPos.left, 20);
       expect(newPos.top, 10);
     });
+
+    test('DashboardItemStyle copyWith covers all fields', () {
+      const original = DashboardItemStyle(
+        focusColor: Colors.red,
+        borderRadius: BorderRadius.all(Radius.circular(5)),
+      );
+
+      // Test 1: Copy with one field changed (covers focusColor)
+      final copy1 = original.copyWith(focusColor: Colors.green);
+      expect(copy1.focusColor, Colors.green);
+      expect(copy1.borderRadius, original.borderRadius);
+
+      // Test 2: Copy with another field changed (covers borderRadius)
+      const newRadius = BorderRadius.all(Radius.circular(10));
+      final copy2 = original.copyWith(borderRadius: newRadius);
+      expect(copy2.focusColor, original.focusColor);
+      expect(copy2.borderRadius, newRadius);
+
+      // Test 3: Copy with focusDecoration (covers focusDecoration)
+      const newDecoration = BoxDecoration(color: Colors.yellow);
+      final copy3 = original.copyWith(focusDecoration: newDecoration);
+      expect(copy3.focusDecoration, newDecoration);
+
+      // Test 4: Copy with nulls (ensures original values are kept)
+      final copy4 = original.copyWith();
+      expect(copy4.focusColor, original.focusColor);
+      expect(copy4.borderRadius, original.borderRadius);
+    });
   });
 }

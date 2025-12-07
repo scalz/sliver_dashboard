@@ -5,6 +5,7 @@ export 'src/models/layout_item.dart';
 export 'src/view/dashboard.dart';
 export 'src/view/dashboard_configuration.dart';
 export 'src/view/dashboard_item_wrapper.dart';
+export 'src/view/dashboard_overlay.dart';
 export 'src/view/dashboard_typedefs.dart';
 export 'src/view/grid_background_painter.dart';
 export 'src/view/guidance/dashboard_guidance.dart';

@@ -1,4 +1,23 @@
-## 0.2.0
+## 0.3.0 - 2025-12-07
+
+**New feature:**
+
+Introduces Sliver direct composition via DashboardOverlay, and decouples interaction logic from the rendering layer.
+
+- Introduced `DashboardOverlay` widget to handle all global interactions (drag, resize, trash, auto-scroll) and background rendering.
+- Added `SliverDashboard` widget for direct composition within `CustomScrollView` (allows SliverAppBar, SliverList, etc.).
+- Refactored the main `Dashboard` widget to use `DashboardOverlay` internally (backward compatibility).
+- **Grid Clipping behavior:** 
+  - When using `SliverDashboard` to compose with others slivers, the grid stops precisely at the content end (allowing subsequent slivers to be visible).
+  If no subsequent slivers to be visible (eg. `SliverAppBar` + `SliverDashboard`), you can set `fillViewport` to true to extend grid in viewport.
+  - When using `Dashboard` widget, in an `Expanded`, the grid fills the viewport, and `fillViewport` has no action. 
+
+**Documentation:**
+
+- Updated `README.md` and `architecture.md` to reflect the new Overlay/Sliver architecture and document the `fillViewport` parameter.
+- Added `main_sliver.dart` example demonstrating sliver composition. 
+
+## 0.2.0 - 2025-12-06
 
 **Breaking Changes:**
 
@@ -31,6 +50,6 @@
 
 * Initial release.
 
-## 0.1.0
+## 0.1.0 - 2025-12-05
 
 * Initial release.

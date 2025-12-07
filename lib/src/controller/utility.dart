@@ -1,8 +1,15 @@
 import 'dart:math';
 
+import 'package:sliver_dashboard/src/controller/dashboard_controller_impl.dart';
 import 'package:sliver_dashboard/src/controller/dashboard_controller_interface.dart';
 import 'package:sliver_dashboard/src/engine/layout_engine.dart' as engine;
 import 'package:sliver_dashboard/src/models/layout_item.dart';
+
+/// Provides access to the internal implementation of [DashboardController].
+extension ControllerInternalAccess on DashboardController {
+  /// Casts this controller to [DashboardControllerImpl] to access internal members.
+  DashboardControllerImpl get internal => this as DashboardControllerImpl;
+}
 
 /// An extension on [DashboardController] to provide utility methods and getters
 /// for querying the layout state.
@@ -41,17 +48,14 @@ extension DashboardControllerUtils on DashboardController {
       }
     }
 
-    // "Largest Rectangle in Histogram" Algorithm
     final heights = List.filled(numCols, 0);
     final allRects = <LayoutItem>{};
 
     for (var r = 0; r < numRows; r++) {
-      // 1. Build the histogram for the current row
       for (var c = 0; c < numCols; c++) {
         heights[c] = grid[r][c] ? 0 : heights[c] + 1;
       }
 
-      // 2. Find all maximal rectangles for this histogram
       for (var c = 0; c < numCols; c++) {
         var minHeight = heights[c];
         for (var k = c; k >= 0; k--) {
@@ -71,7 +75,6 @@ extension DashboardControllerUtils on DashboardController {
       }
     }
 
-    // 3. Filter out rectangles that are sub-rectangles of others
     if (allRects.isEmpty) return [];
 
     final maximalRects = <LayoutItem>[];
@@ -92,13 +95,11 @@ extension DashboardControllerUtils on DashboardController {
       }
     }
 
-    // Sort for predictable order in tests and usage
     maximalRects.sort((a, b) {
       if (a.y != b.y) return a.y.compareTo(b.y);
       return a.x.compareTo(b.x);
     });
 
-    // Assign final IDs
     final result = <LayoutItem>[];
     for (var i = 0; i < maximalRects.length; i++) {
       result.add(maximalRects[i].copyWith(id: 'free_area_$i'));
@@ -107,12 +108,7 @@ extension DashboardControllerUtils on DashboardController {
     return result;
   }
 
-  /// Finds and returns a list of all available free horizontal areas in the grid,
-  /// row by row.
-  ///
-  /// This method scans each row for contiguous empty slots and returns them
-  /// as a list of [LayoutItem]s, each with a height of 1. This is useful
-  /// for finding placement opportunities on a specific row.
+  /// Finds and returns a list of all available free horizontal areas in the grid.
   List<LayoutItem> get availableHorizontalFreeAreas {
     final currentLayout = layout.peek();
     final numCols = slotCount.peek();
@@ -163,8 +159,6 @@ extension DashboardControllerUtils on DashboardController {
   }
 
   /// Finds and returns the first available free area in the last row that contains items.
-  ///
-  /// Returns `null` if the last row is full or the layout is empty.
   LayoutItem? get lastRowFreeArea {
     final areas = availableFreeAreas;
     if (areas.isEmpty || layout.peek().isEmpty) return null;
@@ -175,20 +169,13 @@ extension DashboardControllerUtils on DashboardController {
     return freeInLastRow.isEmpty ? null : freeInLastRow.first;
   }
 
-  /// Finds and returns the first available free area in the grid, starting from the top-left.
-  ///
-  /// Returns `null` if the layout is completely full.
+  /// Finds and returns the first available free area in the grid.
   LayoutItem? get firstFreeArea {
     final areas = availableFreeAreas;
     return areas.isEmpty ? null : areas.first;
   }
 
   /// Checks if a given [LayoutItem] can fit into any of the available free spaces.
-  ///
-  /// This is useful for validating if a new item of a certain size can be added
-  /// to the dashboard without causing issues.
-  ///
-  /// [item] The layout item to check. Only its `w` and `h` properties are used.
   bool canItemFit(LayoutItem item) {
     final freeAreas = availableFreeAreas;
     for (final area in freeAreas) {

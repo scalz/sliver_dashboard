@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sliver_dashboard/sliver_dashboard.dart';
+import 'package:sliver_dashboard/src/controller/utility.dart';
 
 /// An utility widget to count rebuilds
 class BuildCounter extends StatelessWidget {
