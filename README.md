@@ -125,6 +125,11 @@ For advanced layouts (e.g., collapsing app bars, mixed lists and grids), use `Da
 1.  **`DashboardOverlay`**: Wraps your `CustomScrollView`. It handles gestures, auto-scrolling, the background grid, and the trash bin.
 2.  **`SliverDashboard`**: Renders the grid items inside the scroll view.
 
+- **Grid Clipping behavior:**
+  - When using `SliverDashboard` to compose with others slivers, the grid stops precisely at the content end (allowing subsequent slivers to be visible).
+    If no subsequent slivers to be visible (eg. `SliverAppBar` + `SliverDashboard`), you can set `fillViewport` to true to extend grid in viewport.
+  - While using `Dashboard` widget, in an `Expanded`, the grid fills the viewport, and `fillViewport` has no action.
+  
 ```dart
   // You must provide the same ScrollController to both the Overlay and the ScrollView
 final scrollController = ScrollController();
@@ -140,6 +145,9 @@ Widget build(BuildContext context) {
       // Define grid styling here so it renders behind the slivers
       gridStyle: const GridStyle(lineColor: Colors.red), 
       padding: const EdgeInsets.all(8),
+      // grid stops precisely at the content of the dashboard
+      // to not draw grid behind subsequent slivers
+      fillViewport: false, 
       
       // Handle external drops here
       onDrop: (data, item) => 'new_id', 
