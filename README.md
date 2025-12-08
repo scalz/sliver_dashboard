@@ -15,7 +15,7 @@ Perfect for analytics dashboards, IoT control panels, project management tools, 
 ## Features
 
 - 🚀 **High Performance:** Built on Flutter's `Sliver` protocol with **smart caching**. It only renders visible items and prevents unnecessary rebuilds of children during drag/resize operations.
-  🧩 **Sliver Composition:** Integrate the dashboard's grid seamlessly with other slivers like `SliverAppBar` and `SliverList` within a single `CustomScrollView`.
+- 🧩 **Sliver Composition:** Integrate the dashboard's grid seamlessly with other slivers like `SliverAppBar` and `SliverList` within a single `CustomScrollView`.
 - 🎨 **Fully Customizable:** Control the number of columns, aspect ratio, spacing, grid and handles style. Items can be draggable, resizable, and static.
 - ↔️ **Horizontal & Vertical Layouts:** Supports both vertical (default) and horizontal scrolling directions.
 - 💥 **Smart Collision Detection:** Choose your desired behavior:
