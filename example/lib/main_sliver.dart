@@ -4,7 +4,12 @@ import 'package:flutter/material.dart';
 import 'package:sliver_dashboard/sliver_dashboard.dart';
 
 void main() {
-  runApp(const MaterialApp(debugShowCheckedModeBanner: false, home: SliverExamplePage()));
+  runApp(
+    const MaterialApp(
+      debugShowCheckedModeBanner: false,
+      home: SliverExamplePage(),
+    ),
+  );
 }
 
 class SliverExamplePage extends StatefulWidget {
@@ -27,7 +32,9 @@ class _SliverExamplePageState extends State<SliverExamplePage> {
   late final controller = DashboardController(
     initialSlotCount: slotCount,
     onLayoutChanged: (items) {
-      debugPrint('Layout changed! Saving ${items.length} items to persistence...');
+      debugPrint(
+        'Layout changed! Saving ${items.length} items to persistence...',
+      );
       // In a real app, you would save the layout to a DB or SharedPreferences.
       // You can get a JSON-ready list of maps using:
       // final json = controller.exportLayout();
@@ -85,7 +92,12 @@ class _SliverExamplePageState extends State<SliverExamplePage> {
 
   Color getColorForItem(String id) {
     return cardColors.putIfAbsent(id, () {
-      return Color.fromRGBO(random.nextInt(256), random.nextInt(256), random.nextInt(256), 1);
+      return Color.fromRGBO(
+        random.nextInt(256),
+        random.nextInt(256),
+        random.nextInt(256),
+        1,
+      );
     });
   }
 
@@ -117,7 +129,10 @@ class _SliverExamplePageState extends State<SliverExamplePage> {
         controller: controller,
         scrollController: scrollController,
         // Pass grid style here
-        gridStyle: const GridStyle(fillColor: Colors.black12, lineColor: Colors.red),
+        gridStyle: const GridStyle(
+          fillColor: Colors.black12,
+          lineColor: Colors.red,
+        ),
         padding: const EdgeInsets.all(8),
         fillViewport: fillViewport,
         onDrop: (data, item) {
@@ -139,10 +154,16 @@ class _SliverExamplePageState extends State<SliverExamplePage> {
               width: 200,
               margin: const EdgeInsets.all(20.0),
               decoration: BoxDecoration(
-                color: isActive ? Colors.red : (isHovered ? Colors.orange : Colors.redAccent),
+                color: isActive
+                    ? Colors.red
+                    : (isHovered ? Colors.orange : Colors.redAccent),
                 borderRadius: BorderRadius.circular(30),
-                boxShadow: const [BoxShadow(blurRadius: 10, color: Colors.black26)],
-                border: isHovered ? Border.all(color: Colors.white, width: 2) : null,
+                boxShadow: const [
+                  BoxShadow(blurRadius: 10, color: Colors.black26),
+                ],
+                border: isHovered
+                    ? Border.all(color: Colors.white, width: 2)
+                    : null,
               ),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
@@ -174,8 +195,14 @@ class _SliverExamplePageState extends State<SliverExamplePage> {
                   title: Text("Delete ?"),
                   content: Text("Do you want remove item ${item.id} ?"),
                   actions: [
-                    TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text("No")),
-                    TextButton(onPressed: () => Navigator.pop(ctx, true), child: Text("Yes")),
+                    TextButton(
+                      onPressed: () => Navigator.pop(ctx, false),
+                      child: Text("No"),
+                    ),
+                    TextButton(
+                      onPressed: () => Navigator.pop(ctx, true),
+                      child: Text("Yes"),
+                    ),
                   ],
                 ),
               ) ??
@@ -255,13 +282,20 @@ class _SliverExamplePageState extends State<SliverExamplePage> {
                                 controller.setCompactionType(value.first);
                               },
                               segments: [
-                                ButtonSegment(label: Text('None'), value: CompactType.none),
                                 ButtonSegment(
-                                  label: Text('Compact ${CompactType.vertical.name}'),
+                                  label: Text('None'),
+                                  value: CompactType.none,
+                                ),
+                                ButtonSegment(
+                                  label: Text(
+                                    'Compact ${CompactType.vertical.name}',
+                                  ),
                                   value: CompactType.vertical,
                                 ),
                                 ButtonSegment(
-                                  label: Text('Compact ${CompactType.horizontal.name}'),
+                                  label: Text(
+                                    'Compact ${CompactType.horizontal.name}',
+                                  ),
                                   value: CompactType.horizontal,
                                 ),
                               ],
@@ -271,12 +305,16 @@ class _SliverExamplePageState extends State<SliverExamplePage> {
                         SegmentedButton<ResizeBehavior>(
                           selected: {resizeBehavior},
                           onSelectionChanged: (value) => setState(() {
-                            resizeBehavior = value.firstOrNull == ResizeBehavior.shrink
+                            resizeBehavior =
+                                value.firstOrNull == ResizeBehavior.shrink
                                 ? ResizeBehavior.shrink
                                 : ResizeBehavior.push;
                           }),
                           segments: [
-                            ButtonSegment(label: Text('Resize Push'), value: ResizeBehavior.push),
+                            ButtonSegment(
+                              label: Text('Resize Push'),
+                              value: ResizeBehavior.push,
+                            ),
                             ButtonSegment(
                               label: Text('Resize Shrink'),
                               value: ResizeBehavior.shrink,
@@ -306,7 +344,10 @@ class _SliverExamplePageState extends State<SliverExamplePage> {
                                 child: Center(child: Icon(Icons.bar_chart)),
                               ),
                             ),
-                            child: Chip(label: Text('Chart'), avatar: Icon(Icons.bar_chart)),
+                            child: Chip(
+                              label: Text('Chart'),
+                              avatar: Icon(Icons.bar_chart),
+                            ),
                           ),
                           Draggable<String>(
                             data: 'New Table',
@@ -318,7 +359,10 @@ class _SliverExamplePageState extends State<SliverExamplePage> {
                                 child: Center(child: Icon(Icons.table_rows)),
                               ),
                             ),
-                            child: Chip(label: Text('Table'), avatar: Icon(Icons.table_rows)),
+                            child: Chip(
+                              label: Text('Table'),
+                              avatar: Icon(Icons.table_rows),
+                            ),
                           ),
                         ],
                       ),
@@ -370,8 +414,15 @@ class _PinnedHeader extends SliverPersistentHeaderDelegate {
   _PinnedHeader({required this.child, this.height = 220});
 
   @override
-  Widget build(BuildContext context, double shrinkOffset, bool overlapsContent) {
-    return Container(color: Theme.of(context).scaffoldBackgroundColor, child: child);
+  Widget build(
+    BuildContext context,
+    double shrinkOffset,
+    bool overlapsContent,
+  ) {
+    return Container(
+      color: Theme.of(context).scaffoldBackgroundColor,
+      child: child,
+    );
   }
 
   @override
@@ -419,7 +470,8 @@ class MyCard extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                 ),
                 Text('(${item.w}x${item.h})'),
-                if (item.isStatic) const Chip(label: Text('Static'), avatar: Icon(Icons.lock)),
+                if (item.isStatic)
+                  const Chip(label: Text('Static'), avatar: Icon(Icons.lock)),
               ],
             ),
           ),

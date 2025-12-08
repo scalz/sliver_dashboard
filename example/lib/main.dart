@@ -39,7 +39,9 @@ class _DashboardPageState extends State<DashboardPage> {
   late final controller = DashboardController(
     initialSlotCount: slotCount,
     onLayoutChanged: (items) {
-      debugPrint('Layout changed! Saving ${items.length} items to persistence...');
+      debugPrint(
+        'Layout changed! Saving ${items.length} items to persistence...',
+      );
       // In a real app, you would save the layout to a DB or SharedPreferences.
       // You can get a JSON-ready list of maps using:
       // final json = controller.exportLayout();
@@ -98,7 +100,12 @@ class _DashboardPageState extends State<DashboardPage> {
 
   Color getColorForItem(String id) {
     return cardColors.putIfAbsent(id, () {
-      return Color.fromRGBO(random.nextInt(256), random.nextInt(256), random.nextInt(256), 1);
+      return Color.fromRGBO(
+        random.nextInt(256),
+        random.nextInt(256),
+        random.nextInt(256),
+        1,
+      );
     });
   }
 
@@ -150,7 +157,10 @@ class _DashboardPageState extends State<DashboardPage> {
                       controller.setCompactionType(value.first);
                     },
                     segments: [
-                      ButtonSegment(label: Text('None'), value: CompactType.none),
+                      ButtonSegment(
+                        label: Text('None'),
+                        value: CompactType.none,
+                      ),
                       ButtonSegment(
                         label: Text('Compact ${CompactType.vertical.name}'),
                         value: CompactType.vertical,
@@ -171,7 +181,10 @@ class _DashboardPageState extends State<DashboardPage> {
                       : Axis.vertical;
                 }),
                 segments: [
-                  ButtonSegment(label: Text('Scroll ${Axis.vertical.name}'), value: Axis.vertical),
+                  ButtonSegment(
+                    label: Text('Scroll ${Axis.vertical.name}'),
+                    value: Axis.vertical,
+                  ),
                   ButtonSegment(
                     label: Text('Scroll ${Axis.horizontal.name}'),
                     value: Axis.horizontal,
@@ -186,8 +199,14 @@ class _DashboardPageState extends State<DashboardPage> {
                       : ResizeBehavior.push;
                 }),
                 segments: [
-                  ButtonSegment(label: Text('Resize Push'), value: ResizeBehavior.push),
-                  ButtonSegment(label: Text('Resize Shrink'), value: ResizeBehavior.shrink),
+                  ButtonSegment(
+                    label: Text('Resize Push'),
+                    value: ResizeBehavior.push,
+                  ),
+                  ButtonSegment(
+                    label: Text('Resize Shrink'),
+                    value: ResizeBehavior.shrink,
+                  ),
                 ],
               ),
             ],
@@ -207,18 +226,30 @@ class _DashboardPageState extends State<DashboardPage> {
                   feedback: SizedBox(
                     width: 100,
                     height: 50,
-                    child: Card(elevation: 8, child: Center(child: Icon(Icons.bar_chart))),
+                    child: Card(
+                      elevation: 8,
+                      child: Center(child: Icon(Icons.bar_chart)),
+                    ),
                   ),
-                  child: Chip(label: Text('Chart'), avatar: Icon(Icons.bar_chart)),
+                  child: Chip(
+                    label: Text('Chart'),
+                    avatar: Icon(Icons.bar_chart),
+                  ),
                 ),
                 Draggable<String>(
                   data: 'New Table',
                   feedback: SizedBox(
                     width: 100,
                     height: 50,
-                    child: Card(elevation: 8, child: Center(child: Icon(Icons.table_rows))),
+                    child: Card(
+                      elevation: 8,
+                      child: Center(child: Icon(Icons.table_rows)),
+                    ),
                   ),
-                  child: Chip(label: Text('Table'), avatar: Icon(Icons.table_rows)),
+                  child: Chip(
+                    label: Text('Table'),
+                    avatar: Icon(Icons.table_rows),
+                  ),
                 ),
               ],
             ),
@@ -249,7 +280,8 @@ class _DashboardPageState extends State<DashboardPage> {
                 crossAxisSpacing: 8.0, // default 8.0
                 // how many non visible pixels to preload on top and bottom
                 cacheExtent: 500,
-                guidance: DashboardGuidance.byDefault, // default null for no guidance
+                guidance:
+                    DashboardGuidance.byDefault, // default null for no guidance
                 // guidance: const DashboardGuidance(
                 //   move: InteractionGuidance(
                 //     SystemMouseCursors.grab,
@@ -308,8 +340,12 @@ class _DashboardPageState extends State<DashboardPage> {
                             ? Colors.red
                             : (isHovered ? Colors.orange : Colors.redAccent),
                         borderRadius: BorderRadius.circular(30),
-                        boxShadow: const [BoxShadow(blurRadius: 10, color: Colors.black26)],
-                        border: isHovered ? Border.all(color: Colors.white, width: 2) : null,
+                        boxShadow: const [
+                          BoxShadow(blurRadius: 10, color: Colors.black26),
+                        ],
+                        border: isHovered
+                            ? Border.all(color: Colors.white, width: 2)
+                            : null,
                       ),
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.center,
@@ -356,9 +392,9 @@ class _DashboardPageState extends State<DashboardPage> {
                 },
                 // Optional: Called when an item is deleted
                 onItemDeleted: (item) {
-                  ScaffoldMessenger.of(
-                    context,
-                  ).showSnackBar(SnackBar(content: Text('Item ${item.id} deleted')));
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Item ${item.id} deleted')),
+                  );
                 },
               ),
             ),
@@ -422,7 +458,8 @@ class MyCard extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                 ),
                 Text('(${item.w}x${item.h})'),
-                if (item.isStatic) const Chip(label: Text('Static'), avatar: Icon(Icons.lock)),
+                if (item.isStatic)
+                  const Chip(label: Text('Static'), avatar: Icon(Icons.lock)),
               ],
             ),
           ),

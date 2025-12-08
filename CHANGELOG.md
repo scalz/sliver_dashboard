@@ -1,3 +1,6 @@
+## 0.3.2 - 2025-12-08
+- Improve pub score.
+
 ## 0.3.1 - 2025-12-08
 - Updated `README.md`
 

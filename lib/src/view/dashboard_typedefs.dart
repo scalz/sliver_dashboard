@@ -18,13 +18,19 @@ typedef DraggableDataBuilder<T> = T Function();
 /// A builder for the item feedback (the widget that follows the finger).
 /// [child] is the standard widget built by itemBuilder.
 typedef DashboardItemFeedbackBuilder = Widget Function(
-    BuildContext context,
-    LayoutItem item,
-    Widget child,
-    );
+  BuildContext context,
+  LayoutItem item,
+  Widget child,
+);
 
 /// A builder for the trash/delete area.
 /// [isHovered] is true if the dragged item is currently over the trash area.
 /// [isActive] is true if the item has been hovered long enough to trigger deletion on drop.
+typedef DashboardTrashBuilder = Widget Function(
+  BuildContext context,
+// never mind
 // ignore: avoid_positional_boolean_parameters
-typedef DashboardTrashBuilder = Widget Function(BuildContext context, bool isHovered, bool isActive, String? activeItemId);
+  bool isHovered,
+  bool isActive,
+  String? activeItemId,
+);
