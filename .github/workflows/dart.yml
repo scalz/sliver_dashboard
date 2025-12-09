@@ -1,0 +1,75 @@
+name: CI (Analyze, Test, Coverage)
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  ci:
+    name: Analyze + Test
+    runs-on: ubuntu-latest
+
+    steps:
+      # ---- Check out source code --------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ---- Install stable Flutter --------------------------------------------------
+      - name: Install Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Clean cache configurations
+        run: flutter clean
+
+      # ---- Install dependencies ----------------------------------------------------
+      - name: Install dependencies
+        run: flutter pub get
+
+      # ---- FORMAT CHECK ------------------------------------------------------------
+      # Check formatting (without modifying code).
+      - name: Check formatting
+        run: |
+          if ! dart format --output=none --set-exit-if-changed .; then
+            echo ""
+            echo "❌ Code is not properly formatted."
+            echo "Please run: dart format ."
+            echo ""
+            exit 1
+          fi
+
+      # ---- ANALYZE (very_good_analysis) -------------------------------------------
+      # Strict analysis, CI will fail if :
+      # - lint violations
+      # - warnings
+      # - important infos
+      - name: Run static analyzer
+        id: analyze
+        run: flutter analyze --fatal-infos --fatal-warnings > analyze_output.txt 2>&1
+
+      # ---- TESTS + COVERAGE --------------------------------------------------------
+      - name: Run tests with coverage
+        run: flutter test --coverage
+
+      # ---- Upload coverage to Codecov ----------------------------------------------
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: coverage/lcov.info
+
+      # ---- GitHub PR Annotations ------------------------
+      # Annotate errors, warnings, lints directly in the PR
+      - name: Annotate analyzer issues
+        if: steps.analyze.outcome == 'failure' &&
+          github.event.pull_request.head.repo.full_name == github.repository
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          recreate: true
+          path: analyze_output.txt
