@@ -1,3 +1,6 @@
+## 0.3.3 - 2025-12-09
+- **Fix:** Fixed an issue where item, in sliver composition mode, was not correctly clipped when resizing beyond the viewport bounds.
+
 ## 0.3.2 - 2025-12-08
 - Improve pub score.
 
