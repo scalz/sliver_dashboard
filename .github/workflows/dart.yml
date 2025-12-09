@@ -59,10 +59,10 @@ jobs:
         run: flutter test --coverage
 
       # ---- Upload coverage to Codecov ----------------------------------------------
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v4
-        with:
-          files: coverage/lcov.info
+#      - name: Upload coverage to Codecov
+#        uses: codecov/codecov-action@v4
+#        with:
+#          files: coverage/lcov.info
 
       # ---- GitHub PR Annotations ------------------------
       # Annotate errors, warnings, lints directly in the PR

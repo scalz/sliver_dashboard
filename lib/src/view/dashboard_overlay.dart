@@ -150,6 +150,8 @@ class DashboardOverlay<T extends Object> extends StatefulWidget {
 }
 
 class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>> {
+  final GlobalKey _overlayStackKey = GlobalKey();
+
   // State for tracking the active drag/resize operation
   String? _activeItemId;
   LayoutItem? _activeItemInitialLayout;
@@ -249,7 +251,9 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
         },
         builder: (context, candidateData, rejectedData) {
           return Stack(
+            key: _overlayStackKey,
             fit: StackFit.expand,
+            clipBehavior: Clip.none,
             children: [
               // 1. Background (Grid)
               if (widget.backgroundBuilder != null)
@@ -312,36 +316,90 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
             widget.controller.layout.value.firstWhereOrNull((i) => i.id == activeItemId) ??
                 _activeItemInitialLayout;
 
+        // Retrieve the render sliver and update metrics.
+        final renderSliver = _findRenderSliver();
+        if (renderSliver != null) {
+          _activeSliverMetrics = _getMetricsFromSliver(renderSliver);
+        }
+
         if (activeItem == null ||
             _activeSliverMetrics == null ||
-            _initialSliverStartLocal == null) {
+            renderSliver == null ||
+            !renderSliver.attached) {
           return const SizedBox.shrink();
         }
 
         final isEditing = widget.controller.isEditing.watch(context);
+        final metrics = _activeSliverMetrics!;
+        final isVertical = metrics.scrollDirection == Axis.vertical;
 
-        final currentScroll =
-            widget.scrollController.hasClients ? widget.scrollController.offset : 0.0;
-        final scrollDelta = currentScroll - _initialScrollOffset;
+        // --- PRECISE CALCULATION VIA MATRIX ---
+        // We use the render object's transformation matrix to get exact pixel coordinates,
+        // ensuring the feedback item stays perfectly synced with the grid during scrolls.
 
-        final isVertical = _activeSliverMetrics!.scrollDirection == Axis.vertical;
-        final visualDelta = isVertical ? Offset(0, -scrollDelta) : Offset(-scrollDelta, 0);
+        Rect? sliverBounds;
+        var currentSliverStart = Offset.zero;
 
-        final currentSliverStart = _initialSliverStartLocal! + visualDelta;
+        // Use the key to find the main Overlay Stack (to get the full screen/viewport size).
+        final overlayBox = _overlayStackKey.currentContext?.findRenderObject() as RenderBox?;
+
+        if (overlayBox != null) {
+          // 1. Transformation Matrix: Sliver -> Overlay
+          // This provides the exact pixel position managed by the render engine,
+          // accounting for scroll offsets and parent transforms.
+          final transform = renderSliver.getTransformTo(overlayBox);
+
+          // 'visualOrigin' is the VISIBLE top-left corner of the Sliver on screen.
+          // (This corresponds to point (0,0) in the Sliver's paint coordinate system).
+          final visualOrigin = MatrixUtils.transformPoint(transform, Offset.zero);
+
+          // 2. Calculate the logical grid origin (0,0)
+          // The Sliver might be scrolled internally (constraints.scrollOffset).
+          // If we scroll down, the logical content moves up relative to the visual origin.
+          final sliverScrollOffset = renderSliver.constraints.scrollOffset;
+
+          if (isVertical) {
+            currentSliverStart = visualOrigin - Offset(0, sliverScrollOffset);
+          } else {
+            currentSliverStart = visualOrigin - Offset(sliverScrollOffset, 0);
+          }
+          // NOTE: We do NOT add metrics.padding here manually.
+          // The RenderSliver is already inside the SliverPadding, so its
+          // visualOrigin already accounts for that padding.
+
+          // 3. Calculate Clipping (Based on Overlap)
+          final overlaySize = overlayBox.size;
+          final overlap = renderSliver.constraints.overlap;
+
+          // The visible area starts at visualOrigin + overlap.
+          // (If overlap > 0, it means the sliver is sliding under a pinned header/AppBar).
+
+          if (isVertical) {
+            final clipTop = visualOrigin.dy + overlap;
+            sliverBounds = Rect.fromLTRB(0, clipTop, overlaySize.width, overlaySize.height);
+          } else {
+            final clipLeft = visualOrigin.dx + overlap;
+            sliverBounds = Rect.fromLTRB(clipLeft, 0, overlaySize.width, overlaySize.height);
+          }
+
+          // Safety intersection with the overlay bounds.
+          sliverBounds = sliverBounds.intersect(Offset.zero & overlaySize);
+        }
 
         return DashboardFeedbackItem(
           item: activeItem,
           builder: widget.itemBuilder,
           feedbackBuilder: widget.itemFeedbackBuilder,
           controller: widget.controller,
-          slotWidth: _activeSliverMetrics!.slotWidth,
-          slotHeight: _activeSliverMetrics!.slotHeight,
-          mainAxisSpacing: _activeSliverMetrics!.mainAxisSpacing,
-          crossAxisSpacing: _activeSliverMetrics!.crossAxisSpacing,
-          scrollDirection: _activeSliverMetrics!.scrollDirection,
+          slotWidth: metrics.slotWidth,
+          slotHeight: metrics.slotHeight,
+          mainAxisSpacing: metrics.mainAxisSpacing,
+          crossAxisSpacing: metrics.crossAxisSpacing,
+          scrollDirection: metrics.scrollDirection,
           itemGlobalKeySuffix: widget.itemGlobalKeySuffix,
           isEditing: isEditing,
           sliverStartPos: currentSliverStart,
+          sliverBounds: sliverBounds,
         );
       },
     );
@@ -663,7 +721,7 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
   // --- Auto Scroll ---
 
   void _handleAutoScroll(Offset globalPosition) {
-    final overlayBox = context.findRenderObject() as RenderBox?;
+    final overlayBox = _overlayStackKey.currentContext?.findRenderObject() as RenderBox?;
     if (overlayBox == null) return;
 
     final localPosition = overlayBox.globalToLocal(globalPosition);
