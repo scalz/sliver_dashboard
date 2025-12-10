@@ -1,4 +1,4 @@
-## 0.6.0
+## 0.6.0 - 2025-12-10
 
 - **Feat:** Added `DashboardMinimap` widget.
   - Visualizes the entire dashboard layout in a small, scalable widget.

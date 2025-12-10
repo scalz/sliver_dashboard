@@ -46,7 +46,7 @@ void main() {
 
     // 2. Scroll back up slightly.
     // This forces the Sliver to look for children *before* the current first child.
-    // This triggers `insertAndLayoutLeadingChild` (Lines 507-521).
+    // This triggers `insertAndLayoutLeadingChild`.
     scrollController.jumpTo(2800);
     await tester.pumpAndSettle();
 

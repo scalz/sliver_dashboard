@@ -776,7 +776,7 @@ Pull requests should pass all checks before they can be merged into the `main` b
 - ✅ **SliverDashboard:** Compose a dashboard with others slivers in your `CustomScrollView`.
 - ✅ **Accessibility:** Enhanced screen reader support and keyboard navigation with configurable keys and messages.
 - ✅ **Layout Optimizer:** Visual Bin Packing.
-- 🔲 **Portal:** Mini-map, Teleport..
+- ✅ **Mini-map:** Display and navigate via a minimap.
 - 🔲 **Sticky Headers:** Special item to create "barrier" for defining sections in layout.
 - 🔲 **Nested dashboard:** Special "folder" item where you can drag&drop items from main dashboard to a "folder" dashboard, and vice-versa.
 - 🔲 **Multi-Selection:** Multi item selection and dragging.

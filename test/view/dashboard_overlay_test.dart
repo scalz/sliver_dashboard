@@ -183,7 +183,7 @@ void main() {
       await gesture.moveTo(trashCenter);
       await tester.pump();
 
-      // 3. Move AWAY from Trash (Trigger Hover Exit - Lines 657-660)
+      // 3. Move AWAY from Trash (Trigger Hover Exit)
       await gesture.moveTo(const Offset(300, 300)); // Move far away
       await tester.pump();
 
@@ -233,7 +233,7 @@ void main() {
 
       expect(scrollController.offset, greaterThan(0), reason: 'Should scroll down');
 
-      // 2. Drag to Top Edge (Scroll Up - Lines 737-739)
+      // 2. Drag to Top Edge (Scroll Up)
       await gesture.moveTo(const Offset(100, 10)); // Top of screen
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 500));
@@ -552,7 +552,7 @@ void main() {
       final gesture = await tester.startGesture(tester.getCenter(itemFinder));
       await tester.pump(kLongPressTimeout);
 
-      // 1. Drag to Right Edge (Scroll Right - Lines 753-755)
+      // 1. Drag to Right Edge (Scroll Right)
       // Assuming screen width 800
       await gesture.moveTo(const Offset(790, 100));
       await tester.pump();
@@ -560,7 +560,7 @@ void main() {
 
       expect(scrollController.offset, greaterThan(0), reason: 'Should scroll right');
 
-      // 2. Drag to Left Edge (Scroll Left - Lines 748-750)
+      // 2. Drag to Left Edge (Scroll Left)
       await gesture.moveTo(const Offset(10, 100));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 500));
@@ -579,7 +579,7 @@ void main() {
             body: DashboardOverlay(
               controller: controller,
               scrollController: ScrollController(),
-              // Provide callback (Lines 629-632)
+              // Provide callback
               onItemDragUpdate: (item, pos) {
                 dragUpdateCalled = true;
               },
@@ -621,7 +621,7 @@ void main() {
       await gesture.moveTo(trashCenter);
       await tester.pump();
 
-      // 3. Move AWAY from Trash (Exit - Lines 657-660)
+      // 3. Move AWAY from Trash (Exit)
       await gesture.moveTo(const Offset(300, 300));
       await tester.pump();
 
