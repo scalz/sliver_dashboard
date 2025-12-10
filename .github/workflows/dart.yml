@@ -26,6 +26,12 @@ jobs:
         with:
           channel: stable
 
+      - name: Check Flutter version
+        run: flutter --version
+
+      - name: Check Dart version
+        run: dart --version
+
       - name: Clean cache configurations
         run: flutter clean
 
@@ -53,6 +59,9 @@ jobs:
       - name: Run static analyzer
         id: analyze
         run: flutter analyze --fatal-infos --fatal-warnings > analyze_output.txt 2>&1
+
+      - name: Display analyze logs
+        run: cat analyze_output.txt
 
       # ---- TESTS + COVERAGE --------------------------------------------------------
       - name: Run tests with coverage
