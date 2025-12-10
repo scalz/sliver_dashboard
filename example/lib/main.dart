@@ -460,7 +460,6 @@ class MyCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    print('MyCard build called for item ${item.id}');
     return Card(
       elevation: 2,
       color: color,

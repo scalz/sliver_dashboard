@@ -593,4 +593,45 @@ void main() {
       expect(small.y, 2);
     });
   });
+
+  test('moveElement resolves secondary overlaps (stacking) when pushing multiple items', () {
+    // Scenario:
+    // A [0,0] 2x2
+    // B [2,0] 2x1 (Right of A)
+    // C [2,1] 2x1 (Below B)
+    final layout = [
+      const LayoutItem(id: 'A', x: 0, y: 0, w: 2, h: 2),
+      const LayoutItem(id: 'B', x: 2, y: 0, w: 2, h: 1),
+      const LayoutItem(id: 'C', x: 2, y: 1, w: 2, h: 1),
+    ];
+
+    // Action: Move A to the right (x=1).
+    // It will overlap B (at x=2) and C (at x=2).
+    // Both B and C will be pushed to y=2 (bottom of A).
+    // Without the fix, B and C will overlap at y=2.
+    final result = moveElement(
+      layout,
+      layout[0], // Item A
+      1, // New X
+      0, // New Y
+      cols: 10,
+      compactType: CompactType.vertical,
+      preventCollision: true,
+    );
+
+    final b = result.firstWhere((i) => i.id == 'B');
+    final c = result.firstWhere((i) => i.id == 'C');
+
+    // Verification:
+    // 1. A should be at x=1
+    expect(result.firstWhere((i) => i.id == 'A').x, 1);
+
+    // 2. B and C should be pushed down
+    expect(b.y, greaterThanOrEqualTo(2));
+    expect(c.y, greaterThanOrEqualTo(2));
+
+    // 3. CRITICAL: B and C should NOT overlap each other
+    expect(collides(b, c), isFalse, reason: 'Pushed items B and C should not overlap');
+    expect(b.y != c.y, isTrue, reason: 'B and C should have different Y coordinates');
+  });
 }

@@ -346,7 +346,14 @@ Layout moveElement(
     }
   }
 
-  return layoutMap.values.toList();
+  final resultLayout = layoutMap.values.toList();
+
+  // Prevent secondary overlaps while moving
+  if (preventCollision) {
+    return resolveCollisions(resultLayout, compactType);
+  }
+
+  return resultLayout;
 }
 
 /// A private helper function that attempts to resolve collisions by shrinking
@@ -549,4 +556,61 @@ List<LayoutItem> placeNewItems({
   }
 
   return finalLayout;
+}
+
+/// Resolves overlaps by pushing items down (or right) without compacting (pulling up).
+/// This ensures a valid layout without fighting the user's drag action.
+List<LayoutItem> resolveCollisions(List<LayoutItem> layout, CompactType compactType) {
+  final items = List<LayoutItem>.from(layout);
+
+  final isHorizontal = compactType == CompactType.horizontal;
+
+  // 1. Sort items to process them in order (Top-Down or Left-Right)
+  items.sort((a, b) {
+    if (isHorizontal) {
+      if (a.x != b.x) return a.x.compareTo(b.x);
+      return a.y.compareTo(b.y);
+    } else {
+      if (a.y != b.y) return a.y.compareTo(b.y);
+      return a.x.compareTo(b.x);
+    }
+  });
+
+  final processed = <LayoutItem>[];
+
+  for (var i = 0; i < items.length; i++) {
+    var current = items[i];
+
+    // Static items act as anchors, they don't move in this pass
+    // (assuming moveElement already handled static collisions, but safety first)
+    if (current.isStatic) {
+      processed.add(current);
+      continue;
+    }
+
+    // Check against all previously processed items (which are "above" or "left" of current)
+    var hasCollision = true;
+    var safety = 0;
+
+    while (hasCollision && safety < 1000) {
+      hasCollision = false;
+      for (final obstacle in processed) {
+        if (collides(current, obstacle)) {
+          // Push away
+          if (isHorizontal) {
+            current = current.copyWith(x: obstacle.x + obstacle.w);
+          } else {
+            current = current.copyWith(y: obstacle.y + obstacle.h);
+          }
+          hasCollision = true;
+          // Restart check with new position to ensure we don't overlap another obstacle
+          break;
+        }
+      }
+      safety++;
+    }
+    processed.add(current);
+  }
+
+  return processed;
 }
