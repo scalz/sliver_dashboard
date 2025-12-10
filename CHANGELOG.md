@@ -1,3 +1,19 @@
+## 0.4.0 - 2025-12-10
+
+**New feature:**
+
+Added full Accessibility (A11y) support.
+- **Keyboard Navigation:** Users can now navigate the grid using `Tab`, grab items with `Space`/`Enter`, move them with `Arrow Keys`, and drop them with `Space`/`Enter`.
+- **Screen Readers:** Integrated with `SemanticsService` to announce item selection, movement coordinates, and actions.
+- **Localization:** All accessibility messages and semantic hints are now fully configurable/localizable via `DashboardGuidance`.
+- **Custom Shortcuts:** Key bindings can now be customized via `DashboardShortcuts` (e.g. supporting WASD).
+- **Focus Management:** Improved focus retention during drag operations and ensured drag cancellation if focus is lost.
+- Tests
+
+**Fix:** 
+- Resolved visual glitches where items would overlap temporarily during drag operations.
+- Test to avoid regression.
+
 ## 0.3.3 - 2025-12-09
 - **Fix:** Fixed an issue where item, in sliver composition mode, was not correctly clipped when resizing beyond the viewport bounds.
 
