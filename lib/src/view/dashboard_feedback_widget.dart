@@ -99,6 +99,7 @@ class DashboardFeedbackItem extends StatelessWidget {
     final content = DashboardItem(
       item: item,
       isEditing: isEditing,
+      isFeedback: true,
       builder: builder,
     );
 

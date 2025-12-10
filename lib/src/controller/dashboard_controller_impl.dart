@@ -7,6 +7,7 @@ import 'package:sliver_dashboard/src/controller/dashboard_controller_interface.d
 import 'package:sliver_dashboard/src/controller/utility.dart';
 import 'package:sliver_dashboard/src/engine/layout_engine.dart' as engine;
 import 'package:sliver_dashboard/src/models/layout_item.dart';
+import 'package:sliver_dashboard/src/view/a11y/dashboard_shortcuts.dart';
 import 'package:sliver_dashboard/src/view/guidance/dashboard_guidance.dart';
 import 'package:sliver_dashboard/src/view/resize_handle.dart';
 import 'package:state_beacon/state_beacon.dart';
@@ -38,6 +39,9 @@ class DashboardControllerImpl implements DashboardController {
 
   @override
   DashboardGuidance? guidance;
+
+  @override
+  DashboardShortcuts? shortcuts;
 
   // --- BEACONS (Public via Interface) ---
 
@@ -611,5 +615,123 @@ class DashboardControllerImpl implements DashboardController {
     activeItem.value = null;
     originalLayoutOnStart.value = [];
     dragOffset.value = Offset.zero;
+  }
+
+  @override
+  void moveActiveItemBy(int dx, int dy) {
+    final item = activeItem.value;
+    if (item == null || item.isStatic) return; // Should not happen but for safety
+
+    // 1. Calculate new target position
+    final newX = (item.x + dx).clamp(0, slotCount.value - item.w);
+    final newY = max(0, item.y + dy);
+
+    // If no change, do nothing
+    if (newX == item.x && newY == item.y) return;
+
+    // 2. Create a temporary item at the target position for collision check
+    final targetItem = item.copyWith(x: newX, y: newY);
+
+    // Get the layout *before* the current interaction started
+    final baseLayout = originalLayoutOnStart.value;
+
+    // 3. CRITICAL CHECK: Prevent moving onto a static item
+    // We check the target against the base layout statics.
+    final statics = engine.getStatics(baseLayout);
+    if (engine.getFirstCollision(statics, targetItem) != null) {
+      // Reason: For keyboard control (A11y), we must prevent the item from moving
+      // onto a static item, unlike drag-and-drop which allows pushing non-static items.
+      return;
+    }
+
+    // 4. Use the engine to move the element and resolve collisions with non-static items
+    final newLayout = engine.moveElement(
+      baseLayout,
+      baseLayout.firstWhere((i) => i.id == item.id), // Item A at (0,0)
+      newX,
+      newY,
+      cols: slotCount.value,
+      compactType: compactionType.value,
+      preventCollision: preventCollision.value,
+    );
+
+    layout.value = newLayout;
+
+    // Update active item state to the new position for subsequent moves
+    // We must find the item in the new layout as its position might have been adjusted by the engine
+    activeItem.value = newLayout.firstWhere((i) => i.id == item.id);
+
+    // Update drag offset to 0 because keyboard moves are exact grid jumps
+    dragOffset.value = Offset.zero;
+  }
+
+  /*
+  @override
+  void moveActiveItemByOld(int dx, int dy) {
+    final item = activeItem.value;
+    if (item == null) return;
+
+    // Calculate new target position
+    var newX = item.x + dx;
+    var newY = item.y + dy;
+
+    // Clamp to grid boundaries
+    // Horizontal clamping
+    newX = newX.clamp(0, slotCount.value - item.w);
+
+    // Vertical clamping (no upper bound, just >= 0)
+    newY = max(0, newY);
+
+    // If no change, do nothing
+    if (newX == item.x && newY == item.y) return;
+
+    // Update item position
+    final movedItem = item.copyWith(x: newX, y: newY);
+
+    // Update active item state so subsequent moves are relative to this new pos
+    activeItem.value = movedItem;
+
+    // Use the engine to move the element and resolve collisions
+    // We use the original layout as base to avoid drift, but we update the target X/Y
+    final newLayout = engine.moveElement(
+      originalLayoutOnStart.value, // Always move relative to start state?
+      // Actually for keyboard incremental moves, we might want to move relative to current.
+      // But to keep consistency with drag, let's try moving the original item to the NEW accumulated position.
+      // However, since we updated activeItem.value above, we need to be careful.
+      // Let's use the engine's moveElement on the CURRENT layout for keyboard steps to feel "live".
+      // BUT, to allow "Cancel", we must keep originalLayoutOnStart intact.
+
+      // Strategy:
+      // 1. We act as if we dragged the item from original pos to new pos.
+      // 2. We need to find the original item in originalLayoutOnStart.
+      originalLayoutOnStart.value.firstWhere((i) => i.id == item.id),
+      newX,
+      newY,
+      cols: slotCount.value,
+      compactType: compactionType.value,
+      preventCollision: preventCollision.value,
+    );
+
+    layout.value = newLayout;
+
+    // Update drag offset to 0 because keyboard moves are exact grid jumps
+    dragOffset.value = Offset.zero;
+  }
+  */
+
+  @override
+  void cancelInteraction() {
+    if (activeItem.value == null) return;
+
+    // Revert layout
+    if (originalLayoutOnStart.value.isNotEmpty) {
+      layout.value = List.from(originalLayoutOnStart.value);
+    }
+
+    // Reset state
+    activeItem.value = null;
+    originalLayoutOnStart.value = [];
+    dragOffset.value = Offset.zero;
+    isResizing.value = false;
   }
 }

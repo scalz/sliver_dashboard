@@ -33,10 +33,18 @@ The project follows a strict separation of concerns. **Do not violate layer boun
 - **Slivers:** The core grid uses `RenderSliverDashboard`.
   - **DANGER ZONE:** `performLayout` implements the `RenderSliverMultiBoxAdaptor` protocol. It relies on a fragile linked-list state (`firstChild`, `childAfter`).
   - **Rule:** Do not refactor the **order of operations** (GC -> Initial -> Trailing -> Leading). Changing this order will break the child manager and cause crashes.
-- **Caching Strategy ("The Firewall"):**
-  - `DashboardItem` caches its child based on `contentSignature`.
-  - **Rule:** Never remove `RepaintBoundary` or the signature check in `didUpdateWidget`.
+- **Smart Caching Strategy ("The Firewall"):**
+  - `DashboardItem` caches **only the user content** (`_cachedWidget`) inside a `RepaintBoundary`. The outer interaction shell (Focus/Border) is rebuilt on state changes.
+  - **Rule:** Never remove `RepaintBoundary` or the `contentSignature` signature check in `didUpdateWidget`.
 - **Responsive:** Logic is handled internally in `Dashboard` using `LayoutBuilder` + `addPostFrameCallback` (Skip Frame strategy).
+- **Item Persistence:**
+  - **Rule:** When an item is being dragged, the original item in the grid must **NOT be removed** from the tree. Use `Opacity(0.0)` instead. Removing it kills the `FocusNode` and breaks keyboard navigation.
+
+### D. Accessibility (A11y)
+- **First-Class Citizen:** All interactive features must support Keyboard (Tab/Arrows/Space) and Screen Readers.
+- **Pattern:** Use `FocusableActionDetector` wrapping `Intents` that map to Controller methods (e.g., `moveActiveItemBy`).
+- **Focus Scope:** The Dashboard must be wrapped in a `FocusTraversalGroup` with `OrderedTraversalPolicy`.
+- **Configuration:** Labels and shortcuts must be configurable via `DashboardGuidance` and `DashboardShortcuts`.
 
 ## 4. Coding Standards
 
@@ -52,19 +60,25 @@ The project follows a strict separation of concerns. **Do not violate layer boun
 - **Types:** Explicit types for public APIs. Avoid `dynamic`.
 
 ### Models & State
-- **Immutability:** All models (`LayoutItem`, `GridStyle`) must be immutable (`@immutable`).
+- **Immutability:** All models (`LayoutItem`, `GridStyle` ..) must be immutable (`@immutable`).
 - **Serialization:** Implement `fromMap`, `toMap`, `copyWith`, and `==`/`hashCode` for data models.
 
 ### Specific Patterns
 - **Prop Drilling:** Configuration (styles, physics) is passed down via constructor parameters (Dashboard -> Sliver -> Item). This is intentional to decouple Logic from UI styling.
 - **Edit Mode:** Visual cues (handles) and interaction wrappers are only built/mounted when `isEditing` is true.
 - **Mobile Gestures:** Be careful with `GestureDetector` conflicts. On mobile, `GuidanceInteractor` must not block `onLongPress` (let the parent Dashboard handle the drag start).
-- **Transactional Drag State:** During interactions (drag/resize), layout calculations are always performed relative to `originalLayoutOnStart`, **not** the previous frame's layout. This prevents floating-point rounding errors and position "drift".
+- **Transactional Drag State:** 
+  - During interactions (drag/resize), layout calculations are always performed relative to `originalLayoutOnStart`, **not** the previous frame's layout. This prevents floating-point rounding errors and position "drift".
+  - **Anti-Drift:** The controller uses a dragOffset beacon for smooth visual translation, distinct from logical grid updates.
 - **Coordinate Separation:**
   - **Engine:** Operates strictly in **Grid Coordinates** (`int x, y`).
   - **View:** Handles translation to **Pixel Coordinates** (`double offset`) using `SlotMetrics`.
   - **Rule:** Never pass pixel values to the `LayoutEngine`.
-- **Feedback Layering:** The item being dragged is rendered in a dedicated overlay (`Stack`) above the `CustomScrollView`. The actual item in the grid acts as a placeholder (or is hidden) during the operation.
+- **Feedback Layering:**
+- **Layering:** The item being dragged is rendered in a dedicated overlay (`Stack`) above the `CustomScrollView`.
+- **Clipping Strategy:** The feedback item must be visually contained within the Sliver's visible area.
+  - **Rule:** Calculate the clip rect dynamically based on `SliverConstraints.overlap` (e.g., `max(visualPos, overlap)`).
+- **Hit-Testing:** Use a specific `GlobalKey` on the Overlay's main Stack to ensure hit-tests are performed on the full screen area.
 - **Sliver Protocol Compliance:** In `RenderSliverDashboard`, the `performLayout` method manages a **doubly linked list** of children. You must strictly adhere to this sequence to avoid corrupting the chain (e.g., `assert after != null` errors):
   1.  **Metrics:** Calculate slot sizes and visible range first.
   2.  **Garbage Collection (GC):** Remove children outside the viewport (`collectGarbage`) **BEFORE** trying to insert new ones. This clears invalid references.
@@ -80,7 +94,10 @@ The project follows a strict separation of concerns. **Do not violate layer boun
   - **Core Engine (`LayoutEngine`):** Maintain > 95% code coverage.
   - **Controller (`DashboardController`):** Maintain > 95% code coverage.
 - **Engine Tests:** Test all edge cases (collisions, compaction, resizing) using pure unit tests.
-- **Widget Tests:** Use `flutter_test` to verify interactions (drag, drop, resize).
+- **Widget Tests:**
+  - Use `flutter_test` to verify interactions to verify interactions (drag, drop, resize).
+  - **A11y Tests:** Verify focus traversal and keyboard shortcuts using `tester.sendKeyEvent`.
+  - **Sliver Integration:** Test feedback clipping when scrolled under an AppBar.
 - **Performance:** Ensure no regression in rebuild counts (use the `BuildCounter` pattern in tests).
 
 ## 6. Documentation
@@ -98,6 +115,12 @@ The project follows a strict separation of concerns. **Do not violate layer boun
   ```
 
 ## 7. Common Tasks & Snippets
+
+### Debugging Visual Offsets
+If the drag feedback is offset from the cursor:
+1. Check `_buildFeedbackLayer` in `DashboardOverlay`.
+2. Ensure you are using `getTransformTo` and `MatrixUtils.transformPoint`.
+3. **Do not** manually add `SliverPadding`. The matrix already accounts for it.
 
 ### Adding a new feature to the Controller
 1. Define the member/method in `DashboardController` (Interface).

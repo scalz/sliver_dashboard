@@ -1,6 +1,7 @@
 // coverage:ignore-file
 
 import 'package:flutter/material.dart';
+import 'package:sliver_dashboard/src/view/dashboard_typedefs.dart';
 
 /// A class that holds both a [MouseCursor] and a [String] message,
 /// representing the guidance for a specific user interaction.
@@ -53,10 +54,28 @@ class DashboardGuidance {
     this.tapToResize = 'Tap and hold to resize',
     this.longPressToMove = 'Drag to move item',
     this.longPressToResize = 'Drag to resize',
+
+    // Accessibility (Screen Readers)
+    this.a11yGrab = _defaultA11yGrab,
+    this.a11yDrop = _defaultA11yDrop,
+    this.a11yMove = _defaultA11yMove,
+    this.a11yCancel = 'Interaction cancelled. Item returned to original position.',
+    this.semanticsHintGrab = 'Press Space to grab',
+    this.semanticsHintDrop = 'Press Space to drop, Arrows to move',
   });
 
   /// The default guidance messages.
   static const DashboardGuidance byDefault = DashboardGuidance();
+
+  // --- Default Implementations ---
+  static String _defaultA11yGrab(String id) =>
+      'Item $id grabbed. Use arrow keys to move, Space to drop, Escape to cancel.';
+
+  static String _defaultA11yDrop(int x, int y) => 'Item dropped at Row $y, Column $x.';
+
+  static String _defaultA11yMove(int x, int y) => 'Row $y, Column $x';
+
+  // --- Visual Properties ---
 
   /// Message on hover for moving an item (desktop).
   final InteractionGuidance move;
@@ -90,4 +109,24 @@ class DashboardGuidance {
 
   /// Message on long-press for resizing an item (mobile).
   final String longPressToResize;
+
+  // --- Accessibility Properties ---
+
+  /// Message announced when an item is grabbed via keyboard.
+  final A11yItemMessageBuilder a11yGrab;
+
+  /// Message announced when an item is dropped.
+  final A11yPositionMessageBuilder a11yDrop;
+
+  /// Message announced when an item moves (feedback for arrow keys).
+  final A11yPositionMessageBuilder a11yMove;
+
+  /// Message announced when interaction is cancelled (Esc or focus loss).
+  final String a11yCancel;
+
+  /// Semantic hint when the item is idle (not grabbed).
+  final String semanticsHintGrab;
+
+  /// Semantic hint when the item is grabbed.
+  final String semanticsHintDrop;
 }

@@ -1,4 +1,5 @@
 import 'dart:math';
+import 'package:flutter/services.dart';
 import 'package:sliver_dashboard/sliver_dashboard.dart';
 import 'package:flutter/material.dart';
 
@@ -36,60 +37,7 @@ class _DashboardPageState extends State<DashboardPage> {
   var slotCount = 8;
 
   // Create and manage your DashboardController.
-  late final controller = DashboardController(
-    initialSlotCount: slotCount,
-    onLayoutChanged: (items) {
-      debugPrint(
-        'Layout changed! Saving ${items.length} items to persistence...',
-      );
-      // In a real app, you would save the layout to a DB or SharedPreferences.
-      // You can get a JSON-ready list of maps using:
-      // final json = controller.exportLayout();
-      // myStorage.save(json);
-    },
-    onInteractionStart: (item) {
-      // Do something, eg. haptic feedback..
-      debugPrint('Interaction started on ${item.id}');
-    },
-    initialLayout: [
-      // Row 1
-      const LayoutItem(
-        id: '9',
-        x: 0,
-        y: 0,
-        w: 2,
-        h: 2,
-        isDraggable: true,
-        isResizable: true,
-        isStatic: false,
-      ),
-      const LayoutItem(id: '12', x: 2, y: 4, w: 2, h: 2),
-      const LayoutItem(id: '7', x: 4, y: 0, w: 2, h: 2),
-      const LayoutItem(id: '1', x: 6, y: 0, w: 2, h: 1),
-
-      // Row 2
-      const LayoutItem(id: '13', x: 6, y: 1, w: 2, h: 1),
-
-      // Row 3
-      const LayoutItem(id: '15', x: 0, y: 2, w: 2, h: 2),
-      const LayoutItem(id: '0', x: 2, y: 2, w: 2, h: 1),
-      const LayoutItem(id: '2', x: 4, y: 2, w: 2, h: 3),
-      const LayoutItem(id: '14', x: 6, y: 2, w: 2, h: 2),
-
-      // Row 4
-      const LayoutItem(id: '6', x: 2, y: 3, w: 2, h: 1),
-
-      // Row 5
-      const LayoutItem(id: '24', x: 0, y: 4, w: 2, h: 2),
-      const LayoutItem(id: '18', x: 2, y: 4, w: 2, h: 2),
-      const LayoutItem(id: '21', x: 6, y: 4, w: 2, h: 2),
-
-      // Row 6 (Static and others at the bottom)
-      const LayoutItem(id: '19', x: 4, y: 5, w: 2, h: 2, isStatic: true),
-      const LayoutItem(id: '20', x: 6, y: 6, w: 2, h: 2),
-      const LayoutItem(id: '3', x: 4, y: 7, w: 2, h: 1),
-    ],
-  );
+  late final DashboardController controller;
 
   final editMode = ValueNotifier(false);
   final compactionType = ValueNotifier<CompactType>(CompactType.vertical);
@@ -107,6 +55,76 @@ class _DashboardPageState extends State<DashboardPage> {
         1,
       );
     });
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    // Create and manage your DashboardController.
+    controller = DashboardController(
+      initialSlotCount: slotCount,
+      onLayoutChanged: (items) {
+        debugPrint(
+          'Layout changed! Saving ${items.length} items to persistence...',
+        );
+        // In a real app, you would save the layout to a DB or SharedPreferences.
+        // You can get a JSON-ready list of maps using:
+        // final json = controller.exportLayout();
+        // myStorage.save(json);
+      },
+      onInteractionStart: (item) {
+        // Do something, eg. haptic feedback..
+        debugPrint('Interaction started on ${item.id}');
+      },
+      initialLayout: [
+        // Row 1
+        const LayoutItem(
+          id: '9',
+          x: 0,
+          y: 0,
+          w: 2,
+          h: 2,
+          isDraggable: true,
+          isResizable: true,
+          isStatic: false,
+        ),
+        const LayoutItem(id: '12', x: 2, y: 4, w: 2, h: 2),
+        const LayoutItem(id: '7', x: 4, y: 0, w: 2, h: 2),
+        const LayoutItem(id: '1', x: 6, y: 0, w: 2, h: 1),
+
+        // Row 2
+        const LayoutItem(id: '13', x: 6, y: 1, w: 2, h: 1),
+
+        // Row 3
+        const LayoutItem(id: '15', x: 0, y: 2, w: 2, h: 2),
+        const LayoutItem(id: '0', x: 2, y: 2, w: 2, h: 1),
+        const LayoutItem(id: '2', x: 4, y: 2, w: 2, h: 3),
+        const LayoutItem(id: '14', x: 6, y: 2, w: 2, h: 2),
+
+        // Row 4
+        const LayoutItem(id: '6', x: 2, y: 3, w: 2, h: 1),
+
+        // Row 5
+        const LayoutItem(id: '24', x: 0, y: 4, w: 2, h: 2),
+        const LayoutItem(id: '18', x: 2, y: 4, w: 2, h: 2),
+        const LayoutItem(id: '21', x: 6, y: 4, w: 2, h: 2),
+
+        // Row 6 (Static and others at the bottom)
+        const LayoutItem(id: '19', x: 4, y: 5, w: 2, h: 2, isStatic: true),
+        const LayoutItem(id: '20', x: 6, y: 6, w: 2, h: 2),
+        const LayoutItem(id: '3', x: 4, y: 7, w: 2, h: 1),
+      ],
+    );
+
+    controller.shortcuts = DashboardShortcuts(
+      moveUp: {const SingleActivator(LogicalKeyboardKey.keyW)},
+      moveLeft: {const SingleActivator(LogicalKeyboardKey.keyA)},
+      moveDown: {const SingleActivator(LogicalKeyboardKey.keyS)},
+      moveRight: {const SingleActivator(LogicalKeyboardKey.keyD)},
+      grab: DashboardShortcuts.defaultShortcuts.grab,
+      drop: DashboardShortcuts.defaultShortcuts.drop,
+      cancel: DashboardShortcuts.defaultShortcuts.cancel,
+    );
   }
 
   @override
@@ -442,6 +460,7 @@ class MyCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    print('MyCard build called for item ${item.id}');
     return Card(
       elevation: 2,
       color: color,

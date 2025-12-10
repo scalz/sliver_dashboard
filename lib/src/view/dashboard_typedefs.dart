@@ -34,3 +34,9 @@ typedef DashboardTrashBuilder = Widget Function(
   bool isActive,
   String? activeItemId,
 );
+
+/// Builder for accessibility messages related to an item ID.
+typedef A11yItemMessageBuilder = String Function(String itemId);
+
+/// Builder for accessibility messages related to a grid position.
+typedef A11yPositionMessageBuilder = String Function(int x, int y);

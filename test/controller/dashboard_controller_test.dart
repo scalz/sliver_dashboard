@@ -1,11 +1,16 @@
 import 'package:flutter/material.dart' show Axis;
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mocktail/mocktail.dart';
 import 'package:sliver_dashboard/src/controller/dashboard_controller_impl.dart';
 import 'package:sliver_dashboard/src/controller/dashboard_controller_interface.dart';
 import 'package:sliver_dashboard/src/controller/utility.dart';
 import 'package:sliver_dashboard/src/engine/layout_engine.dart' show CompactType;
 import 'package:sliver_dashboard/src/models/layout_item.dart';
 import 'package:sliver_dashboard/src/view/resize_handle.dart';
+
+class MockLayoutChangeListener extends Mock {
+  void call(List<LayoutItem> items);
+}
 
 void main() {
   group('DashboardController', () {
@@ -1023,6 +1028,117 @@ void main() {
           expect(auto.y, 0);
         });
       });
+    });
+  });
+
+  group('A11y Keyboard Control', () {
+    late DashboardControllerImpl controller;
+    late MockLayoutChangeListener mockListener;
+
+    const initialLayout = [
+      LayoutItem(id: 'A', x: 0, y: 0, w: 2, h: 2),
+      LayoutItem(id: 'B', x: 2, y: 0, w: 2, h: 1),
+      LayoutItem(id: 'C', x: 0, y: 2, w: 4, h: 1, isStatic: true), // Static item at the bottom
+    ];
+
+    setUp(() {
+      mockListener = MockLayoutChangeListener();
+      controller = DashboardControllerImpl(
+        initialSlotCount: 4,
+        initialLayout: initialLayout,
+        onLayoutChanged: mockListener.call,
+      );
+      // Register fallback for mocktail
+      registerFallbackValue(initialLayout);
+    });
+
+    test('moveActiveItemBy moves the item and resolves collision', () {
+      // 1. Start a drag operation (simulating Grab)
+      controller
+        ..onDragStart('A')
+
+        // 2. Move item A (2x2) one slot right (x=1, y=0)
+        ..moveActiveItemBy(1, 0);
+
+      // Verify layout update
+      final newLayout = controller.layout.value;
+      final itemA = newLayout.firstWhere((i) => i.id == 'A');
+
+      // Should move to x=1
+      expect(itemA.x, 1);
+      expect(itemA.y, 0);
+
+      // Item B should be pushed down by A (to y=2) and then by C (to y=3)
+      final itemB = newLayout.firstWhere((i) => i.id == 'B');
+      expect(itemB.y, 3);
+      expect(itemB.x, 2);
+
+      // 3. Move item A one slot down (x=1, y=1)
+      // CRITICAL: This move collides with Static Item C at y=2. It should be blocked.
+      controller.moveActiveItemBy(0, 1);
+      final layoutAfterDown = controller.layout.value;
+      final itemAAfterDown = layoutAfterDown.firstWhere((i) => i.id == 'A');
+
+      // Should NOT move from the previous position (x=1, y=0)
+      expect(itemAAfterDown.x, 1);
+      expect(itemAAfterDown.y, 0);
+
+      // The layout should have reverted to the state *before* the failed move.
+      final itemBAfterDown = layoutAfterDown.firstWhere((i) => i.id == 'B');
+      expect(itemBAfterDown.y, 3); // B should still be at y=3
+
+      // moveActiveItemBy is an intermediate step (like onDragUpdate)
+      // and should NOT trigger the persistence listener.
+      verifyNever(() => mockListener.call(any()));
+    });
+
+    test('moveActiveItemBy clamps movement to grid boundaries', () {
+      controller
+        ..onDragStart('A') // A is at x=0, w=2, slotCount=4
+
+        // Try to move left past 0
+        ..moveActiveItemBy(-5, 0);
+      var itemA = controller.layout.value.firstWhere((i) => i.id == 'A');
+      expect(itemA.x, 0); // Clamped to 0
+
+      // Try to move right past slotCount - w (4 - 2 = 2)
+      controller.moveActiveItemBy(5, 0);
+      itemA = controller.layout.value.firstWhere((i) => i.id == 'A');
+      expect(itemA.x, 2); // Clamped to 2
+
+      // Try to move up past 0
+      controller.moveActiveItemBy(0, -5);
+      itemA = controller.layout.value.firstWhere((i) => i.id == 'A');
+      expect(itemA.y, 0); // Clamped to 0
+    });
+
+    test('cancelInteraction reverts layout and resets state', () {
+      // Item A is at (0,0) at the start
+      expect(controller.layout.value.firstWhere((i) => i.id == 'A').y, 0);
+
+      // 1. Start drag and make a change
+      controller
+        ..onDragStart('A')
+        ..moveActiveItemBy(1, 0) // Item A moves to (1,0)
+
+        // 2. Cancel interaction
+        ..cancelInteraction();
+
+      // 3. Verify layout reverted
+      final itemA = controller.layout.value.firstWhere((i) => i.id == 'A');
+      expect(itemA.x, 0); // Reverted
+      expect(itemA.y, 0); // Reverted
+    });
+
+    test('cancelInteraction does nothing if no item is active', () {
+      // Ensure no active item
+      controller.internal.activeItem.value = null;
+
+      // Try to cancel
+      controller.cancelInteraction();
+
+      // Should not throw and state should remain clean
+      expect(controller.activeItemId.value, isNull);
     });
   });
 }

@@ -30,6 +30,7 @@ Perfect for analytics dashboards, IoT control panels, project management tools, 
 - 📥 **Drag From Outside:** Drop new items from external sources directly into the grid with auto-scrolling support.
 - 💡 **Guidance:** Optional contextual tooltips/guidance messages.
 - 📱 **Responsive Layouts:** Automatically adapt the number of columns (`slotCount`) based on the screen width using the built-in `breakpoints` property.
+- ♿ **Accessibility:** Full keyboard navigation support (Tab, Arrows, Space, Enter) and Screen Reader announcements (TalkBack/VoiceOver).
 - 💾 **Utilities**: Import/Export, find free cells, get last row, Auto Layout & Bulk Add.
 
 ## Table of Contents
@@ -50,10 +51,11 @@ Perfect for analytics dashboards, IoT control panels, project management tools, 
   - [Import / Export (Persistence)](#import--export-persistence)
   - [Responsive Layouts](#responsive-layouts)
   - [Auto Layout bulk add](#auto-layout-bulk-add)
+  - [Accessibility and Keyboard Navigation](#accessibility-and-keyboard-navigation)
   - [Utilities](#utilities)
 - [Contributing](#contributing)
 - [Roadmap](#roadmap)
-
+  
 ## Getting Started
 
 ### 1. Add Dependency
@@ -570,6 +572,55 @@ controller.addItems([
 ]);
 ```
 
+### Accessibility and Keyboard Navigation
+
+The dashboard is fully accessible out of the box. When **Edit Mode** is enabled, users can navigate and manipulate the grid using only the keyboard.
+
+| Key | Action |
+| :--- | :--- |
+| **Tab** | Focus the next item. |
+| **Space** / **Enter** | **Grab** the focused item (arm dragging). |
+| **Arrow Keys** | **Move** the grabbed item (Up, Down, Left, Right). |
+| **Space** / **Enter** | **Drop** the item at the new position. |
+| **Esc** | **Cancel** the move and return the item to its original position. |
+
+**Screen Readers:** The dashboard integrates with `SemanticsService` to announce:
+*   Item selection ("Item {id} grabbed").
+*   Movement updates ("Row {y}, Column {x}").
+*   Drop and Cancel actions.
+
+**Customization:**
+
+You can translate messages using `DashboardGuidance` and customize key bindings using `DashboardShortcuts`.
+
+```dart
+Dashboard(
+  controller: controller,
+  // 1. Customize Messages (i18n)
+  guidance: DashboardGuidance(
+    move: InteractionGuidance(SystemMouseCursors.grab, 'Move'),
+    a11yGrab: (id) => 'Item $id grabbed. Use arrows to move.',
+    a11yDrop: (x, y) => 'Dropped on Row $y, Column $x.',
+    a11yMove: (x, y) => 'Row $y, Column $x',
+    a11yCancel: 'Cancelled.',
+    semanticsHintGrab: 'Press Space to grab',
+    semanticsHintDrop: 'Press Space to drop',
+  ),
+);
+
+// 2. Customize Keys (e.g. WASD)
+controller.shortcuts = DashboardShortcuts(
+  moveUp: {const SingleActivator(LogicalKeyboardKey.keyW)},
+  moveLeft: {const SingleActivator(LogicalKeyboardKey.keyA)},
+  moveDown: {const SingleActivator(LogicalKeyboardKey.keyS)},
+  moveRight: {const SingleActivator(LogicalKeyboardKey.keyD)},
+  // Keep defaults for others
+  grab: DashboardShortcuts.defaultShortcuts.grab,
+  drop: DashboardShortcuts.defaultShortcuts.drop,
+  cancel: DashboardShortcuts.defaultShortcuts.cancel,
+);
+```
+
 ### Utilities
 
 The controller provides useful getters to help you interact with the layout programmatically.
@@ -634,6 +685,10 @@ genhtml coverage/lcov.info -o coverage/html
 ```
 
 ## Roadmap
-- ✅ **SliverDashboard:** Native integration with `CustomScrollView`.
-- 🔲 **Accessibility:** Enhanced screen reader support and keyboard navigation.
-- 🔲 **Animations:** Improved transitions when items are reordered.
+- ✅ **SliverDashboard:** Compose a dashboard with others slivers in your `CustomScrollView`.
+- ✅ **Accessibility:** Enhanced screen reader support and keyboard navigation with configurable keys and messages.
+- 🔲 **Layout Optimizer:** Pack Tight, Balance Heights..
+- 🔲 **Portal:** Mini-map, Teleport..
+- 🔲 **Sticky Headers:** Special item to create "barrier" for defining sections in layout.
+- 🔲 **Nested dashboard:** Special "folder" item where you can drag&drop items from main dashboard to a "folder" dashboard, and vice-versa.
+- 🔲 **Multi-Selection:** Multi item selection and dragging.

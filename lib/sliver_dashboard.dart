@@ -2,6 +2,7 @@ export 'src/controller/dashboard_controller_interface.dart';
 export 'src/controller/dashboard_controller_provider.dart';
 export 'src/engine/layout_engine.dart';
 export 'src/models/layout_item.dart';
+export 'src/view/a11y/dashboard_shortcuts.dart';
 export 'src/view/dashboard.dart';
 export 'src/view/dashboard_configuration.dart';
 export 'src/view/dashboard_item_wrapper.dart';

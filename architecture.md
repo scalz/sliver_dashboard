@@ -14,6 +14,7 @@ The architecture is built on a foundation of modern, idiomatic Flutter principle
     *   **Aggressive Caching:** Individual item widgets are cached and protected from unnecessary rebuilds using a "Firewall" widget strategy.
     *   **Paint Isolation:** Use of `RepaintBoundary` ensures that layout changes (moving an item) do not trigger expensive repaints of the item's content.
 5.  **Immutability:** State objects, particularly the `LayoutItem` model, are immutable.
+6.  **Accessibility (A11y):** The dashboard is designed to be fully usable via keyboard and screen readers, treating accessibility as a first-class citizen, not an afterthought.
 
 ## Core Layers
 
@@ -26,33 +27,35 @@ graph TD
         B --> C(CustomScrollView);
         B -- "Gestures & Feedback" --> F[Feedback Stack];
         B -- "Background" --> BG[DashboardGrid];
-        C --> D(SliverDashboard);
+        C -- "Focus Scope" --> D(SliverDashboard);
         D --> E(RenderSliverDashboard);
-        E --> I["DashboardItem (Cache Firewall)"];
-        I --> J["User Content (RepaintBoundary)"];
+        E --> I["DashboardItem (Interaction Shell)"];
+        I --> K["FocusableActionDetector"];
+        K --> L["User Content (Cached & RepaintBoundary)"];
     end
 
     subgraph State Layer
-        K[DashboardController - Interface] --> L[DashboardControllerImpl]
-        L --> M["Beacons (State)"];
+        M[DashboardController - Interface] --> N[DashboardControllerImpl]
+        N --> O["Beacons (State)"];
     end
 
     subgraph Logic Layer
-        N[LayoutEngine];
+        P[LayoutEngine];
     end
 
-    B -- "User Gestures (Drag/Resize)" --> K;
-    L -- Updates State --> M;
-    M -- Notifies --> B;
-    M -- Notifies --> D;
-    L -- Calls Pure Functions --> N;
-    N -- Returns New Layout --> L;
+    B -- "User Gestures (Drag/Resize)" --> M;
+    K -- "Keyboard Actions (Intents)" --> M;
+    N -- Updates State --> O;
+    O -- Notifies --> B;
+    O -- Notifies --> D;
+    N -- Calls Pure Functions --> P;
+    P -- Returns New Layout --> N;
 
     style A fill:#cde4ff,color:#000000
     style B fill:#dae8fc,color:#000000
     style D fill:#d5e8d4,color:#000000
-    style K fill:#fff2cc,color:#000000
-    style N fill:#ffe6cc,color:#000000
+    style M fill:#fff2cc,color:#000000
+    style P fill:#ffe6cc,color:#000000
 ```
 
 ### 1. The State Layer (DashboardController)
@@ -62,7 +65,7 @@ graph TD
 - **Implementation:**
     - **Interface Separation:** The public `DashboardController` is an abstract interface. The logic resides in `DashboardControllerImpl`.
     - **Drag Offset:** Manages a `dragOffset` beacon to provide smooth visual feedback during drags without committing every pixel change to the logical grid layout.
-    - **Orchestrator:** It acts as a bridge. When an action occurs (e.g., `onDragUpdate`), it:
+    - **Orchestrator:** It acts as a bridge. When an action occurs (e.g., `onDragUpdate` or `moveActiveItemBy`), it:
         1. Reads the current state.
         2. Calls the pure `LayoutEngine`.
         3. Updates the beacons with the result.
@@ -79,24 +82,24 @@ graph TD
 ### 3. The View Layer (Overlay & Slivers)
 
 - **Location:** `lib/src/view/`
-- **Responsibility:** To render the state efficiently and handle user gestures.
+- **Responsibility:** To render the state efficiently, handle user gestures, and manage focus/accessibility.
 
 The view layer has been refactored to support native Sliver composition. It is composed of three key widgets:
 
 #### A. `DashboardOverlay` (The Interaction Layer)
-- **Role:** Handles all user interactions (Gestures), visual feedback (Drag placeholders, Resize handles), Auto-scrolling, and the Trash bin.
+- **Role:** Handles all pointer interactions (Gestures), visual feedback (Drag placeholders, Resize handles), Auto-scrolling, and the Trash bin.
 - **Placement:** It must wrap the `CustomScrollView`.
 - **Logic:**
-    - Uses a global `GestureDetector` to track pointer events.
-    - Performs hit-testing to locate the underlying `RenderSliverDashboard` and the specific item being interacted with.
-    - Manages the `Stack` that displays the **Grid Background** (`DashboardGrid`) and the **Feedback Item** (the widget following the finger).
+    - **Global Key:** Uses a unique `GlobalKey` on its internal `Stack` to strictly identify the viewport boundaries for hit-testing and auto-scrolling.
+    - **Matrix Transformation:** Uses `renderSliver.getTransformTo(overlay)` to calculate the exact pixel position of the grid, ensuring perfect synchronization between the feedback item and the grid, even inside nested scrolling views.
+    - **Overlap-Aware Clipping:** dynamically calculates a `ClipRect` for the feedback item that respects `SliverConstraints.overlap` (e.g., sliding under a pinned `SliverAppBar`).
 
 #### B. `SliverDashboard` (The Rendering Layer)
 - **Role:** Renders the actual items within the scroll view using the Sliver protocol.
 - **Logic:**
-    - **Responsive Logic:** Handles `breakpoints` internally using `SliverLayoutBuilder`.
-        - **Optimization:** Uses a "Skip Frame" strategy. If the slot count needs to be updated based on width, it schedules the update via `addPostFrameCallback` and returns `SizedBox.shrink()` for the current frame. This prevents building the heavy grid twice (once with wrong slots, once with correct slots).
-    - **RenderObject:** Creates and updates `RenderSliverDashboard`.
+    - **Focus Scope (Parent):** The parent `Dashboard` widget wraps the `CustomScrollView` in a `FocusTraversalGroup` with `OrderedTraversalPolicy` to ensure Tab navigation follows the visual grid logic (Row-major order).
+    - **Responsive Logic:** Handles `breakpoints` internally using "Skip Frame" optimization.
+    - **Item Persistence:** Unlike standard drag-and-drop lists, items being dragged are **NOT removed** from the tree. They are rendered with `Opacity(0.0)`. This is crucial to preserve their `FocusNode` state during keyboard interactions.
 
 #### C. `RenderSliverDashboard` (The Engine Room)
 - **Role:** Implements `RenderSliverMultiBoxAdaptor` to perform the actual layout and painting.
@@ -107,52 +110,75 @@ The view layer has been refactored to support native Sliver composition. It is c
     3.  **Initial Child:** Find and insert the first visible item based on scroll offset.
     4.  **Fill Trailing/Leading:** Insert remaining visible items outwards from the initial child.
 
-#### D. Internal Components
+#### D. `DashboardItem` (The Smart Wrapper)
+- **Role:** The atomic unit of the grid. It handles Caching, Focus, Accessibility, and Visual Decoration.
+- **Structure:**
+    - **Outer Shell:** `FocusableActionDetector` handling keyboard shortcuts and focus states. Rebuilt on state changes (Focus/Grab).
+    - **Inner Core:** Cached User Content wrapped in `RepaintBoundary`.
+
+#### E. Internal Components
 - **`DashboardItemWrapper`:**
-    - Adds visual decorations needed for editing, such as the **Resize Handles**.
-    - Wraps the content in a `GuidanceInteractor` if guidance is enabled.
-    - It is part of the cached subtree within `DashboardItem`.
+    - **Role:** The final visual layer before the user's content.
+    - **Logic:** Adds visual decorations needed for editing, such as the **Resize Handles**.
+    - **Integration:** Wraps the content in a `GuidanceInteractor` if guidance is enabled.
 - **`GuidanceInteractor`:**
-    - Handles hover (desktop) and tap/long-press (mobile) events to display contextual guidance messages.
-    - Manages gesture conflicts on mobile to ensure drag operations are not blocked.
+    - **Role:** Handles contextual user guidance.
+    - **Logic:** Detects hover (desktop) and tap/long-press (mobile) events to display contextual guidance messages.
+    - **Conflict Management:** Manages gesture conflicts on mobile to ensure drag operations are not blocked.
 
-## 4. Performance Optimization Strategy
+## 4. Accessibility Architecture
 
-The biggest challenge in a grid layout is preventing the reconstruction of child widgets when the parent layout changes (e.g., resizing the window or dragging an item). `sliver_dashboard` solves this using a multi-level caching strategy:
+The package implements a comprehensive A11y strategy based on Flutter's `Actions` and `Intents`.
 
-1.  **`DashboardItem` (The Firewall):**
-    - A `StatefulWidget` that wraps every item in the grid.
-    - It maintains a cache of the built widget subtree.
-    - **Smart Invalidation:** In `didUpdateWidget`, it compares the `contentSignature` of the new item vs. the old item.
-        - `contentSignature` is a hash of properties that affect *content* (width, height, id, static status).
-        - **Crucially**, it *ignores* position changes (`x`, `y`) and the `itemBuilder` closure instance.
-    - If the signature matches, it returns the **exact same widget instance** from its cache. Flutter detects `oldWidget == newWidget` and stops the rebuild propagation immediately.
+- **Intents:** Abstract user intentions (`DashboardGrabItemIntent`, `DashboardMoveItemIntent`, `DashboardDropItemIntent`).
+- **Shortcuts:** A configurable map binding keys to Intents (e.g., `Space` -> `Grab`, `Arrows` -> `Move`). This is customizable via `DashboardShortcuts`.
+- **Actions:** The logic executed when an Intent is triggered. These call the Controller methods (`moveActiveItemBy`, `cancelInteraction`).
+- **Announcements:** Integration with `SemanticsService` to announce state changes (Selection, Movement coordinates) to screen readers. Messages are customizable via `DashboardGuidance`.
+
+## 5. Performance Optimization Strategy
+
+The biggest challenge in a grid layout is preventing the reconstruction of child widgets when the parent layout changes (e.g., resizing the window or dragging an item). `sliver_dashboard` solves this using a **Smart Caching** strategy:
+
+1.  **Content Isolation (The Firewall):**
+    - The expensive part (the user's widget provided via `itemBuilder`) is cached in a local state `_cachedWidget`.
+    - **Smart Invalidation:** In `didUpdateWidget`, the system compares the `contentSignature` of the new item vs. the old item.
+        - **Rule:** `contentSignature` is a hash of properties that affect *content* (width, height, id, static status) and **crucially ignores** position changes (`x`, `y`).
+    - If the signature matches, the cached widget instance is returned. Flutter detects `oldWidget == newWidget` and stops the rebuild propagation immediately.
 
 2.  **Lazy Loading:**
-    - The cache is initialized lazily in the `build()` method (not `initState`). This ensures that `InheritedWidgets` (like `Theme`, `Provider`, or `LiteRefScope`) are accessible during the first build.
+    - **Rule:** The cache is initialized lazily in the `build()` method (not `initState`). This ensures that `InheritedWidgets` (like `Theme` or `Provider`) are accessible during the first build, preventing runtime errors.
 
-3.  **`RepaintBoundary`:**
-    - The cached widget tree includes a `RepaintBoundary` wrapping the user's content.
-    - When an item is moved (layout update), the GPU can simply translate the existing texture without repainting the pixels of the child widget.
+3.  **Shell Reconstruction:**
+    - The "Interaction Shell" (border, focus detector, semantics) is rebuilt frequently (e.g., when gaining focus or being grabbed).
+    - Because the heavy user content is cached and wrapped in `RepaintBoundary`, rebuilding the shell is extremely cheap (sub-millisecond).
 
-## 5. Core Technical Patterns
+4.  **RepaintBoundary:**
+    - When an item moves, the cached widget tree includes a `RepaintBoundary` wrapping the user's content. The GPU simply translates the existing texture without repainting the pixels of the child widget.
+
+## 6. Core Technical Patterns
 
 ### Coordinate Separation
 The system strictly separates logical grid coordinates from visual pixel coordinates to maintain precision.
 - **Engine:** Operates strictly in **Grid Coordinates** (`int x, y`). It never sees pixel values.
 - **View:** Handles translation to **Pixel Coordinates** (`double offset`) using `SlotMetrics`.
 
-### Sliver Coordinate Mapping
-When using `SliverDashboard` inside a complex `CustomScrollView` (e.g., with `SliverAppBar`), the grid does not start at pixel (0,0).
-- `DashboardOverlay` locates the `RenderSliverDashboard` in the render tree.
-- It extracts `constraints.precedingScrollExtent` to calculate the exact visual offset of the grid.
-- This ensures that drag feedback and grid lines align perfectly, regardless of scroll position or headers.
+### Matrix-Based Coordinate Mapping
+To support complex Sliver compositions (e.g., inside a `CustomScrollView` with `SliverAppBar`, `SliverPadding`, etc.), we do not rely on simple offset addition.
+- `DashboardOverlay` obtains the **Transformation Matrix** between the `RenderSliverDashboard` and the overlay root.
+- This accounts for scroll offsets, overlaps, and parent transforms precisely.
 
 ### Transactional Drag State (Anti-Drift)
 To prevent floating-point rounding errors and position "drift" during drag operations:
 - The controller stores the `originalLayoutOnStart` when a gesture begins.
-- Every `onDragUpdate` calculates the new position relative to this **initial state**, not the previous frame's state.
-- The `dragOffset` beacon handles the smooth visual translation (pixels) separately from the logical grid updates (integers).
+- Every `onDragUpdate` calculates the new position relative to this **initial state**.
+- The `dragOffset` beacon handles the smooth visual translation (pixels) separately from the logical grid updates.
+
+### Feedback Layering & Clipping
+When an item is being dragged:
+1.  **Grid:** The actual item stays in the tree but is made invisible (`Opacity 0`) to keep its FocusNode alive.
+2.  **Overlay:** A visual copy (Feedback) is rendered in the `DashboardOverlay` stack.
+3.  **Clipping:** The feedback item is clipped using a `ClipRect` calculated from the Sliver's `overlap` constraint. This ensures the item appears to slide "under" pinned headers like an AppBar, rather than floating over them.
+
 
 ### Feedback Layering
 When an item is being dragged:

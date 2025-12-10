@@ -101,6 +101,7 @@ class _SliverDashboardState extends State<SliverDashboard> {
   Widget build(BuildContext context) {
     // Watch layout changes
     _controller.layout.watch(context);
+    _controller.activeItemId.watch(context); // Watch active ID here
     final isEditing = _controller.isEditing.watch(context);
 
     // Use SliverLayoutBuilder instead of LayoutBuilder to return a RenderSliver
@@ -133,15 +134,11 @@ class _SliverDashboardState extends State<SliverDashboard> {
           onPerformLayout: widget.onPerformLayout,
           delegate: SliverChildBuilderDelegate(
             (context, index) {
-              final activeItemId = _controller.activeItemId.watch(context);
               final item = _controller.layout.value[index];
-              final isBeingDragged = item.id == activeItemId;
 
-              // Hide the item in the grid if it's being dragged (it's rendered in Overlay)
-              if (isBeingDragged && item.id != '__placeholder__') {
-                return const SizedBox.shrink();
-              }
-
+              // Reason: We return the DashboardItem always.
+              // The item itself handles its visibility (Opacity 0.0) if it is the active item,
+              // to preserve its FocusNode for keyboard accessibility.
               return KeyedSubtree(
                 key: ValueKey('${item.id}${widget.itemGlobalKeySuffix}'),
                 child: DashboardItem(

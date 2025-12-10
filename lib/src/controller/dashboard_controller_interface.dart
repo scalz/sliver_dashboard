@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:sliver_dashboard/src/controller/dashboard_controller_impl.dart';
 import 'package:sliver_dashboard/src/engine/layout_engine.dart' as engine;
 import 'package:sliver_dashboard/src/models/layout_item.dart';
+import 'package:sliver_dashboard/src/view/a11y/dashboard_shortcuts.dart';
 import 'package:sliver_dashboard/src/view/guidance/dashboard_guidance.dart';
 import 'package:state_beacon/state_beacon.dart';
 
@@ -149,6 +150,21 @@ abstract class DashboardController {
 
   /// Sets the default color of handles.
   void setHandleColor(Color? color);
+
+  /// Moves the currently active item by a grid delta (keyboard navigation).
+  ///
+  /// [dx] is the horizontal change in columns.
+  /// [dy] is the vertical change in rows.
+  void moveActiveItemBy(int dx, int dy);
+
+  /// Cancels the current interaction (drag/resize) and reverts the layout
+  /// to its state before the interaction started.
+  void cancelInteraction();
+
+  /// The keyboard shortcuts configuration.
+  /// If null, defaults to [DashboardShortcuts.defaultShortcuts].
+  DashboardShortcuts? get shortcuts;
+  set shortcuts(DashboardShortcuts? value);
 
   /// Exports the current layout state to a list of maps (JSON-ready).
   List<Map<String, dynamic>> exportLayout();
