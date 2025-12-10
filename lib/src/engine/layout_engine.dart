@@ -614,3 +614,68 @@ List<LayoutItem> resolveCollisions(List<LayoutItem> layout, CompactType compactT
 
   return processed;
 }
+
+/// Optimizes the layout by compacting items to remove gaps,
+/// respecting the visual order (top-left to bottom-right).
+/// Static items act as obstacles and are not moved.
+List<LayoutItem> optimizeLayout(List<LayoutItem> layout, int columns) {
+  // 1. Separate Statics and Dynamics
+  final statics = layout.where((i) => i.isStatic).toList();
+  final dynamics = layout.where((i) => !i.isStatic).toList()
+
+    // 2. Sort Dynamics by visual order (Row-major: Y then X)
+    // This ensures we place the top-left-most items first, preserving the logical flow.
+    ..sort((a, b) {
+      if (a.y != b.y) return a.y.compareTo(b.y);
+      return a.x.compareTo(b.x);
+    });
+
+  // 3. Initialize placed items with statics (obstacles)
+  final placedItems = List<LayoutItem>.from(statics);
+
+  // 4. Place each dynamic item in the first available spot
+  for (final item in dynamics) {
+    var placed = false;
+    var y = 0;
+
+    // Safety limit to prevent infinite loops if an item is wider than columns
+    while (!placed && y < 10000) {
+      // Try every column in this row
+      for (var x = 0; x <= columns - item.w; x++) {
+        final candidate = item.copyWith(x: x, y: y);
+
+        // Check collision with ALL already placed items (statics + previously placed dynamics)
+        var hasCollision = false;
+        for (final obstacle in placedItems) {
+          if (collides(candidate, obstacle)) {
+            hasCollision = true;
+            break;
+          }
+        }
+
+        if (!hasCollision) {
+          // Found a spot!
+          placedItems.add(candidate);
+          placed = true;
+          break; // Stop checking X, move to next item
+        }
+      }
+      if (!placed) {
+        y++; // Try next row
+      }
+    }
+
+    // Edge case: If item was too wide for the grid, it wasn't placed.
+    // We add it at the end to avoid losing data, even if layout is broken.
+    if (!placed) {
+      placedItems.add(item.copyWith(y: bottom(placedItems)));
+    }
+  }
+
+  // Safety Pass
+  // We run resolveCollisions on the final result.
+  // If the optimizer accidentally placed an item on top of a static item (overlap),
+  // this function will detect it and push the dynamic item down, ensuring
+  // a valid layout with zero overlaps.
+  return resolveCollisions(placedItems, CompactType.vertical);
+}

@@ -52,10 +52,11 @@ Perfect for analytics dashboards, IoT control panels, project management tools, 
   - [Responsive Layouts](#responsive-layouts)
   - [Auto Layout bulk add](#auto-layout-bulk-add)
   - [Accessibility and Keyboard Navigation](#accessibility-and-keyboard-navigation)
+  - [Layout Optimizer](#layout-optimizer)
   - [Utilities](#utilities)
 - [Contributing](#contributing)
 - [Roadmap](#roadmap)
-  
+
 ## Getting Started
 
 ### 1. Add Dependency
@@ -621,6 +622,16 @@ controller.shortcuts = DashboardShortcuts(
 );
 ```
 
+### Layout Optimizer
+
+If your dashboard becomes fragmented (full of gaps) after many moves, you can use the optimizer to compact the layout.
+It uses a "Visual Bin Packing" algorithm that fills gaps while preserving the visual order (top-left to bottom-right) of your items. Static items act as obstacles and are not moved.
+
+```dart
+// Call this when you want to compact the grid
+controller.optimizeLayout();
+```
+
 ### Utilities
 
 The controller provides useful getters to help you interact with the layout programmatically.
@@ -663,31 +674,66 @@ if (spotInLastRow != null) {
 
 ## Contributing
 
-Contributions are welcome! If you want to contribute code, please check the following resources to understand the project structure and rules:
+Contributions are welcome! To ensure the project remains high-quality, reliable, and consistent, please follow the guidelines below when contributing code.
 
+### How to Contribute
+
+Before submitting a pull request, make sure to familiarize yourself with the following resources:
+
+#### Resources
 - **[Architecture Guide](https://github.com/scalz/sliver_dashboard/blob/main/architecture.md):** A deep dive into the State, Logic, and View layers, including the caching strategy and Sliver protocol.
 - **[AI Context & Rules](https://github.com/scalz/sliver_dashboard/blob/main/AGENTS.md):** Coding standards, architectural constraints, and specific patterns (useful for AI assistants).
 
-### Quality Standards
+#### Quality Standards
 
-This package tries to maintain strict code quality standards with high test coverage:
+This package tries to maintain strict code quality standards with high test coverage and strict guidelines in place. All contributions must adhere to the following quality standards:
 
 - **Core Engine (`LayoutEngine`):** > 95% coverage
 - **Controller (`DashboardController`):** > 95% coverage
 - **Global Package:** > 90% coverage
 
-To run the tests locally:
+#### Code Style and Linting:
 
+- The project uses **Dart** formatting and linting rules. Before submitting any changes, ensure your code is properly formatted.
+- Uses `dart analyze` to enforce coding best practices, and any warnings or errors will result in a failed build.
+- **Formatting:** Always run `dart format .` to automatically fix any formatting issues.
+
+#### Running Tests Locally
+
+Before submitting your pull request, it’s important to run the tests locally to verify everything works as expected. To run the tests and check the coverage:
+
+  1. Run the following command to execute the tests and collect coverage:
 ```bash
 flutter test --coverage
-# If you have lcov installed:
+```
+  
+  2. If you have `lcov` installed, you can generate a human-readable coverage report:
+```bash
 genhtml coverage/lcov.info -o coverage/html
 ```
+This will generate an HTML report that you can open in your browser to check the code coverage and ensure the tests are passing.
 
+#### Continuous Integration (CI) Pipeline
+
+Every pull request and push to the `main` branch automatically triggers a set of checks, including:
+
+- **Code Formatting:** Ensures all code is formatted correctly according to Dart style guide.
+- **Static Code Analysis:** Runs `flutter analyze` to catch potential errors, warnings, and linting issues.
+- **Unit Tests:** Runs the test suite to verify that the code behaves as expected, with code coverage being tracked to maintain high standards.
+
+#### Code Quality Enforcement
+
+The CI pipeline will fail if:
+
+- **Linting violations** are detected.
+- **Static analysis** reveals warnings or errors.
+- **Tests fail**, or the code coverage decreases below the required threshold.
+Pull requests should pass all checks before they can be merged into the `main` branch.
+ 
 ## Roadmap
 - ✅ **SliverDashboard:** Compose a dashboard with others slivers in your `CustomScrollView`.
 - ✅ **Accessibility:** Enhanced screen reader support and keyboard navigation with configurable keys and messages.
-- 🔲 **Layout Optimizer:** Pack Tight, Balance Heights..
+- ✅ **Layout Optimizer:** Visual Bin Packing.
 - 🔲 **Portal:** Mini-map, Teleport..
 - 🔲 **Sticky Headers:** Special item to create "barrier" for defining sections in layout.
 - 🔲 **Nested dashboard:** Special "folder" item where you can drag&drop items from main dashboard to a "folder" dashboard, and vice-versa.

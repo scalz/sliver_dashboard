@@ -166,6 +166,12 @@ abstract class DashboardController {
   DashboardShortcuts? get shortcuts;
   set shortcuts(DashboardShortcuts? value);
 
+  /// Optimizes the layout by compacting items to remove gaps.
+  ///
+  /// This operation respects the visual order of items (top-left to bottom-right)
+  /// and treats static items as immovable obstacles.
+  void optimizeLayout();
+
   /// Exports the current layout state to a list of maps (JSON-ready).
   List<Map<String, dynamic>> exportLayout();
 

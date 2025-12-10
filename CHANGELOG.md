@@ -1,3 +1,8 @@
+## 0.5.0 - 2025-12-10
+
+- **Feat:** Added `optimizeLayout()` to the controller. This feature compacts the grid by filling empty gaps (defragmentation), respecting static items and the visual order of elements.
+- Updated README and main example
+
 ## 0.4.0 - 2025-12-10
 
 **New feature:**

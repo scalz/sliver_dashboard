@@ -734,4 +734,16 @@ class DashboardControllerImpl implements DashboardController {
     dragOffset.value = Offset.zero;
     isResizing.value = false;
   }
+
+  @override
+  void optimizeLayout() {
+    final currentLayout = layout.value;
+    final cols = slotCount.value;
+
+    // Call the pure engine function
+    final optimized = engine.optimizeLayout(currentLayout, cols);
+
+    layout.value = optimized;
+    onLayoutChanged?.call(layout.value);
+  }
 }

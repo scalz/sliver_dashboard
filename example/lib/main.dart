@@ -141,6 +141,11 @@ class _DashboardPageState extends State<DashboardPage> {
       appBar: AppBar(
         title: const Text('Sliver Dashboard Example'),
         actions: [
+          IconButton(
+            tooltip: 'Optimize Layout',
+            icon: const Icon(Icons.auto_awesome),
+            onPressed: () => controller.optimizeLayout(),
+          ),
           // Add a button to toggle edit mode.
           ValueListenableBuilder(
             valueListenable: editMode,
