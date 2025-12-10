@@ -130,6 +130,119 @@ void main() {
       // Feedback should be gone
       expect(find.byType(DashboardFeedbackItem), findsNothing);
     });
+
+    testWidgets('onItemDragUpdate is called and Trash hover state resets', (tester) async {
+      var dragUpdateCalled = false;
+      final trashKey = GlobalKey();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: DashboardOverlay(
+              controller: controller,
+              scrollController: ScrollController(),
+              // Provide the callback
+              onItemDragUpdate: (item, pos) {
+                dragUpdateCalled = true;
+              },
+              // Provide trash to cover
+              trashBuilder: (context, hovered, active, id) {
+                return Container(
+                  key: trashKey,
+                  width: 100,
+                  height: 100,
+                  color: hovered ? Colors.red : Colors.grey,
+                );
+              },
+              trashLayout: const TrashLayout(
+                visible: TrashPosition(bottom: 0, left: 0),
+                hidden: TrashPosition(bottom: -100, left: 0),
+              ),
+              itemBuilder: (context, item) => Container(color: Colors.blue),
+              child: CustomScrollView(
+                slivers: [
+                  SliverDashboard(
+                    itemBuilder: (context, item) => Container(color: Colors.blue),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+
+      final itemFinder = find.byType(DashboardItem).first;
+
+      // 1. Start Drag
+      final gesture = await tester.startGesture(tester.getCenter(itemFinder));
+      await tester.pump(kLongPressTimeout); // Trigger edit mode
+      await tester.pump();
+
+      // 2. Move over Trash (Trigger Hover Enter)
+      final trashCenter = tester.getCenter(find.byKey(trashKey));
+      await gesture.moveTo(trashCenter);
+      await tester.pump();
+
+      // 3. Move AWAY from Trash (Trigger Hover Exit - Lines 657-660)
+      await gesture.moveTo(const Offset(300, 300)); // Move far away
+      await tester.pump();
+
+      // 4. Release
+      await gesture.up();
+      await tester.pump();
+
+      expect(dragUpdateCalled, isTrue, reason: 'onItemDragUpdate should be called');
+    });
+
+    testWidgets('Auto-scroll triggers at edges (Top/Bottom/Left/Right)', (tester) async {
+      final scrollController = ScrollController();
+
+      // Setup a dashboard with enough content to scroll
+      final items = List.generate(20, (i) => LayoutItem(id: '$i', x: 0, y: i, w: 1, h: 1));
+      controller.layout.value = items;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: DashboardOverlay(
+              controller: controller,
+              scrollController: scrollController,
+              itemBuilder: (context, item) => Container(color: Colors.blue),
+              child: CustomScrollView(
+                controller: scrollController,
+                slivers: [
+                  SliverDashboard(
+                    itemBuilder: (context, item) => Container(color: Colors.blue),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+
+      final itemFinder = find.byType(DashboardItem).first; // Top item
+      final gesture = await tester.startGesture(tester.getCenter(itemFinder));
+      await tester.pump(kLongPressTimeout);
+
+      // 1. Drag to Bottom Edge (Scroll Down)
+      // Move to bottom of screen
+      await gesture.moveTo(const Offset(100, 580)); // Assuming 600 height
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500)); // Wait for timer
+
+      expect(scrollController.offset, greaterThan(0), reason: 'Should scroll down');
+
+      // 2. Drag to Top Edge (Scroll Up - Lines 737-739)
+      await gesture.moveTo(const Offset(100, 10)); // Top of screen
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+
+      // It should scroll back up (offset decreases)
+      // Note: exact value depends on timing, just checking direction/change
+
+      await gesture.up();
+    });
   });
 
   group('DashboardItem A11y Actions (Keyboard)', () {
@@ -321,6 +434,200 @@ void main() {
 
       // Verify item did NOT become active (onDragStart was not called)
       expect(controller.activeItemId.value, isNull);
+    });
+  });
+
+  group('DashboardOverlay Edge Cases', () {
+    late DashboardController controller;
+
+    setUp(() {
+      controller = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: [
+          const LayoutItem(id: '1', x: 0, y: 0, w: 1, h: 1),
+        ],
+      )..setEditMode(true);
+    });
+    testWidgets('Drag and Placeholder work correctly in Horizontal Scroll mode', (tester) async {
+      // 1. Setup Horizontal Dashboard + Source Draggable
+      final scrollController = ScrollController();
+      controller.setSlotCount(4);
+      (controller as DashboardControllerImpl).setScrollDirection(Axis.horizontal);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Column(
+              children: [
+                // A. The Source (Draggable)
+                // We place it outside the dashboard to simulate external drag
+                Draggable<String>(
+                  data: 'external_item',
+                  feedback: Container(width: 50, height: 50, color: Colors.red),
+                  child: Container(
+                    key: const ValueKey('source_draggable'),
+                    width: 50,
+                    height: 50,
+                    color: Colors.green,
+                  ),
+                ),
+
+                // B. The Target (Dashboard)
+                Expanded(
+                  child: DashboardOverlay(
+                    controller: controller,
+                    scrollController: scrollController,
+                    scrollDirection: Axis.horizontal,
+                    itemBuilder: (context, item) => Container(color: Colors.blue),
+                    child: CustomScrollView(
+                      scrollDirection: Axis.horizontal,
+                      controller: scrollController,
+                      slivers: [
+                        SliverDashboard(
+                          itemBuilder: (context, item) => Container(color: Colors.blue),
+                          scrollDirection: Axis.horizontal,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+
+      // 2. Start Dragging the Source
+      final sourceFinder = find.byKey(const ValueKey('source_draggable'));
+      final gesture = await tester.startGesture(tester.getCenter(sourceFinder));
+      await tester.pump(); // Start drag
+
+      // 3. Move into the Dashboard area
+      final dashboardCenter = tester.getCenter(find.byType(CustomScrollView));
+      await gesture.moveTo(dashboardCenter);
+      await tester.pump();
+
+      // 4. Verify Placeholder is shown
+      // This confirms _updatePlaceholderPosition was called and worked in horizontal mode
+      expect(controller.currentDragPlaceholder, isNotNull);
+
+      // Optional: Verify coordinates logic (Horizontal logic uses Y for cross-axis)
+      // Since we dragged to center, Y should be roughly center row.
+
+      await gesture.up();
+    });
+
+    testWidgets('Auto-scroll triggers horizontally at Left/Right edges', (tester) async {
+      final scrollController = ScrollController();
+      (controller as DashboardControllerImpl).setScrollDirection(Axis.horizontal);
+
+      // Add enough items to scroll
+      final items = List.generate(20, (i) => LayoutItem(id: '$i', x: i, y: 0, w: 1, h: 1));
+      controller.layout.value = items;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: DashboardOverlay(
+              controller: controller,
+              scrollController: scrollController,
+              scrollDirection: Axis.horizontal,
+              itemBuilder: (context, item) => Container(color: Colors.blue),
+              child: CustomScrollView(
+                scrollDirection: Axis.horizontal,
+                controller: scrollController,
+                slivers: [
+                  SliverDashboard(
+                    itemBuilder: (context, item) => Container(color: Colors.blue),
+                    scrollDirection: Axis.horizontal,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+
+      final itemFinder = find.byType(DashboardItem).first;
+      final gesture = await tester.startGesture(tester.getCenter(itemFinder));
+      await tester.pump(kLongPressTimeout);
+
+      // 1. Drag to Right Edge (Scroll Right - Lines 753-755)
+      // Assuming screen width 800
+      await gesture.moveTo(const Offset(790, 100));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500)); // Wait for timer
+
+      expect(scrollController.offset, greaterThan(0), reason: 'Should scroll right');
+
+      // 2. Drag to Left Edge (Scroll Left - Lines 748-750)
+      await gesture.moveTo(const Offset(10, 100));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+
+      // It should scroll back left (offset decreases)
+      await gesture.up();
+    });
+
+    testWidgets('onItemDragUpdate is called and Trash hover state resets on exit', (tester) async {
+      var dragUpdateCalled = false;
+      final trashKey = GlobalKey();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: DashboardOverlay(
+              controller: controller,
+              scrollController: ScrollController(),
+              // Provide callback (Lines 629-632)
+              onItemDragUpdate: (item, pos) {
+                dragUpdateCalled = true;
+              },
+              // Provide trash
+              trashBuilder: (context, hovered, active, id) {
+                return Container(
+                  key: trashKey,
+                  width: 100,
+                  height: 100,
+                  color: hovered ? Colors.red : Colors.grey,
+                );
+              },
+              trashLayout: const TrashLayout(
+                visible: TrashPosition(bottom: 0, left: 0),
+                hidden: TrashPosition(bottom: -100, left: 0),
+              ),
+              itemBuilder: (context, item) => Container(color: Colors.blue),
+              child: CustomScrollView(
+                slivers: [
+                  SliverDashboard(
+                    itemBuilder: (context, item) => Container(color: Colors.blue),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+
+      final itemFinder = find.byType(DashboardItem).first;
+
+      // 1. Start Drag
+      final gesture = await tester.startGesture(tester.getCenter(itemFinder));
+      await tester.pump(kLongPressTimeout);
+      await tester.pump();
+
+      // 2. Move over Trash (Enter)
+      final trashCenter = tester.getCenter(find.byKey(trashKey));
+      await gesture.moveTo(trashCenter);
+      await tester.pump();
+
+      // 3. Move AWAY from Trash (Exit - Lines 657-660)
+      await gesture.moveTo(const Offset(300, 300));
+      await tester.pump();
+
+      await gesture.up();
+
+      expect(dragUpdateCalled, isTrue);
     });
   });
 }

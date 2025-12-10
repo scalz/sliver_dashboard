@@ -168,7 +168,7 @@ class Dashboard<T extends Object> extends StatefulWidget {
 }
 
 class _DashboardState<T extends Object> extends State<Dashboard<T>> {
-  late final ScrollController _scrollController;
+  late ScrollController _scrollController;
   bool _isInternalScrollController = false;
 
   @override

@@ -2,6 +2,8 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sliver_dashboard/sliver_dashboard.dart';
+import 'package:sliver_dashboard/src/controller/dashboard_controller_impl.dart';
+import 'package:sliver_dashboard/src/view/guidance/guidance_interactor.dart';
 
 void main() {
   testWidgets(
@@ -82,4 +84,60 @@ void main() {
     // Enable MouseRegions.
     variant: TargetPlatformVariant.only(TargetPlatform.linux),
   );
+
+  group('GuidanceInteractor', () {
+    late DashboardController controller;
+
+    setUp(() {
+      controller = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: [
+          const LayoutItem(id: '1', x: 0, y: 0, w: 1, h: 1),
+        ],
+      )
+        ..setEditMode(true)
+
+        // Initialize guidance
+        ..guidance = DashboardGuidance.byDefault;
+    });
+
+    testWidgets(
+      'shows moving message when hovering the active item',
+      (tester) async {
+        final item = controller.layout.value.first;
+
+        // 1. Simulate active item (moving)
+        (controller as DashboardControllerImpl).activeItem.value = item;
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: DashboardControllerProvider(
+                controller: controller,
+                child: GuidanceInteractor(
+                  item: item,
+                  child: Container(width: 100, height: 100, color: Colors.red),
+                ),
+              ),
+            ),
+          ),
+        );
+
+        // 2. Simulate hover
+        final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
+        await gesture.addPointer(location: Offset.zero);
+        addTearDown(gesture.removePointer);
+        await tester.pump();
+
+        // Move cursor on item
+        await gesture.moveTo(const Offset(50, 50));
+        await tester.pumpAndSettle();
+
+        // 3. Check "Moving" message is displayed
+        expect(find.text(DashboardGuidance.byDefault.moving.message), findsOneWidget);
+      },
+      // Use platform variant
+      variant: TargetPlatformVariant.only(TargetPlatform.linux),
+    );
+  });
 }

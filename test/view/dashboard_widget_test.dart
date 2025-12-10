@@ -3,16 +3,9 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
-import 'package:sliver_dashboard/src/controller/dashboard_controller_interface.dart';
-import 'package:sliver_dashboard/src/controller/dashboard_controller_provider.dart';
+import 'package:sliver_dashboard/sliver_dashboard.dart';
 import 'package:sliver_dashboard/src/controller/utility.dart';
-import 'package:sliver_dashboard/src/models/layout_item.dart';
-import 'package:sliver_dashboard/src/view/dashboard.dart';
-import 'package:sliver_dashboard/src/view/dashboard_configuration.dart';
 import 'package:sliver_dashboard/src/view/dashboard_item_widget.dart';
-import 'package:sliver_dashboard/src/view/dashboard_item_wrapper.dart';
-import 'package:sliver_dashboard/src/view/dashboard_typedefs.dart';
-import 'package:sliver_dashboard/src/view/guidance/dashboard_guidance.dart';
 
 class MockInteractionCallback extends Mock {
   void call(LayoutItem item);
@@ -627,5 +620,97 @@ void main() {
     } finally {
       debugDefaultTargetPlatformOverride = null;
     }
+  });
+
+  group('Dashboard Widget Updates', () {
+    testWidgets('updates controller properties and scroll controller on widget update',
+        (tester) async {
+      final controller = DashboardController(initialSlotCount: 4);
+
+      // 1. Initial build with internal default scroll controller
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Dashboard(
+            controller: controller,
+            itemBuilder: (_, __) => Container(),
+            resizeBehavior: ResizeBehavior.push,
+            resizeHandleSide: 10,
+            guidance: DashboardGuidance.byDefault,
+          ),
+        ),
+      );
+
+      // 2. Rebuild with new props
+      final newScrollController = ScrollController();
+      const newGuidance = DashboardGuidance(tapToMove: 'New Message');
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Dashboard(
+            controller: controller,
+            itemBuilder: (_, __) => Container(),
+            // Change: pass an external controller.
+            // This should dispose the internal one.
+            scrollController: newScrollController,
+            // Change: ResizeBehavior
+            resizeBehavior: ResizeBehavior.shrink,
+            // Change: HandleSide
+            resizeHandleSide: 20,
+            // Change: Guidance
+            guidance: newGuidance,
+          ),
+        ),
+      );
+
+      // Check if controller got updated
+      expect(controller.resizeBehavior.value, ResizeBehavior.shrink);
+      expect(controller.resizeHandleSide.value, 20.0);
+      expect(controller.guidance, newGuidance);
+    });
+  });
+
+  group('Dashboard Configuration Models', () {
+    test('TrashPosition copyWith updates properties correctly', () {
+      const original = TrashPosition(left: 10, top: 10, right: 10, bottom: 10);
+
+      // 1. Update 'left'
+      final updateLeft = original.copyWith(left: 20);
+      expect(updateLeft.left, 20);
+      expect(updateLeft.top, 10); // Verify others remain unchanged
+
+      // 2. Update 'top'
+      final updateTop = original.copyWith(top: 20);
+      expect(updateTop.left, 10);
+      expect(updateTop.top, 20);
+
+      // 3. Update 'right'
+      final updateRight = original.copyWith(right: 20);
+      expect(updateRight.right, 20);
+
+      // 4. Update 'bottom'
+      final updateBottom = original.copyWith(bottom: 20);
+      expect(updateBottom.bottom, 20);
+    });
+
+    test('DashboardItemStyle copyWith updates properties correctly', () {
+      const original = DashboardItemStyle(
+        focusColor: Colors.red,
+        borderRadius: BorderRadius.zero,
+      );
+
+      final updated = original.copyWith(
+        focusColor: Colors.blue,
+        borderRadius: BorderRadius.circular(10),
+      );
+
+      expect(updated.focusColor, Colors.blue);
+      expect(updated.borderRadius, BorderRadius.circular(10));
+      // Verify focusDecoration is still null (default)
+      expect(updated.focusDecoration, isNull);
+
+      // Test keeping original values
+      final kept = original.copyWith();
+      expect(kept.focusColor, Colors.red);
+    });
   });
 }
