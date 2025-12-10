@@ -32,6 +32,7 @@ graph TD
         E --> I["DashboardItem (Interaction Shell)"];
         I --> K["FocusableActionDetector"];
         K --> L["User Content (Cached & RepaintBoundary)"];
+        A -.-> MM[DashboardMinimap];
     end
 
     subgraph State Layer
@@ -126,6 +127,12 @@ The view layer has been refactored to support native Sliver composition. It is c
     - **Logic:** Detects hover (desktop) and tap/long-press (mobile) events to display contextual guidance messages.
     - **Conflict Management:** Manages gesture conflicts on mobile to ensure drag operations are not blocked.
 
+#### F. DashboardMinimap (Visualization Tool)
+- **Role:** Provides a "bird's-eye view" of the entire dashboard layout and the current viewport.
+- **Rendering:** Uses a CustomPainter for high performance. It does not render widgets for items but draws rectangles directly on the canvas.
+- **Scaling:** Automatically scales the logical grid dimensions to fit the widget's constraints while maintaining the aspect ratio.
+- **Interaction:** Supports "Scrubbing" (Tap/Drag) to instantly scroll the dashboard to a specific position. It calculates the inverse ratio (Minimap Pixel -> Scroll Offset) to perform the jump.
+
 ## 4. Accessibility Architecture
 
 The package implements a comprehensive A11y strategy based on Flutter's `Actions` and `Intents`.
@@ -185,6 +192,13 @@ When an item is being dragged:
 1.  **Grid:** The actual item in the grid acts as a placeholder (or is hidden).
 2.  **Overlay:** A visual copy of the item is rendered in the `DashboardOverlay` stack, floating above the scroll view.
 3.  **Synchronization:** The overlay follows the finger/mouse, while the grid placeholder snaps to the nearest valid slot.
+
+### Minimap Rendering Strategy
+
+To efficiently render large grids (1000+ items) in a small widget:
+- **No Widgets:** The minimap does not build a widget tree for items.
+- **Pure Painting:** It iterates over the LayoutItem list and draws RRects on a single Canvas.
+- **Viewport Sync:** It listens to the ScrollController to draw a "Viewport Indicator" that represents the currently visible area, updating at 60fps during scrolls.
 
 #### Data Flow during a Drag Operation
 

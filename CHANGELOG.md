@@ -4,6 +4,8 @@
   - Visualizes the entire dashboard layout in a small, scalable widget.
   - Displays a "Viewport" indicator showing the currently visible area of the dashboard.
   - Customizable via `MinimapStyle`.
+  - Tests
+  - Updated README and main example 
 
 ## 0.5.0 - 2025-12-10
 

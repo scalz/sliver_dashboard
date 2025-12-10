@@ -51,6 +51,7 @@ Perfect for analytics dashboards, IoT control panels, project management tools, 
   - [Configuration & Styles](#configuration--styles)
   - [Import / Export (Persistence)](#import--export-persistence)
   - [Responsive Layouts](#responsive-layouts)
+  - [Mini Map](#mini-map)
   - [Auto Layout bulk add](#auto-layout-bulk-add)
   - [Accessibility and Keyboard Navigation](#accessibility-and-keyboard-navigation)
   - [Layout Optimizer](#layout-optimizer)
@@ -536,9 +537,13 @@ Dashboard(
 )
 ```
 
-### Mini-Map
+### Mini Map
 
 For large dashboards, you can add a Mini-Map to visualize the layout and the current viewport.
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/scalz/sliver_dashboard/main/img/minimap.gif" alt="Mini map" width="400"/>
+</p>
 
 ```dart
 Stack(
