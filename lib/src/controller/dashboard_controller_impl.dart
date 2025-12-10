@@ -665,60 +665,6 @@ class DashboardControllerImpl implements DashboardController {
     dragOffset.value = Offset.zero;
   }
 
-  /*
-  @override
-  void moveActiveItemByOld(int dx, int dy) {
-    final item = activeItem.value;
-    if (item == null) return;
-
-    // Calculate new target position
-    var newX = item.x + dx;
-    var newY = item.y + dy;
-
-    // Clamp to grid boundaries
-    // Horizontal clamping
-    newX = newX.clamp(0, slotCount.value - item.w);
-
-    // Vertical clamping (no upper bound, just >= 0)
-    newY = max(0, newY);
-
-    // If no change, do nothing
-    if (newX == item.x && newY == item.y) return;
-
-    // Update item position
-    final movedItem = item.copyWith(x: newX, y: newY);
-
-    // Update active item state so subsequent moves are relative to this new pos
-    activeItem.value = movedItem;
-
-    // Use the engine to move the element and resolve collisions
-    // We use the original layout as base to avoid drift, but we update the target X/Y
-    final newLayout = engine.moveElement(
-      originalLayoutOnStart.value, // Always move relative to start state?
-      // Actually for keyboard incremental moves, we might want to move relative to current.
-      // But to keep consistency with drag, let's try moving the original item to the NEW accumulated position.
-      // However, since we updated activeItem.value above, we need to be careful.
-      // Let's use the engine's moveElement on the CURRENT layout for keyboard steps to feel "live".
-      // BUT, to allow "Cancel", we must keep originalLayoutOnStart intact.
-
-      // Strategy:
-      // 1. We act as if we dragged the item from original pos to new pos.
-      // 2. We need to find the original item in originalLayoutOnStart.
-      originalLayoutOnStart.value.firstWhere((i) => i.id == item.id),
-      newX,
-      newY,
-      cols: slotCount.value,
-      compactType: compactionType.value,
-      preventCollision: preventCollision.value,
-    );
-
-    layout.value = newLayout;
-
-    // Update drag offset to 0 because keyboard moves are exact grid jumps
-    dragOffset.value = Offset.zero;
-  }
-  */
-
   @override
   void cancelInteraction() {
     if (activeItem.value == null) return;

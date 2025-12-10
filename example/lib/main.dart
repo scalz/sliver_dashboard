@@ -39,6 +39,8 @@ class _DashboardPageState extends State<DashboardPage> {
   // Create and manage your DashboardController.
   late final DashboardController controller;
 
+  final scrollController = ScrollController();
+
   final editMode = ValueNotifier(false);
   final compactionType = ValueNotifier<CompactType>(CompactType.vertical);
   var scrollDirection = Axis.vertical;
@@ -283,142 +285,178 @@ class _DashboardPageState extends State<DashboardPage> {
             child: Padding(
               padding: const EdgeInsets.all(8.0),
               // Optional: Breakpoint wrapper widget for responsive
-              child: Dashboard<String>(
-                controller: controller,
-                trashHoverDelay: const Duration(seconds: 1),
-                scrollDirection: scrollDirection,
-                // ResizeBehavior.push or ResizeBehavior.shrink
-                resizeBehavior: resizeBehavior,
-                showScrollbar: false,
-                slotAspectRatio: 1.0,
-                // Responsive breakpoints:
-                breakpoints: {
-                  0: 4, // Mobile: 4 cols
-                  600: 8, // Tablet/Desktop: 8 cols
-                },
-                // The size of the touch target
-                resizeHandleSide: 20, // default 20.0
-                padding: EdgeInsets.zero,
-                mainAxisSpacing: 8.0, // default 8.0
-                crossAxisSpacing: 8.0, // default 8.0
-                // how many non visible pixels to preload on top and bottom
-                cacheExtent: 500,
-                guidance:
-                    DashboardGuidance.byDefault, // default null for no guidance
-                // guidance: const DashboardGuidance(
-                //   move: InteractionGuidance(
-                //     SystemMouseCursors.grab,
-                //     'Click and drag to move item',
-                //   ),
-                // ),
-                gridStyle: GridStyle(
-                  fillColor: Colors.black.withValues(alpha: 0.5),
-                  handleColor: Colors.red.withValues(alpha: 0.5),
-                  lineColor: Colors.black26.withValues(alpha: 0.5),
-                  lineWidth: 1,
-                ),
-                // Custom Feedback Builder
-                itemFeedbackBuilder: (context, item, child) {
-                  return Opacity(
-                    opacity: 0.7,
-                    child: Material(
-                      elevation: 8,
-                      shadowColor: Colors.black,
-                      borderRadius: BorderRadius.circular(12),
-                      color: Colors.transparent,
-                      child: child,
+              child: Stack(
+                children: [
+                  Dashboard<String>(
+                    controller: controller,
+                    trashHoverDelay: const Duration(seconds: 1),
+                    scrollDirection: scrollDirection,
+                    scrollController: scrollController,
+                    // ResizeBehavior.push or ResizeBehavior.shrink
+                    resizeBehavior: resizeBehavior,
+                    showScrollbar: false,
+                    slotAspectRatio: 1.0,
+                    // Responsive breakpoints:
+                    breakpoints: {
+                      0: 4, // Mobile: 4 cols
+                      600: 8, // Tablet/Desktop: 8 cols
+                    },
+                    // The size of the touch target
+                    resizeHandleSide: 20, // default 20.0
+                    padding: EdgeInsets.zero,
+                    mainAxisSpacing: 8.0, // default 8.0
+                    crossAxisSpacing: 8.0, // default 8.0
+                    // how many non visible pixels to preload on top and bottom
+                    cacheExtent: 500,
+                    guidance: DashboardGuidance
+                        .byDefault, // default null for no guidance
+                    // guidance: const DashboardGuidance(
+                    //   move: InteractionGuidance(
+                    //     SystemMouseCursors.grab,
+                    //     'Click and drag to move item',
+                    //   ),
+                    // ),
+                    gridStyle: GridStyle(
+                      fillColor: Colors.black.withValues(alpha: 0.5),
+                      handleColor: Colors.red.withValues(alpha: 0.5),
+                      lineColor: Colors.black26.withValues(alpha: 0.5),
+                      lineWidth: 1,
                     ),
-                  );
-                },
-                // Handle drops from external sources.
-                onDrop: (data, layoutItem) {
-                  debugPrint('Dropped data: $data');
-                  return DateTime.now().millisecondsSinceEpoch.toString();
-                },
-                // The itemBuilder builds the visual representation of each item.
-                itemBuilder: (context, item) {
-                  return MyCard(
-                    key: ValueKey(item.id),
-                    item: item,
-                    color: getColorForItem(item.id),
-                    onDeleteItem: () => controller.removeItem(item.id),
-                    isEditing: controller.isEditing.value,
-                  );
-                },
-                // trashLayout: TrashLayout.bottomCenter,
-                trashLayout: TrashLayout(
-                  visible: TrashLayout.bottomCenter.visible.copyWith(bottom: 0),
-                  hidden: TrashLayout.bottomCenter.hidden,
-                ),
-                // Optional: Customize the trash area.
-                trashBuilder: (context, isHovered, isActive, activeItemId) {
-                  return Align(
-                    alignment: Alignment.bottomCenter,
-                    child: Container(
-                      height: 60,
-                      width: 200,
-                      margin: const EdgeInsets.all(20.0),
-                      decoration: BoxDecoration(
-                        color: isActive
-                            ? Colors.red
-                            : (isHovered ? Colors.orange : Colors.redAccent),
-                        borderRadius: BorderRadius.circular(30),
-                        boxShadow: const [
-                          BoxShadow(blurRadius: 10, color: Colors.black26),
-                        ],
-                        border: isHovered
-                            ? Border.all(color: Colors.white, width: 2)
-                            : null,
-                      ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(
-                            isActive ? Icons.delete_forever : Icons.delete,
-                            color: Colors.white,
-                            size: isActive ? 30 : 24,
-                          ),
-                          const SizedBox(width: 8),
-                          Text(
-                            isActive ? 'Release to Delete' : 'Drop to Delete',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
-                              fontSize: isActive ? 18 : 16,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  );
-                },
-                // Validate the Trash deletion
-                onWillDelete: (item) async {
-                  return await showDialog<bool>(
-                        context: context,
-                        builder: (ctx) => AlertDialog(
-                          title: Text("Delete ?"),
-                          content: Text("Do you want remove item ${item.id} ?"),
-                          actions: [
-                            TextButton(
-                              onPressed: () => Navigator.pop(ctx, false),
-                              child: Text("No"),
-                            ),
-                            TextButton(
-                              onPressed: () => Navigator.pop(ctx, true),
-                              child: Text("Yes"),
-                            ),
-                          ],
+                    // Custom Feedback Builder
+                    itemFeedbackBuilder: (context, item, child) {
+                      return Opacity(
+                        opacity: 0.7,
+                        child: Material(
+                          elevation: 8,
+                          shadowColor: Colors.black,
+                          borderRadius: BorderRadius.circular(12),
+                          color: Colors.transparent,
+                          child: child,
                         ),
-                      ) ??
-                      false;
-                },
-                // Optional: Called when an item is deleted
-                onItemDeleted: (item) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Item ${item.id} deleted')),
-                  );
-                },
+                      );
+                    },
+                    // Handle drops from external sources.
+                    onDrop: (data, layoutItem) {
+                      debugPrint('Dropped data: $data');
+                      return DateTime.now().millisecondsSinceEpoch.toString();
+                    },
+                    // The itemBuilder builds the visual representation of each item.
+                    itemBuilder: (context, item) {
+                      return MyCard(
+                        key: ValueKey(item.id),
+                        item: item,
+                        color: getColorForItem(item.id),
+                        onDeleteItem: () => controller.removeItem(item.id),
+                        isEditing: controller.isEditing.value,
+                      );
+                    },
+                    // trashLayout: TrashLayout.bottomCenter,
+                    trashLayout: TrashLayout(
+                      visible: TrashLayout.bottomCenter.visible.copyWith(
+                        bottom: 0,
+                      ),
+                      hidden: TrashLayout.bottomCenter.hidden,
+                    ),
+                    // Optional: Customize the trash area.
+                    trashBuilder: (context, isHovered, isActive, activeItemId) {
+                      return Align(
+                        alignment: Alignment.bottomCenter,
+                        child: Container(
+                          height: 60,
+                          width: 200,
+                          margin: const EdgeInsets.all(20.0),
+                          decoration: BoxDecoration(
+                            color: isActive
+                                ? Colors.red
+                                : (isHovered
+                                      ? Colors.orange
+                                      : Colors.redAccent),
+                            borderRadius: BorderRadius.circular(30),
+                            boxShadow: const [
+                              BoxShadow(blurRadius: 10, color: Colors.black26),
+                            ],
+                            border: isHovered
+                                ? Border.all(color: Colors.white, width: 2)
+                                : null,
+                          ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(
+                                isActive ? Icons.delete_forever : Icons.delete,
+                                color: Colors.white,
+                                size: isActive ? 30 : 24,
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                isActive
+                                    ? 'Release to Delete'
+                                    : 'Drop to Delete',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: isActive ? 18 : 16,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                    // Validate the Trash deletion
+                    onWillDelete: (item) async {
+                      return await showDialog<bool>(
+                            context: context,
+                            builder: (ctx) => AlertDialog(
+                              title: Text("Delete ?"),
+                              content: Text(
+                                "Do you want remove item ${item.id} ?",
+                              ),
+                              actions: [
+                                TextButton(
+                                  onPressed: () => Navigator.pop(ctx, false),
+                                  child: Text("No"),
+                                ),
+                                TextButton(
+                                  onPressed: () => Navigator.pop(ctx, true),
+                                  child: Text("Yes"),
+                                ),
+                              ],
+                            ),
+                          ) ??
+                          false;
+                    },
+                    // Optional: Called when an item is deleted
+                    onItemDeleted: (item) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Item ${item.id} deleted')),
+                      );
+                    },
+                  ),
+                  Positioned(
+                    left: 20,
+                    bottom: 20,
+                    child: Material(
+                      elevation: 4,
+                      borderRadius: BorderRadius.circular(8),
+                      clipBehavior: Clip.antiAlias,
+                      child: Container(
+                        width: 120,
+                        constraints: const BoxConstraints(maxHeight: 200),
+                        decoration: BoxDecoration(
+                          border: Border.all(color: Colors.grey.shade300),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: DashboardMinimap(
+                          controller: controller,
+                          scrollController: scrollController,
+                          width: 120,
+                          padding: EdgeInsets.zero,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
           ),

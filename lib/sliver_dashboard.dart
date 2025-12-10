@@ -12,3 +12,5 @@ export 'src/view/grid_background_painter.dart';
 export 'src/view/guidance/dashboard_guidance.dart';
 export 'src/view/resize_handle.dart';
 export 'src/view/sliver_dashboard.dart';
+export 'src/view/widgets/dashboard_minimap.dart';
+export 'src/view/widgets/minimap_style.dart';

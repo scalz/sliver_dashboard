@@ -1,3 +1,10 @@
+## 0.6.0
+
+- **Feat:** Added `DashboardMinimap` widget.
+  - Visualizes the entire dashboard layout in a small, scalable widget.
+  - Displays a "Viewport" indicator showing the currently visible area of the dashboard.
+  - Customizable via `MinimapStyle`.
+
 ## 0.5.0 - 2025-12-10
 
 - **Feat:** Added `optimizeLayout()` to the controller. This feature compacts the grid by filling empty gaps (defragmentation), respecting static items and the visual order of elements.

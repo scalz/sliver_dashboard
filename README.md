@@ -31,6 +31,7 @@ Perfect for analytics dashboards, IoT control panels, project management tools, 
 - 💡 **Guidance:** Optional contextual tooltips/guidance messages.
 - 📱 **Responsive Layouts:** Automatically adapt the number of columns (`slotCount`) based on the screen width using the built-in `breakpoints` property.
 - ♿ **Accessibility:** Full keyboard navigation support (Tab, Arrows, Space, Enter) and Screen Reader announcements (TalkBack/VoiceOver).
+- 🗺️ **Mini-Map:** A customizable widget to visualize the entire dashboard layout and current viewport, perfect for large grids.
 - 💾 **Utilities**: Import/Export, find free cells, get last row, Auto Layout & Bulk Add.
 
 ## Table of Contents
@@ -532,6 +533,47 @@ Dashboard(
     600: 8,
     1200: 12
   },
+)
+```
+
+### Mini-Map
+
+For large dashboards, you can add a Mini-Map to visualize the layout and the current viewport.
+
+```dart
+Stack(
+  children: [
+    Dashboard(
+      controller: controller,
+      scrollController: scrollController, // Required
+      // ...
+    ),
+    Positioned(
+      right: 20,
+      bottom: 20,
+      child: Material(
+        elevation: 4,
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          width: 120,
+          constraints: const BoxConstraints(maxHeight: 200),
+          decoration: BoxDecoration(
+            border: Border.all(color: Colors.grey),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: DashboardMinimap(
+            controller: controller,
+            scrollController: scrollController, // Must match Dashboard's controller
+            width: 120,
+            style: const MinimapStyle(
+              itemColor: Colors.grey,
+              viewportColor: Color(0x332196F3),
+            ),
+          ),
+        ),
+      ),
+    ),
+  ],
 )
 ```
 
