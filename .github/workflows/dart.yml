@@ -58,10 +58,15 @@ jobs:
       # - important infos
       - name: Run static analyzer
         id: analyze
+        continue-on-error: true
         run: flutter analyze --fatal-infos --fatal-warnings > analyze_output.txt 2>&1
 
       - name: Display analyze logs
         run: cat analyze_output.txt
+
+      - name: Fail if analyzer found issues
+        if: steps.analyze.outcome == 'failure'
+        run: exit 1
 
       # ---- TESTS + COVERAGE --------------------------------------------------------
       - name: Run tests with coverage
