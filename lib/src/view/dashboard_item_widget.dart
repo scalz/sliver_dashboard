@@ -91,6 +91,9 @@ class _DashboardItemState extends State<DashboardItem> {
 
   /// Helper to announce messages to Screen Readers (TalkBack/VoiceOver).
   void _announce(String message) {
+    // Use the old API for older Flutter versions, and ignore the deprecation warning
+    // Until we have no other choice to use sendAnnouncement
+    // ignore: deprecated_member_use
     SemanticsService.announce(message, Directionality.of(context)).ignore();
   }
 
