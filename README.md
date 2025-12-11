@@ -522,6 +522,8 @@ controller.importLayout(loadedData);
 
 You can automatically adapt the number of columns (`slotCount`) based on the available width by passing a `breakpoints` map.
 
+**Smart Layout Memory:** The controller remembers the specific arrangement of items for each column count. If a user organizes their dashboard on Desktop (8 cols), switches to Mobile (4 cols), and comes back to Desktop, their original Desktop arrangement is restored.
+
 ```dart
 Dashboard(
   controller: controller,
@@ -790,6 +792,6 @@ Pull requests should pass all checks before they can be merged into the `main` b
 - ✅ **Accessibility:** Enhanced screen reader support and keyboard navigation with configurable keys and messages.
 - ✅ **Layout Optimizer:** Visual Bin Packing.
 - ✅ **Mini-map:** Display and navigate via a minimap.
+- 🔲 **Multi-Selection:** Multi item selection and dragging.
 - 🔲 **Sticky Headers:** Special item to create "barrier" for defining sections in layout.
 - 🔲 **Nested dashboard:** Special "folder" item where you can drag&drop items from main dashboard to a "folder" dashboard, and vice-versa.
-- 🔲 **Multi-Selection:** Multi item selection and dragging.

@@ -79,6 +79,10 @@ class DashboardControllerImpl implements DashboardController {
 
   // --- INTERNAL STATE (Hidden from Interface) ---
 
+  /// Internal cache to store layouts for specific slot counts.
+  /// Used to restore the layout when switching back to a previous breakpoint.
+  final Map<int, List<LayoutItem>> _layoutsBySlotCount = {};
+
   /// Temporary placeholder item in the layout.
   @visibleForTesting
   final placeholder = Beacon.writable<LayoutItem?>(null);
@@ -132,10 +136,80 @@ class DashboardControllerImpl implements DashboardController {
   void setSlotCount(int newSlotCount) {
     if (slotCount.value == newSlotCount) return;
 
+    final previousSlotCount = slotCount.value;
+    final currentLayout = layout.value;
+
+    // 1. Save the current layout state for the current slot count
+    _layoutsBySlotCount[previousSlotCount] = List.from(currentLayout);
+
+    List<LayoutItem> nextLayout;
+
+    // 2. Check if we have a cached layout for the target slot count
+    if (_layoutsBySlotCount.containsKey(newSlotCount)) {
+      // 3a. Reconcile: Merge the cached layout with current changes (adds/removes)
+      nextLayout = _reconcileLayouts(
+        cachedLayout: _layoutsBySlotCount[newSlotCount]!,
+        currentLayout: currentLayout,
+        newSlotCount: newSlotCount,
+      );
+    } else {
+      // 3b. Standard behavior: Calculate new layout from scratch
+      final corrected = engine.correctBounds(currentLayout, newSlotCount);
+      nextLayout = engine.compact(
+        corrected,
+        engine.CompactType.vertical,
+        newSlotCount,
+      );
+    }
+
     slotCount.value = newSlotCount;
-    // Correct bounds and re-compact for the new column count
-    final corrected = engine.correctBounds(layout.value, newSlotCount);
-    layout.value = engine.compact(corrected, engine.CompactType.vertical, newSlotCount);
+    layout.value = nextLayout;
+  }
+
+  /// Merges the [cachedLayout] (target state) with the [currentLayout] (source of truth for existence).
+  ///
+  /// - Items present in both are taken from [cachedLayout] (restoring position).
+  /// - Items in [cachedLayout] but NOT in [currentLayout] are removed (sync deletion).
+  /// - Items in [currentLayout] but NOT in [cachedLayout] are added (sync addition).
+  List<LayoutItem> _reconcileLayouts({
+    required List<LayoutItem> cachedLayout,
+    required List<LayoutItem> currentLayout,
+    required int newSlotCount,
+  }) {
+    final currentIds = currentLayout.map((e) => e.id).toSet();
+    final cachedIds = cachedLayout.map((e) => e.id).toSet();
+
+    // 1. Keep items that exist in both (Restoring their cached position)
+    final result = cachedLayout.where((item) => currentIds.contains(item.id)).toList();
+
+    // 2. Identify new items (Added while in the other breakpoint)
+    final newItems = currentLayout.where((item) => !cachedIds.contains(item.id)).toList();
+
+    // 3. Place new items
+    // We append them to the bottom to avoid overlapping existing cached items.
+    // The engine's placeNewItems logic is perfect for this.
+    if (newItems.isNotEmpty) {
+      // We reset their coordinates to -1 to force auto-placement at the bottom
+      final itemsToPlace = newItems.map((e) => e.copyWith(x: -1, y: -1)).toList();
+
+      final merged = engine.placeNewItems(
+        existingLayout: result,
+        newItems: itemsToPlace,
+        cols: newSlotCount,
+      );
+
+      // Replace result with merged list
+      result
+        ..clear()
+        ..addAll(merged);
+    }
+
+    // 4. Final compaction to ensure everything is tidy
+    return engine.compact(
+      result,
+      compactionType.value,
+      newSlotCount,
+    );
   }
 
   @override

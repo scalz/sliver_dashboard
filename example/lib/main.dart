@@ -299,7 +299,8 @@ class _DashboardPageState extends State<DashboardPage> {
                     // Responsive breakpoints:
                     breakpoints: {
                       0: 4, // Mobile: 4 cols
-                      600: 8, // Tablet/Desktop: 8 cols
+                      600: 8, // Tablet: 8 cols
+                      1200: 12, // Desktop: 12 cols
                     },
                     // The size of the touch target
                     resizeHandleSide: 20, // default 20.0

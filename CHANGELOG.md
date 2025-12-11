@@ -1,3 +1,12 @@
+## 0.7.0
+
+- **Feat:** Enhanced Responsive Behavior with **Layout Memory**.
+  - The dashboard now remembers the arrangement of items for each screen size (column count).
+  - Switching between Mobile and Desktop layouts restores your specific arrangement for that view.
+  - Items added or removed in one view are automatically synced to the others.
+  - Added tests.
+  - Updated README and main.dart example.
+
 ## 0.6.1 - 2025-12-11
 - **Fix:** Improved Mini-Map rendering in horizontal mode to prevent the widget from becoming too small.
 - **Fix:** Fixed visual misalignment in the Mini-Map. The rendering now correctly accounts for `mainAxisSpacing` and `crossAxisSpacing`.
