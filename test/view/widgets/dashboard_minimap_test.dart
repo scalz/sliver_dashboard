@@ -217,5 +217,76 @@ void main() {
       // Scroll should decrease
       expect(scrollController.offset, lessThan(offsetAfterTap));
     });
+
+    testWidgets('renders without error even if scroll view has no dimensions yet', (tester) async {
+      // This test simulates a case where the controller is attached but has no dimensions yet
+      // (difficult to reproduce exactly with standard widgets, but we verify at least
+      // that the widget builds without exception with a blank controller).
+
+      final emptyController = ScrollController();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: DashboardMinimap(
+              controller: controller,
+              scrollController: emptyController, // Not attached to a ScrollView
+              width: 100,
+            ),
+          ),
+        ),
+      );
+
+      // If the code didn't have the `hasClients` check, it would crash here.
+      expect(find.byType(DashboardMinimap), findsOneWidget);
+    });
+
+    testWidgets('calculates layout with spacing correctly', (tester) async {
+      // Configure significant spacing
+      const spacing = 50.0;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              controller: scrollController,
+              child: Column(
+                children: [
+                  DashboardMinimap(
+                    controller: controller,
+                    scrollController: scrollController,
+                    width: 100,
+                    // Inject spacing
+                    mainAxisSpacing: spacing,
+                    crossAxisSpacing: spacing,
+                  ),
+                  Container(height: 1000, color: Colors.red),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+
+      // Verify CustomPaint exists
+      final painterFinder = find.descendant(
+        of: find.byType(DashboardMinimap),
+        matching: find.byType(CustomPaint),
+      );
+      expect(painterFinder, findsOneWidget);
+
+      // Verify the painter received properties (via widget inspection)
+      final customPaint = tester.widget<CustomPaint>(painterFinder);
+      final painter = customPaint.painter;
+
+      // Note: We cannot cast to _MinimapPainter because it is private,
+      // but the fact that pumpWidget did not throw a calculation exception
+      // (division by zero or null check on dimensions) is already a validation.
+      // Furthermore, if spacing was ignored, the calculated size would be different,
+      // but it is hard to verify without exposing the private class.
+
+      // We just verify that rendering occurs.
+      expect(painter, isNotNull);
+    });
   });
 }

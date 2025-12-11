@@ -559,9 +559,16 @@ Stack(
       child: Material(
         elevation: 4,
         borderRadius: BorderRadius.circular(8),
+        clipBehavior: Clip.antiAlias,
         child: Container(
-          width: 120,
-          constraints: const BoxConstraints(maxHeight: 200),
+          // Vertical: Fixed width (120), Flexible height (max 200)
+          // Horizontal: Fixed height (120), Flexible width (max 300)
+          width: isVertical ? 120 : null,
+          height: isVertical ? null : 120,
+          constraints: BoxConstraints(
+            maxHeight: isVertical ? 200 : 120,
+            maxWidth: isVertical ? 120 : 300,
+          ),
           decoration: BoxDecoration(
             border: Border.all(color: Colors.grey),
             borderRadius: BorderRadius.circular(8),
@@ -569,7 +576,8 @@ Stack(
           child: DashboardMinimap(
             controller: controller,
             scrollController: scrollController, // Must match Dashboard's controller
-            width: 120,
+            // Pass width only in vertical mode to enforce width-based scaling
+            width: isVertical ? 120 : null,
             style: const MinimapStyle(
               itemColor: Colors.grey,
               viewportColor: Color(0x332196F3),

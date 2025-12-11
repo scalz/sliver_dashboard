@@ -441,8 +441,18 @@ class _DashboardPageState extends State<DashboardPage> {
                       borderRadius: BorderRadius.circular(8),
                       clipBehavior: Clip.antiAlias,
                       child: Container(
-                        width: 120,
-                        constraints: const BoxConstraints(maxHeight: 200),
+                        // Vertical : Fixed width (120), flexible height (max 200)
+                        // Horizontal : Fixed height (120), flexible width (max 200 or more)
+                        width: scrollDirection == Axis.vertical ? 120 : null,
+                        height: scrollDirection == Axis.vertical ? null : 120,
+                        constraints: BoxConstraints(
+                          maxHeight: scrollDirection == Axis.vertical
+                              ? 200
+                              : 120,
+                          maxWidth: scrollDirection == Axis.vertical
+                              ? 120
+                              : 200,
+                        ),
                         decoration: BoxDecoration(
                           border: Border.all(color: Colors.grey.shade300),
                           borderRadius: BorderRadius.circular(8),
@@ -450,7 +460,9 @@ class _DashboardPageState extends State<DashboardPage> {
                         child: DashboardMinimap(
                           controller: controller,
                           scrollController: scrollController,
-                          width: 120,
+                          // Important : use fixed width only if vertical
+                          // Else let the widget's LayoutBuilder calculate its constraints
+                          width: scrollDirection == Axis.vertical ? 120 : null,
                           padding: EdgeInsets.zero,
                         ),
                       ),

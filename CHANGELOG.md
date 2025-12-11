@@ -1,3 +1,9 @@
+## 0.6.1 - 2025-12-11
+- **Fix:** Improved Mini-Map rendering in horizontal mode to prevent the widget from becoming too small.
+- **Fix:** Fixed visual misalignment in the Mini-Map. The rendering now correctly accounts for `mainAxisSpacing` and `crossAxisSpacing`.
+- Added tests.
+- Updated README and main.dart example.
+
 ## 0.6.0 - 2025-12-10
 
 - **Feat:** Added `DashboardMinimap` widget.

@@ -17,7 +17,7 @@ class DashboardMinimap extends StatelessWidget {
     required this.scrollController,
     super.key,
     this.style = const MinimapStyle(),
-    this.width = 100.0,
+    this.width,
     this.slotAspectRatio = 1.0,
     this.mainAxisSpacing = 0.0,
     this.crossAxisSpacing = 0.0,
@@ -36,7 +36,7 @@ class DashboardMinimap extends StatelessWidget {
 
   /// The desired width of the minimap.
   /// The height will be calculated automatically based on the content aspect ratio.
-  final double width;
+  final double? width;
 
   /// The aspect ratio of the dashboard slots (width / height).
   /// Used to calculate relative heights in the minimap.
@@ -57,70 +57,124 @@ class DashboardMinimap extends StatelessWidget {
     final slotCount = controller.slotCount.watch(context);
     final scrollDirection = controller.scrollDirection.watch(context);
 
-    // --- 1. Pre-calculate Metrics ---
-    final isVertical = scrollDirection == Axis.vertical;
-
-    // Calculate logical grid dimensions
-    var maxMainAxis = 0;
-    for (final item in layout) {
-      final end = isVertical ? item.y + item.h : item.x + item.w;
-      if (end > maxMainAxis) maxMainAxis = end;
-    }
-    maxMainAxis = max(maxMainAxis, 1);
-
-    // Virtual slot dimensions (normalized)
-    const virtualSlotCrossAxis = 1.0;
-    final virtualSlotMainAxis = virtualSlotCrossAxis / slotAspectRatio;
-
-    double totalRealCrossAxisExtent;
-    double totalRealMainAxisExtent;
-
-    if (isVertical) {
-      totalRealCrossAxisExtent = slotCount * virtualSlotCrossAxis;
-      totalRealMainAxisExtent = maxMainAxis * virtualSlotMainAxis;
-    } else {
-      totalRealCrossAxisExtent = slotCount * virtualSlotMainAxis;
-      totalRealMainAxisExtent = maxMainAxis * virtualSlotCrossAxis;
-    }
-
-    // Calculate scale to fit the width
-    final scale = width / totalRealCrossAxisExtent;
-
-    // Calculate the drawn height of the content in the minimap
-    final minimapContentSize = totalRealMainAxisExtent * scale;
-
+    // Rebuild when scroll controller attaches/detaches to get viewport dimensions
     return AnimatedBuilder(
       animation: scrollController,
       builder: (context, _) {
-        return GestureDetector(
-          // Handle Click (Jump)
-          onTapUp: (details) => _handleInteraction(
-            details.localPosition,
-            minimapContentSize,
-            isVertical,
-          ),
-          // Handle Drag (Scrub)
-          onPanUpdate: (details) => _handleInteraction(
-            details.localPosition,
-            minimapContentSize,
-            isVertical,
-          ),
-          child: CustomPaint(
-            size: Size(width, minimapContentSize),
-            painter: _MinimapPainter(
-              layout: layout,
-              slotCount: slotCount,
-              scrollController: scrollController,
-              style: style,
-              slotAspectRatio: slotAspectRatio,
-              scrollDirection: scrollDirection,
-              padding: padding,
-              scale: scale,
-              virtualSlotCrossAxis: virtualSlotCrossAxis,
-              virtualSlotMainAxis: virtualSlotMainAxis,
-              minimapContentSize: minimapContentSize,
-            ),
-          ),
+        final isVertical = scrollDirection == Axis.vertical;
+
+        // Calculate logical grid dimensions
+        var maxX = 0;
+        var maxY = 0;
+        for (final item in layout) {
+          if (item.x + item.w > maxX) maxX = item.x + item.w;
+          if (item.y + item.h > maxY) maxY = item.y + item.h;
+        }
+        maxX = max(maxX, 1);
+        maxY = max(maxY, 1);
+
+        // Calculate Unit Sizes & Spacing Ratio ---
+        double unitWidth;
+        double unitHeight;
+
+        // We need to convert pixel spacing (e.g. 10px) into "Grid Units".
+        // To do this, we need the size of 1 slot in pixels.
+        var spacingRatioMain = 0.0;
+        var spacingRatioCross = 0.0;
+
+        if (scrollController.hasClients && scrollController.position.haveDimensions) {
+          final viewportSize = scrollController.position.viewportDimension;
+          if (isVertical) {
+            // Real Width of 1 slot in pixels
+            final realSlotWidth = (viewportSize - padding.horizontal) / slotCount;
+            if (realSlotWidth > 0) {
+              final realSlotHeight = realSlotWidth / slotAspectRatio;
+              // How many "Units" is the spacing?
+              // UnitWidth is 1.0. Spacing is X pixels.
+              // Ratio = SpacingPx / SlotWidthPx
+              spacingRatioCross = crossAxisSpacing / realSlotWidth;
+              spacingRatioMain = mainAxisSpacing / realSlotHeight;
+            }
+          } else {
+            // Horizontal logic
+            final realSlotHeight = (viewportSize - padding.vertical) / slotCount;
+            if (realSlotHeight > 0) {
+              final realSlotWidth = realSlotHeight * slotAspectRatio;
+              spacingRatioCross = crossAxisSpacing / realSlotHeight;
+              spacingRatioMain = mainAxisSpacing / realSlotWidth;
+            }
+          }
+        }
+
+        double logicalGridWidth;
+        double logicalGridHeight;
+
+        if (isVertical) {
+          unitWidth = 1.0;
+          unitHeight = 1.0 / slotAspectRatio;
+
+          // Total Width = Slots + Spacings
+          logicalGridWidth = slotCount * unitWidth + (max(0, slotCount - 1) * spacingRatioCross);
+          // Total Height = Rows + Spacings
+          logicalGridHeight = maxY * unitHeight + (max(0, maxY - 1) * spacingRatioMain);
+        } else {
+          unitHeight = 1.0;
+          unitWidth = 1.0 * slotAspectRatio;
+
+          logicalGridHeight = slotCount * unitHeight + (max(0, slotCount - 1) * spacingRatioCross);
+          logicalGridWidth = maxX * unitWidth + (max(0, maxX - 1) * spacingRatioMain);
+        }
+
+        return LayoutBuilder(
+          builder: (context, constraints) {
+            final availableWidth = width ?? constraints.maxWidth;
+            final availableHeight = constraints.maxHeight;
+
+            if (availableWidth == double.infinity && width == null) {
+              return const SizedBox();
+            }
+
+            // Calculate Scale to FIT
+            final scaleX = availableWidth / logicalGridWidth;
+
+            var scale = scaleX;
+            if (availableHeight.isFinite) {
+              final scaleY = availableHeight / logicalGridHeight;
+              scale = min(scaleX, scaleY);
+            }
+
+            final drawnWidth = logicalGridWidth * scale;
+            final drawnHeight = logicalGridHeight * scale;
+
+            return GestureDetector(
+              onTapUp: (details) => _handleInteraction(
+                details.localPosition,
+                isVertical ? drawnHeight : drawnWidth,
+                isVertical,
+              ),
+              onPanUpdate: (details) => _handleInteraction(
+                details.localPosition,
+                isVertical ? drawnHeight : drawnWidth,
+                isVertical,
+              ),
+              child: CustomPaint(
+                size: Size(drawnWidth, drawnHeight),
+                painter: _MinimapPainter(
+                  layout: layout,
+                  scrollController: scrollController,
+                  style: style,
+                  padding: padding,
+                  scale: scale,
+                  unitWidth: unitWidth,
+                  unitHeight: unitHeight,
+                  spacingRatioMain: spacingRatioMain,
+                  spacingRatioCross: spacingRatioCross,
+                  scrollDirection: scrollDirection,
+                  minimapContentMainAxis: isVertical ? drawnHeight : drawnWidth,
+                ),
+              ),
+            );
+          },
         );
       },
     );
@@ -128,31 +182,23 @@ class DashboardMinimap extends StatelessWidget {
 
   void _handleInteraction(
     Offset localPosition,
-    double minimapSize,
+    double minimapMainAxisSize,
     bool isVertical,
   ) {
-    if (!scrollController.hasClients) return;
+    if (!scrollController.hasClients || !scrollController.position.haveDimensions) return;
 
     final position = scrollController.position;
     final viewportDimension = position.viewportDimension;
     final maxScroll = position.maxScrollExtent;
     final totalContentSize = maxScroll + viewportDimension;
 
-    if (totalContentSize <= 0 || minimapSize <= 0) return;
+    if (totalContentSize <= 0 || minimapMainAxisSize <= 0) return;
 
-    // Ratio: 1 pixel on minimap = X pixels on scroll view
-    final ratio = totalContentSize / minimapSize;
-
-    // Position touched on the minimap axis
+    final ratio = totalContentSize / minimapMainAxisSize;
     final touchPos = isVertical ? localPosition.dy : localPosition.dx;
-
-    // Convert to scroll offset
     final targetCenter = touchPos * ratio;
-
-    // We want the touched point to be the CENTER of the viewport, not the top.
     final targetStart = targetCenter - (viewportDimension / 2);
 
-    // Clamp to valid scroll range
     final clampedOffset = targetStart.clamp(
       position.minScrollExtent,
       position.maxScrollExtent,
@@ -165,62 +211,69 @@ class DashboardMinimap extends StatelessWidget {
 class _MinimapPainter extends CustomPainter {
   _MinimapPainter({
     required this.layout,
-    required this.slotCount,
     required this.scrollController,
     required this.style,
-    required this.slotAspectRatio,
-    required this.scrollDirection,
     required this.padding,
     required this.scale,
-    required this.virtualSlotCrossAxis,
-    required this.virtualSlotMainAxis,
-    required this.minimapContentSize,
+    required this.unitWidth,
+    required this.unitHeight,
+    required this.spacingRatioMain,
+    required this.spacingRatioCross,
+    required this.scrollDirection,
+    required this.minimapContentMainAxis,
   });
 
   final List<LayoutItem> layout;
-  final int slotCount;
   final ScrollController scrollController;
   final MinimapStyle style;
-  final double slotAspectRatio;
-  final Axis scrollDirection;
   final EdgeInsets padding;
   final double scale;
-  final double virtualSlotCrossAxis;
-  final double virtualSlotMainAxis;
-  final double minimapContentSize;
+  final double unitWidth;
+  final double unitHeight;
+  final double spacingRatioMain;
+  final double spacingRatioCross;
+  final Axis scrollDirection;
+  final double minimapContentMainAxis;
 
   @override
   void paint(Canvas canvas, Size size) {
     final bgPaint = Paint()..color = style.backgroundColor;
     final isVertical = scrollDirection == Axis.vertical;
 
-    // Draw Background
     canvas.drawRect(Offset.zero & size, bgPaint);
 
-    // --- Draw Items ---
     final itemPaint = Paint()..color = style.itemColor;
     final staticItemPaint = Paint()..color = style.staticItemColor;
 
     for (final item in layout) {
+      // Apply spacing to coordinates
+      // Position = (Index * UnitSize) + (Index * SpacingSize)
+      // Size = (Size * UnitSize) + ((Size - 1) * SpacingSize)
+
       double x;
       double y;
       double w;
       double h;
 
       if (isVertical) {
-        x = item.x * virtualSlotCrossAxis;
-        y = item.y * virtualSlotMainAxis;
-        w = item.w * virtualSlotCrossAxis;
-        h = item.h * virtualSlotMainAxis;
+        // Vertical: X is Cross, Y is Main
+        x = (item.x * unitWidth + item.x * spacingRatioCross) * scale;
+        y = (item.y * unitHeight + item.y * spacingRatioMain) * scale;
+
+        // Width includes internal spacings if item spans multiple slots
+        w = (item.w * unitWidth + (max(0, item.w - 1) * spacingRatioCross)) * scale;
+        h = (item.h * unitHeight + (max(0, item.h - 1) * spacingRatioMain)) * scale;
       } else {
-        x = item.x * virtualSlotMainAxis;
-        y = item.y * virtualSlotCrossAxis;
-        w = item.w * virtualSlotMainAxis;
-        h = item.h * virtualSlotCrossAxis;
+        // Horizontal: X is Main, Y is Cross
+        x = (item.x * unitWidth + item.x * spacingRatioMain) * scale;
+        y = (item.y * unitHeight + item.y * spacingRatioCross) * scale;
+
+        w = (item.w * unitWidth + (max(0, item.w - 1) * spacingRatioMain)) * scale;
+        h = (item.h * unitHeight + (max(0, item.h - 1) * spacingRatioCross)) * scale;
       }
 
       final rect = RRect.fromRectAndRadius(
-        Rect.fromLTWH(x * scale, y * scale, w * scale, h * scale),
+        Rect.fromLTWH(x, y, w, h),
         Radius.circular(style.itemBorderRadius),
       );
 
@@ -230,31 +283,25 @@ class _MinimapPainter extends CustomPainter {
       );
     }
 
-    // --- Draw Viewport ---
-    if (scrollController.hasClients) {
+    if (scrollController.hasClients && scrollController.position.haveDimensions) {
       final position = scrollController.position;
       final viewportSize = position.viewportDimension;
       final maxScroll = position.maxScrollExtent;
       final currentScroll = position.pixels;
-
       final totalContentSize = maxScroll + viewportSize;
 
       if (totalContentSize > 0) {
-        // Ratio: Minimap / Real
-        final ratio = minimapContentSize / totalContentSize;
+        final ratio = minimapContentMainAxis / totalContentSize;
+        final viewportStart = currentScroll * ratio;
+        final viewportLength = viewportSize * ratio;
+        final clampedStart = viewportStart.clamp(0.0, minimapContentMainAxis);
 
-        final viewportY = currentScroll * ratio;
-        final viewportH = viewportSize * ratio;
-
-        // Clamp visual drawing to bounds
-        final clampedY = viewportY.clamp(0.0, minimapContentSize);
-
-        final viewportRect = Rect.fromLTWH(
-          0,
-          clampedY,
-          size.width,
-          viewportH,
-        );
+        final Rect viewportRect;
+        if (isVertical) {
+          viewportRect = Rect.fromLTWH(0, clampedStart, size.width, viewportLength);
+        } else {
+          viewportRect = Rect.fromLTWH(clampedStart, 0, viewportLength, size.height);
+        }
 
         canvas.drawRect(viewportRect, Paint()..color = style.viewportColor);
 
@@ -270,10 +317,11 @@ class _MinimapPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _MinimapPainter oldDelegate) {
     return oldDelegate.layout != layout ||
-        oldDelegate.slotCount != slotCount ||
         oldDelegate.style != style ||
         oldDelegate.scrollController != scrollController ||
         oldDelegate.scale != scale ||
-        oldDelegate.minimapContentSize != minimapContentSize;
+        oldDelegate.scrollDirection != scrollDirection ||
+        oldDelegate.spacingRatioMain != spacingRatioMain ||
+        oldDelegate.spacingRatioCross != spacingRatioCross;
   }
 }
