@@ -3,7 +3,7 @@ description: "High-performance, sliver-based draggable and resizable grid engine
 homepage: https://github.com/scalz/sliver_dashboard
 repository: https://github.com/scalz/sliver_dashboard
 issue_tracker: https://github.com/scalz/sliver_dashboard/issues
-version: 0.6.0
+version: 0.6.1
 
 environment:
   sdk:  ">=3.0.0 <4.0.0"
