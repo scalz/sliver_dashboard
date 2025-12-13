@@ -4,9 +4,9 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:sliver_dashboard/src/controller/dashboard_controller_interface.dart';
-import 'package:sliver_dashboard/src/controller/utility.dart';
 import 'package:sliver_dashboard/src/engine/layout_engine.dart' as engine;
 import 'package:sliver_dashboard/src/models/layout_item.dart';
+import 'package:sliver_dashboard/src/models/utility.dart';
 import 'package:sliver_dashboard/src/view/a11y/dashboard_shortcuts.dart';
 import 'package:sliver_dashboard/src/view/guidance/dashboard_guidance.dart';
 import 'package:sliver_dashboard/src/view/resize_handle.dart';
@@ -75,7 +75,25 @@ class DashboardControllerImpl implements DashboardController {
   );
 
   @override
-  late final ReadableBeacon<String?> activeItemId = Beacon.derived(() => activeItem.value?.id);
+  final selectedItemIds = Beacon.writable<Set<String>>({});
+
+  // Internal state to track if we are actually moving items vs just selecting
+  final _isDraggingState = Beacon.writable(false);
+
+  @override
+  ReadableBeacon<bool> get isDragging => _isDraggingState;
+
+  // The item under the cursor that initiated the drag.
+  // This is our reference point for calculating deltas.
+  String? _pivotItemId;
+
+  @override
+  late final ReadableBeacon<String?> activeItemId = Beacon.derived(() {
+    // If dragging, the pivot is the active item.
+    // If not dragging, the first selected item is "active" (for focus/properties).
+    if (_isDraggingState.value) return _pivotItemId;
+    return selectedItemIds.value.firstOrNull;
+  });
 
   // --- INTERNAL STATE (Hidden from Interface) ---
 
@@ -266,7 +284,7 @@ class DashboardControllerImpl implements DashboardController {
     );
 
     layout.value = newLayout;
-    onLayoutChanged?.call(layout.value);
+    onLayoutChanged?.call(layout.value, slotCount.value);
   }
 
   @override
@@ -283,7 +301,7 @@ class DashboardControllerImpl implements DashboardController {
     );
     layout.value = newLayout;
 
-    onLayoutChanged?.call(layout.value);
+    onLayoutChanged?.call(layout.value, slotCount.value);
   }
 
   @override
@@ -295,7 +313,46 @@ class DashboardControllerImpl implements DashboardController {
       slotCount.value,
     );
     layout.value = newLayout;
-    onLayoutChanged?.call(layout.value);
+    onLayoutChanged?.call(layout.value, slotCount.value);
+  }
+
+  @override
+  void removeItems(List<String> itemIds) {
+    final idsToRemove = itemIds.toSet();
+    final currentLayout = layout.value;
+
+    final newLayout = engine.compact(
+      currentLayout.where((item) => !idsToRemove.contains(item.id)).toList(),
+      compactionType.value,
+      slotCount.value,
+    );
+
+    layout.value = newLayout;
+    onLayoutChanged?.call(layout.value, slotCount.value);
+
+    clearSelection();
+  }
+
+  @override
+  void toggleSelection(String itemId, {bool multi = false}) {
+    final currentSet = selectedItemIds.value.toSet();
+    if (multi) {
+      if (currentSet.contains(itemId)) {
+        currentSet.remove(itemId);
+      } else {
+        currentSet.add(itemId);
+      }
+    } else {
+      currentSet
+        ..clear()
+        ..add(itemId);
+    }
+    selectedItemIds.value = currentSet;
+  }
+
+  @override
+  void clearSelection() {
+    selectedItemIds.value = {};
   }
 
   @override
@@ -326,7 +383,7 @@ class DashboardControllerImpl implements DashboardController {
       allowOverlap: false, // Ensure imported layout is clean
     );
 
-    onLayoutChanged?.call(layout.value);
+    onLayoutChanged?.call(layout.value, slotCount.value);
   }
 
   @override
@@ -483,16 +540,28 @@ class DashboardControllerImpl implements DashboardController {
     placeholder.value = null;
     originalLayoutOnStart.value = [];
 
-    onLayoutChanged?.call(layout.value);
+    onLayoutChanged?.call(layout.value, slotCount.value);
   }
 
   /// Call when a drag gesture starts on a dashboard item.
   void onDragStart(String itemId) {
     final item = layout.value.firstWhere((i) => i.id == itemId);
     if (item.isStatic) return;
+
+    // Selection Logic at start of drag:
+    // 1. If item is NOT in selection, it becomes the selection (clearing others).
+    // 2. If item IS in selection, we keep the group to drag them all.
+    final currentSelection = selectedItemIds.value;
+    if (!currentSelection.contains(itemId)) {
+      selectedItemIds.value = {itemId};
+    }
+
+    _isDraggingState.value = true;
+    _pivotItemId = itemId;
     isResizing.value = false;
+
+    // Snapshot layout for anti-drift
     originalLayoutOnStart.value = layout.value;
-    activeItem.value = item;
   }
 
   /// Call continuously while a drag gesture is updated.
@@ -504,77 +573,116 @@ class DashboardControllerImpl implements DashboardController {
     required double mainAxisSpacing,
     required double crossAxisSpacing,
   }) {
-    final item = activeItem.value;
-    if (item == null || item.id != itemId) return;
+    // Safety check: ensure we are dragging the pivot
+    if (_pivotItemId != itemId) return;
 
-    // 1. Calculate the new logical grid position from the scroll-aware contentPosition.
+    final pivotItem = originalLayoutOnStart.value.firstWhere((i) => i.id == itemId);
+
+    // 1. Calculate Pivot's new Grid Position
     final newGridX = (contentPosition.dx / (slotWidth + crossAxisSpacing)).round();
     final newGridY = (contentPosition.dy / (slotHeight + mainAxisSpacing)).round();
 
-    final int clampedX;
-    final int clampedY;
+    // 2. Calculate Delta (Grid Units) from original position
+    // Note: We don't clamp the pivot yet, we'll let moveCluster handle bounds via the BBox
+    final dx = newGridX - pivotItem.x;
+    final dy = newGridY - pivotItem.y;
 
+    // 3. Calculate Target Bounding Box Position
+    // We need the original BBox of the cluster
+    final clusterIds = selectedItemIds.value;
+    final clusterItems =
+        originalLayoutOnStart.value.where((i) => clusterIds.contains(i.id)).toList();
+
+    final originalBBox = engine.calculateBoundingBox(clusterItems);
+
+    // Target BBox Position = Original BBox + Delta
+    var targetBBoxX = originalBBox.x + dx;
+    var targetBBoxY = originalBBox.y + dy;
+
+    // 4. Clamping (Optional but recommended for visual sanity)
+    // We clamp the BBox so it doesn't go out of grid bounds
     if (scrollDirection.value == Axis.vertical) {
-      clampedX = newGridX.clamp(0, slotCount.value - item.w);
-      clampedY = max(0, newGridY);
+      targetBBoxX = targetBBoxX.clamp(0, slotCount.value - originalBBox.w);
+      targetBBoxY = max(0, targetBBoxY);
     } else {
-      clampedX = max(0, newGridX);
-      clampedY = newGridY.clamp(0, slotCount.value - item.h);
+      targetBBoxX = max(0, targetBBoxX);
+      targetBBoxY = targetBBoxY.clamp(0, slotCount.value - originalBBox.h);
     }
 
-    // 2. Update the layout by moving the element to the new logical position.
-    final newLayout = engine.moveElement(
+    // 5. Move Cluster
+    final newLayout = engine.moveCluster(
       originalLayoutOnStart.value,
-      item,
-      clampedX,
-      clampedY,
+      clusterIds,
+      targetBBoxX,
+      targetBBoxY,
       cols: slotCount.value,
       compactType: compactionType.value,
       preventCollision: preventCollision.value,
     );
+
     layout.value = newLayout;
 
-    // 3. Calculate the smooth visual offset.
-    final logicalItemPixelX = clampedX * (slotWidth + crossAxisSpacing);
-    final logicalItemPixelY = clampedY * (slotHeight + mainAxisSpacing);
+    // 6. Visual Offset (Smooth Drag)
+    // We calculate offset based on the Pivot Item's logical position in the NEW layout
+    // to account for collision resolutions (pushes) performed by the engine.
+
+    final movedPivot = newLayout.firstWhere((i) => i.id == itemId);
+
+    final logicalItemPixelX = movedPivot.x * (slotWidth + crossAxisSpacing);
+    final logicalItemPixelY = movedPivot.y * (slotHeight + mainAxisSpacing);
 
     final visualOffsetX = contentPosition.dx - logicalItemPixelX;
     final visualOffsetY = contentPosition.dy - logicalItemPixelY;
 
-    // 4. Update the drag offset beacon.
     dragOffset.value = Offset(visualOffsetX, visualOffsetY);
   }
 
   /// Call when a drag gesture ends.
   void onDragEnd(String itemId) {
-    if (activeItem.value == null) return;
+    if (!_isDraggingState.value) return;
 
-    // For safety, eg. compact is none, ALWAYS call compact.
-    // If compactionType is null, this won't compact,
-    // But this will prevent collision (overlaps) by pushing items.
-    final finalLayout = engine.compact(
-      layout.value,
-      compactionType.value,
-      slotCount.value,
-      allowOverlap: false,
-    );
+    List<LayoutItem> finalLayout;
+
+    // Apply Compaction on Drop
+    if (compactionType.value == engine.CompactType.none) {
+      // If no compaction, we just resolve overlaps (Push Only)
+      // so items stay where they were dropped.
+      finalLayout = engine.resolveCollisions(
+        layout.value,
+        compactionType.value,
+      );
+    } else {
+      // If compaction is enabled (Vertical/Horizontal), we run the full
+      // compaction algorithm to fill the gaps created during the drag.
+      finalLayout = engine.compact(
+        layout.value,
+        compactionType.value,
+        slotCount.value,
+      );
+    }
 
     layout.value = finalLayout;
+    onLayoutChanged?.call(layout.value, slotCount.value);
 
-    onLayoutChanged?.call(layout.value);
-
-    activeItem.value = null;
+    _isDraggingState.value = false;
+    _pivotItemId = null;
     originalLayoutOnStart.value = [];
     dragOffset.value = Offset.zero;
   }
 
   /// Call when a resize gesture starts on a dashboard item.
   void onResizeStart(String itemId) {
+    // Restriction: Multi-resize not supported yet.
+    // If multiple items selected, we clear selection and select only this one.
+    selectedItemIds.value = {itemId};
+
     final item = layout.value.firstWhere((i) => i.id == itemId);
     if (item.isStatic || item.isResizable == false) return;
+
     isResizing.value = true;
+    _pivotItemId = itemId;
+    _isDraggingState.value = false;
     originalLayoutOnStart.value = layout.value;
-    activeItem.value = item;
   }
 
   /// Call continuously while a resize gesture is updated.
@@ -587,9 +695,7 @@ class DashboardControllerImpl implements DashboardController {
     required double crossAxisSpacing,
     required double mainAxisSpacing,
   }) {
-    final item = activeItem.value;
-    if (item == null || item.id != itemId) return;
-
+    // Use originalLayoutOnStart to get the item state before resize began
     final originalItem = originalLayoutOnStart.value.firstWhere((i) => i.id == itemId);
 
     final dW = delta.dx / (slotWidth + crossAxisSpacing);
@@ -605,12 +711,12 @@ class DashboardControllerImpl implements DashboardController {
         newW = (originalItem.w + dW).round();
         newH = (originalItem.h + dH).round();
       case ResizeHandle.bottomLeft:
-        newW = (originalItem.w - dW).round(); // Dragging left (-dx) should increase width
+        newW = (originalItem.w - dW).round();
         newH = (originalItem.h + dH).round();
         newX = (originalItem.x + dW).round();
       case ResizeHandle.topRight:
         newW = (originalItem.w + dW).round();
-        newH = (originalItem.h - dH).round(); // Dragging up (-dy) should increase height
+        newH = (originalItem.h - dH).round();
         newY = (originalItem.y + dH).round();
       case ResizeHandle.topLeft:
         newW = (originalItem.w - dW).round();
@@ -629,23 +735,20 @@ class DashboardControllerImpl implements DashboardController {
         newW = (originalItem.w + dW).round();
     }
 
-    // Clamp dimensions to min/max
     final maxW = originalItem.maxW.isFinite ? originalItem.maxW.toInt() : 10000;
     final maxH = originalItem.maxH.isFinite ? originalItem.maxH.toInt() : 10000;
     newW = newW.clamp(originalItem.minW, maxW);
     newH = newH.clamp(originalItem.minH, maxH);
 
-    // Clamp position and dimensions to grid boundaries
     if (scrollDirection.value == Axis.vertical) {
       if (newX < 0) {
-        newW += newX; // Reduce width by the amount it went off-screen
+        newW += newX;
         newX = 0;
       }
       if (newX + newW > slotCount.value) {
-        newW = slotCount.value - newX; // Clamp width to the right edge
+        newW = slotCount.value - newX;
       }
     } else {
-      // Horizontal scroll
       if (newY < 0) {
         newH += newY;
         newY = 0;
@@ -670,7 +773,7 @@ class DashboardControllerImpl implements DashboardController {
 
   /// Call when a resize gesture ends.
   void onResizeEnd(String itemId) {
-    if (activeItem.value == null) return;
+    if (!isResizing.value) return;
 
     // For safety, eg. compact is none, ALWAYS call compact.
     // If compactionType is null, this won't compact,
@@ -684,7 +787,7 @@ class DashboardControllerImpl implements DashboardController {
 
     layout.value = finalLayout;
 
-    onLayoutChanged?.call(layout.value);
+    onLayoutChanged?.call(layout.value, slotCount.value);
 
     activeItem.value = null;
     originalLayoutOnStart.value = [];
@@ -693,66 +796,68 @@ class DashboardControllerImpl implements DashboardController {
 
   @override
   void moveActiveItemBy(int dx, int dy) {
-    final item = activeItem.value;
-    if (item == null || item.isStatic) return; // Should not happen but for safety
+    final clusterIds = selectedItemIds.value;
+    if (clusterIds.isEmpty) return;
 
-    // 1. Calculate new target position
-    final newX = (item.x + dx).clamp(0, slotCount.value - item.w);
-    final newY = max(0, item.y + dy);
+    // For keyboard moves, we work incrementally from the CURRENT layout.
+    // This allows step-by-step movement.
+    final currentLayout = layout.value;
+    final clusterItems = currentLayout.where((i) => clusterIds.contains(i.id)).toList();
 
-    // If no change, do nothing
-    if (newX == item.x && newY == item.y) return;
+    // Calculate current BBox
+    final bbox = engine.calculateBoundingBox(clusterItems);
 
-    // 2. Create a temporary item at the target position for collision check
-    final targetItem = item.copyWith(x: newX, y: newY);
+    // Calculate target BBox position
+    var targetX = bbox.x + dx;
+    var targetY = bbox.y + dy;
 
-    // Get the layout *before* the current interaction started
-    final baseLayout = originalLayoutOnStart.value;
+    // Clamp BBox to grid
+    if (scrollDirection.value == Axis.vertical) {
+      targetX = targetX.clamp(0, slotCount.value - bbox.w);
+      targetY = max(0, targetY);
+    } else {
+      targetX = max(0, targetX);
+      targetY = targetY.clamp(0, slotCount.value - bbox.h);
+    }
 
-    // 3. CRITICAL CHECK: Prevent moving onto a static item
-    // We check the target against the base layout statics.
-    final statics = engine.getStatics(baseLayout);
-    if (engine.getFirstCollision(statics, targetItem) != null) {
-      // Reason: For keyboard control (A11y), we must prevent the item from moving
-      // onto a static item, unlike drag-and-drop which allows pushing non-static items.
+    // Check if movement is valid (e.g. not moving onto a static item)
+    // We create a virtual item representing the target BBox
+    final targetBBoxItem = bbox.copyWith(x: targetX, y: targetY);
+    final statics = engine.getStatics(currentLayout);
+
+    // If the BBox collides with a static item, we block the move.
+    // Note: This is a simplified check. Ideally we should check individual items,
+    // but checking the BBox is safer and faster for A11y.
+    if (engine.getFirstCollision(statics, targetBBoxItem) != null) {
       return;
     }
 
-    // 4. Use the engine to move the element and resolve collisions with non-static items
-    final newLayout = engine.moveElement(
-      baseLayout,
-      baseLayout.firstWhere((i) => i.id == item.id), // Item A at (0,0)
-      newX,
-      newY,
+    // Move the cluster using the engine
+    final newLayout = engine.moveCluster(
+      currentLayout,
+      clusterIds,
+      targetX,
+      targetY,
       cols: slotCount.value,
       compactType: compactionType.value,
       preventCollision: preventCollision.value,
     );
 
     layout.value = newLayout;
-
-    // Update active item state to the new position for subsequent moves
-    // We must find the item in the new layout as its position might have been adjusted by the engine
-    activeItem.value = newLayout.firstWhere((i) => i.id == item.id);
-
-    // Update drag offset to 0 because keyboard moves are exact grid jumps
     dragOffset.value = Offset.zero;
   }
 
   @override
   void cancelInteraction() {
-    if (activeItem.value == null) return;
-
-    // Revert layout
     if (originalLayoutOnStart.value.isNotEmpty) {
       layout.value = List.from(originalLayoutOnStart.value);
     }
 
-    // Reset state
-    activeItem.value = null;
+    _isDraggingState.value = false;
+    isResizing.value = false;
+    _pivotItemId = null;
     originalLayoutOnStart.value = [];
     dragOffset.value = Offset.zero;
-    isResizing.value = false;
   }
 
   @override
@@ -764,6 +869,6 @@ class DashboardControllerImpl implements DashboardController {
     final optimized = engine.optimizeLayout(currentLayout, cols);
 
     layout.value = optimized;
-    onLayoutChanged?.call(layout.value);
+    onLayoutChanged?.call(layout.value, slotCount.value);
   }
 }

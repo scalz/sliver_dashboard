@@ -2,7 +2,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sliver_dashboard/sliver_dashboard.dart';
-import 'package:sliver_dashboard/src/controller/dashboard_controller_impl.dart';
+import 'package:sliver_dashboard/src/controller/utility.dart';
 import 'package:sliver_dashboard/src/view/guidance/guidance_interactor.dart';
 
 void main() {
@@ -106,8 +106,8 @@ void main() {
       (tester) async {
         final item = controller.layout.value.first;
 
-        // 1. Simulate active item (moving)
-        (controller as DashboardControllerImpl).activeItem.value = item;
+        // Use onDragStart to properly set isDragging and activeItemId
+        controller.internal.onDragStart(item.id);
 
         await tester.pumpWidget(
           MaterialApp(

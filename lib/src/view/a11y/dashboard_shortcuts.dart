@@ -29,6 +29,14 @@ class DashboardShortcuts {
     this.moveRight = const {
       SingleActivator(LogicalKeyboardKey.arrowRight),
     },
+    this.multiSelectKeys = const [
+      LogicalKeyboardKey.shiftLeft,
+      LogicalKeyboardKey.shiftRight,
+      LogicalKeyboardKey.controlLeft,
+      LogicalKeyboardKey.controlRight,
+      LogicalKeyboardKey.metaLeft,
+      LogicalKeyboardKey.metaRight,
+    ],
   });
 
   /// Default shortcuts configuration.
@@ -54,4 +62,8 @@ class DashboardShortcuts {
 
   /// Keys to move the item right.
   final Set<ShortcutActivator> moveRight;
+
+  /// Keys held down during a click to trigger multi-selection.
+  /// Defaults to Shift, Control, and Meta (Command) keys.
+  final List<LogicalKeyboardKey> multiSelectKeys;
 }

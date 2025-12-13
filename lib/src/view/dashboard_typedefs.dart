@@ -35,6 +35,13 @@ typedef DashboardTrashBuilder = Widget Function(
   String? activeItemId,
 );
 
+/// A callback to confirm the deletion of multiple items.
+/// Returns `true` to proceed with deletion, `false` to cancel.
+typedef DashboardWillDeleteCallback = Future<bool> Function(List<LayoutItem> items);
+
+/// A callback fired when items are deleted.
+typedef DashboardItemsDeletedCallback = void Function(List<LayoutItem> items);
+
 /// Builder for accessibility messages related to an item ID.
 typedef A11yItemMessageBuilder = String Function(String itemId);
 

@@ -608,7 +608,7 @@ void main() {
     // Action: Move A to the right (x=1).
     // It will overlap B (at x=2) and C (at x=2).
     // Both B and C will be pushed to y=2 (bottom of A).
-    // Without the fix, B and C will overlap at y=2.
+    // Without this, B and C will overlap at y=2.
     final result = moveElement(
       layout,
       layout[0], // Item A
@@ -633,5 +633,86 @@ void main() {
     // 3. CRITICAL: B and C should NOT overlap each other
     expect(collides(b, c), isFalse, reason: 'Pushed items B and C should not overlap');
     expect(b.y != c.y, isTrue, reason: 'B and C should have different Y coordinates');
+  });
+
+  group('LayoutEngine Edge Cases Coverage', () {
+    test('correctBounds resolves collision between static items after bounds correction', () {
+      // Scenario:
+      // Static A at 0,0.
+      // Static B at -1,0 (Out of bounds).
+      // When B is corrected to x=0, it collides with A.
+      // It should be pushed down.
+      final layout = [
+        const LayoutItem(id: 'A', x: 0, y: 0, w: 1, h: 1, isStatic: true),
+        const LayoutItem(id: 'B', x: -1, y: 0, w: 1, h: 1, isStatic: true),
+      ];
+
+      final result = correctBounds(layout, 4);
+
+      final b = result.firstWhere((i) => i.id == 'B');
+      expect(b.x, 0); // Corrected from -1
+      expect(b.y, 1); // Pushed down because (0,0) was taken by A
+    });
+
+    test('moveElement returns early if position and size are unchanged', () {
+      const item = LayoutItem(id: 'A', x: 0, y: 0, w: 1, h: 1);
+      final layout = [item];
+
+      // Call with same parameters
+      final result = moveElement(
+        layout,
+        item,
+        0, // Same X
+        0, // Same Y
+        cols: 4,
+        compactType: CompactType.vertical,
+      );
+
+      // Should return the exact same instance (optimization)
+      expect(result, same(layout));
+    });
+
+    test('resolveCollisions handles Horizontal compaction correctly', () {
+      // Scenario: A and B overlap at (0,0).
+      // CompactType.horizontal should push one to the right (X axis).
+      final layout = [
+        const LayoutItem(id: 'A', x: 0, y: 0, w: 1, h: 1),
+        const LayoutItem(id: 'B', x: 0, y: 0, w: 1, h: 1),
+      ];
+
+      final result = resolveCollisions(layout, CompactType.horizontal);
+
+      final a = result.firstWhere((i) => i.id == 'A');
+      final b = result.firstWhere((i) => i.id == 'B');
+
+      // One should be at x=0, the other at x=1
+      expect(a.x != b.x, isTrue);
+      expect(a.y, b.y); // Y should stay same
+
+      // Verify sorting logic
+      // Create items that need sorting by X then Y
+      final sortTestLayout = [
+        const LayoutItem(id: 'C', x: 1, y: 0, w: 1, h: 1),
+        const LayoutItem(id: 'D', x: 0, y: 0, w: 1, h: 1),
+      ];
+      // Just running this triggers the sort comparator
+      resolveCollisions(sortTestLayout, CompactType.horizontal);
+    });
+
+    test('optimizeLayout handles items wider than the grid', () {
+      // Scenario: Item width 5 in a 4-column grid.
+      // It cannot fit anywhere. It should be added at the bottom.
+      final layout = [
+        const LayoutItem(id: 'Huge', x: 0, y: 0, w: 5, h: 1),
+      ];
+
+      final result = optimizeLayout(layout, 4);
+
+      final huge = result.first;
+      // Should be present
+      expect(huge.id, 'Huge');
+      // Should be at the bottom (y=0 since list was empty, or y=bottom if others existed)
+      expect(huge.y, 0);
+    });
   });
 }

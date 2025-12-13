@@ -1,3 +1,24 @@
+## 0.8.0
+
+### New Features
+- **Multi-Selection & Cluster Drag:**
+  - Users can now select multiple items using `Shift` + Click (or `Ctrl`/`Meta`) or customizable keys.
+  - Added `multiSelectKeys` to `DashboardShortcuts` to define which keys (e.g. Alt, Shift) trigger multi-selection.
+  - Dragging one selected item moves the entire group together.
+  - Visual feedback displays all items in the cluster during the drag.
+  - Added `toggleSelection(id)` or `clearSelection()`.
+- **Batch Operations:**
+  - Dragging a selection to the Trash deletes all items in the group.
+  - Added `removeItems(List<String>)` to the controller.
+- Tests.
+- Updated README and main.dart example.
+
+### Breaking Changes
+- **Callbacks:**
+  - `onLayoutChanged(items)` becomes `onLayoutChanged(items, slotCount)`. This allows to persist layouts specifically for the current breakpoint.
+  - `onItemDeleted(item)` is replaced by `onItemsDeleted(List<LayoutItem> items)`.
+  - `onWillDelete(item)` now receives `List<LayoutItem> items`.
+
 ## 0.7.0
 
 - **Feat:** Enhanced Responsive Behavior with **Layout Memory**.

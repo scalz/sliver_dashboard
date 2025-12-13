@@ -132,6 +132,10 @@ void main() {
           );
           await tester.pump();
 
+          // Small move to trigger PanGestureRecognizer
+          await gesture.moveBy(const Offset(0, 10));
+          await tester.pump();
+
           await gesture.moveTo(const Offset(200, 390));
           await tester.pump();
 

@@ -39,7 +39,7 @@ void main() {
                     ),
                   );
                 },
-                onItemDeleted: (_) => deleted = true,
+                onItemsDeleted: (_) => deleted = true,
                 onItemDragStart: (_) => dragStarted = true,
               ),
             ),
@@ -67,7 +67,7 @@ void main() {
 
         // 4. Wait for arming delay (100ms)
         // We pump frames to allow the timer to fire
-        await tester.pump(const Duration(milliseconds: 200));
+        await tester.pump(const Duration(milliseconds: 500));
 
         // 5. Drop
         await gesture.up();
@@ -105,7 +105,7 @@ void main() {
                     ),
                   );
                 },
-                onItemDeleted: (_) => deleted = true,
+                onItemsDeleted: (_) => deleted = true,
               ),
             ),
           ),

@@ -125,8 +125,8 @@ void main() {
         await gesture.moveBy(const Offset(0, 10));
         await tester.pump();
 
-        expect(controller.internal.activeItem.value, isNotNull);
-        expect(controller.internal.activeItem.value?.id, 'a');
+        expect(controller.activeItemId.value, 'a');
+        expect(controller.isDragging.value, isTrue);
 
         await gesture.up();
         await tester.pump();
@@ -151,12 +151,15 @@ void main() {
         final gesture = await tester.startGesture(itemRect.bottomRight - const Offset(5, 5));
         await tester.pump();
 
+        await gesture.moveBy(const Offset(10, 10));
+        await tester.pump();
+
+        // Use activeItemId
         expect(
-          controller.internal.activeItem.value,
-          isNotNull,
+          controller.activeItemId.value,
+          'a',
           reason: 'Controller did not register an active item on resize start.',
         );
-        expect(controller.internal.activeItem.value?.id, 'a');
 
         await gesture.moveBy(const Offset(150, 150));
         await tester.pump();
@@ -186,6 +189,9 @@ void main() {
 
         final itemBFinder = find.widgetWithText(DashboardItemWrapper, 'b');
         final gesture = await tester.startGesture(tester.getCenter(itemBFinder));
+        await tester.pump();
+
+        await gesture.moveBy(const Offset(10, 10));
         await tester.pump();
 
         // Move slightly to trigger pan
@@ -221,15 +227,16 @@ void main() {
         await gesture.moveBy(const Offset(0, 10));
         await tester.pump();
 
-        expect(controller.internal.activeItem.value?.id, 'a');
+        expect(controller.activeItemId.value, 'a');
 
         await gesture.cancel();
         await tester.pump();
 
+        // Check isDragging instead of activeItemId (selection persists)
         expect(
-          controller.internal.activeItem.value,
-          isNull,
-          reason: 'Controller should not have an active item after gesture cancellation.',
+          controller.isDragging.value,
+          isFalse,
+          reason: 'Controller should not be dragging after gesture cancellation.',
         );
       } finally {
         debugDefaultTargetPlatformOverride = originalPlatform;

@@ -14,8 +14,9 @@ typedef DashboardItemInteractionCallback = void Function(LayoutItem item);
 
 /// A callback that is fired when the layout of the dashboard changes.
 ///
-/// The new layout, represented as a list of [LayoutItem]s, is passed as an argument.
-typedef DashboardLayoutChangeListener = void Function(List<LayoutItem> items);
+/// [items]: The new layout items.
+/// [slotCount]: The number of columns associated with this layout (useful for responsive persistence).
+typedef DashboardLayoutChangeListener = void Function(List<LayoutItem> items, int slotCount);
 
 /// The public contract for the Dashboard Controller.
 ///
@@ -74,10 +75,15 @@ abstract class DashboardController {
   /// A reactive property to control resize behavior.
   WritableBeacon<engine.ResizeBehavior> get resizeBehavior;
 
-  /// A readable beacon that exposes the ID of the currently active
-  /// (dragged or resized) item.
-  ///
-  /// Returns `null` if no item is active.
+  /// The set of IDs of the currently selected items.
+  WritableBeacon<Set<String>> get selectedItemIds;
+
+  /// Whether a drag operation is currently in progress.
+  /// Useful to distinguish between "Selected" (static highlight) and "Dragging" (moving).
+  ReadableBeacon<bool> get isDragging;
+
+  /// The ID of the primary active item (usually the one under the cursor or the first selected).
+  /// Returns null if no item is selected/active.
   ReadableBeacon<String?> get activeItemId;
 
   // --- PUBLIC PROPERTIES ---
@@ -124,6 +130,19 @@ abstract class DashboardController {
   ///
   /// After removal, the layout is re-compacted to fill any empty space.
   void removeItem(String itemId, {engine.CompactType? overrideCompactType});
+
+  /// Removes multiple items from the dashboard by their IDs.
+  void removeItems(List<String> itemIds);
+
+  /// Selects or deselects an item.
+  ///
+  /// [itemId]: The item to toggle.
+  /// [multi]: If true (e.g. Shift/Ctrl click), adds/removes from current selection.
+  ///          If false (Simple click), clears previous selection and selects this one.
+  void toggleSelection(String itemId, {bool multi = false});
+
+  /// Clears the current selection.
+  void clearSelection();
 
   /// Toggles the edit mode for the dashboard.
   void toggleEditing();

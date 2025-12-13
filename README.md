@@ -30,9 +30,15 @@ Perfect for analytics dashboards, IoT control panels, project management tools, 
 - 📥 **Drag From Outside:** Drop new items from external sources directly into the grid with auto-scrolling support.
 - 💡 **Guidance:** Optional contextual tooltips/guidance messages.
 - 📱 **Responsive Layouts:** Automatically adapt the number of columns (`slotCount`) based on the screen width using the built-in `breakpoints` property.
-- ♿ **Accessibility:** Full keyboard navigation support (Tab, Arrows, Space, Enter) and Screen Reader announcements (TalkBack/VoiceOver).
+- ♿ **Accessibility:** Full keyboard navigation support (Tab, Arrows, Space, Enter, customizable keys) and Screen Reader announcements (TalkBack/VoiceOver).
 - 🗺️ **Mini-Map:** A customizable widget to visualize the entire dashboard layout and current viewport, perfect for large grids.
+- 🖱️ **Multi-Selection:** Select and move multiple items at once using `Shift` + Click (customizable keys).
 - 💾 **Utilities**: Import/Export, find free cells, get last row, Auto Layout & Bulk Add.
+
+## Try the Demo
+
+[Launch Demo](https://scalz.github.io/sliver_dashboard_web_demo/)
+
 
 ## Table of Contents
 
@@ -54,6 +60,7 @@ Perfect for analytics dashboards, IoT control panels, project management tools, 
   - [Mini Map](#mini-map)
   - [Auto Layout bulk add](#auto-layout-bulk-add)
   - [Accessibility and Keyboard Navigation](#accessibility-and-keyboard-navigation)
+  - [Multi Selection and Cluster Drag](#multi-selection-and-cluster-drag)
   - [Layout Optimizer](#layout-optimizer)
   - [Utilities](#utilities)
 - [Contributing](#contributing)
@@ -323,12 +330,12 @@ Dashboard( // or DashboardOverlay
   ),
   // 3. Optional: Confirm deletion before it happens.
   // Return true to delete, false to cancel.
-  onWillDelete: (item) async {
+  onWillDelete: (items) async {
     return await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Confirm Delete'),
-        content: Text('Are you sure you want to delete item ${item.id}?'),
+        content: Text('Are you sure you want to delete ${items.length} items?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
@@ -342,11 +349,11 @@ Dashboard( // or DashboardOverlay
       ),
     ) ?? false;
   },
-  // 4. Handle the deletion event.
-  // The item is AUTOMATICALLY removed from the controller before this callback.
-  onItemDeleted: (LayoutItem item) {
+  // 4. Handle batch deletion.
+  // Item are AUTOMATICALLY removed from the controller before this callback.
+  onItemsDeleted: (items) {
     // You just need to remove your corresponding business data.
-    myData.remove(item.id);
+    myData.removeItems(items);
   },
 )
 ```
@@ -536,6 +543,12 @@ Dashboard(
     600: 8,
     1200: 12
   },
+  // The callback provides the slotCount (breakpoint)
+  onLayoutChanged: (items, slotCount) {
+    // Save layout specifically for this screen size
+    final key = 'layout_$slotCount';
+    myStorage.save(key, items);
+  },
 )
 ```
 
@@ -679,6 +692,29 @@ controller.shortcuts = DashboardShortcuts(
 );
 ```
 
+### Multi Selection and Cluster Drag
+
+Users can select multiple items by holding `Shift` (or `Ctrl`/`Cmd`) while clicking.
+Dragging any item in the selection moves the entire group ("Cluster Drag").
+
+**Programmatic Selection:**
+```dart
+// Select multiple items
+controller.toggleSelection('item_1', multi: true);
+controller.toggleSelection('item_2', multi: true);
+
+// Clear selection
+controller.clearSelection();
+
+// Check selection
+print(controller.selectedItemIds.value);
+
+// 2. Customize Multi-Selection Keys
+controller.shortcuts = DashboardShortcuts(
+  multiSelectKeys: [LogicalKeyboardKey.altLeft],
+);
+```
+
 ### Layout Optimizer
 
 If your dashboard becomes fragmented (full of gaps) after many moves, you can use the optimizer to compact the layout.
@@ -792,6 +828,6 @@ Pull requests should pass all checks before they can be merged into the `main` b
 - ✅ **Accessibility:** Enhanced screen reader support and keyboard navigation with configurable keys and messages.
 - ✅ **Layout Optimizer:** Visual Bin Packing.
 - ✅ **Mini-map:** Display and navigate via a minimap.
-- 🔲 **Multi-Selection:** Multi item selection and dragging.
+- ✅ **Multi-Selection:** Multi item selection and dragging.
 - 🔲 **Sticky Headers:** Special item to create "barrier" for defining sections in layout.
 - 🔲 **Nested dashboard:** Special "folder" item where you can drag&drop items from main dashboard to a "folder" dashboard, and vice-versa.

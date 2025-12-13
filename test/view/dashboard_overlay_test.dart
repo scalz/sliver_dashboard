@@ -6,11 +6,12 @@ import 'package:mocktail/mocktail.dart';
 import 'package:sliver_dashboard/sliver_dashboard.dart';
 import 'package:sliver_dashboard/src/controller/dashboard_controller_impl.dart';
 import 'package:sliver_dashboard/src/view/dashboard_feedback_widget.dart';
+import 'package:sliver_dashboard/src/view/dashboard_grid.dart';
 import 'package:sliver_dashboard/src/view/dashboard_item_widget.dart';
 
 // Mock for the persistence callback
 class MockLayoutChangeListener extends Mock {
-  void call(List<LayoutItem> items);
+  void call(List<LayoutItem> items, int slotCount);
 }
 
 // Utility function to explicitly request focus on a widget
@@ -252,10 +253,12 @@ void main() {
     const itemA = LayoutItem(id: 'A', x: 0, y: 0, w: 2, h: 2);
     const itemB = LayoutItem(id: 'B', x: 2, y: 0, w: 2, h: 2);
 
+    const initialSlotCount = 4;
+
     setUp(() {
       mockListener = MockLayoutChangeListener();
       controller = DashboardControllerImpl(
-        initialSlotCount: 4,
+        initialSlotCount: initialSlotCount,
         initialLayout: [itemA, itemB],
         onLayoutChanged: mockListener.call,
       )..setEditMode(true);
@@ -313,9 +316,9 @@ void main() {
       await tester.pump();
 
       // Verify item is no longer active
-      expect(controller.activeItemId.value, isNull);
+      expect(controller.isDragging.value, isFalse);
       // Verify persistence listener was called
-      verify(() => mockListener.call(any())).called(1);
+      verify(() => mockListener.call(any(), initialSlotCount)).called(1);
     });
 
     testWidgets('Move (Arrow) calls moveActiveItemBy and updates position', (tester) async {
@@ -353,7 +356,7 @@ void main() {
       await tester.pump();
 
       // Verify item is no longer active
-      expect(controller.activeItemId.value, isNull);
+      expect(controller.isDragging.value, isFalse);
       // Verify position was reset
       expect(controller.layout.value.firstWhere((i) => i.id == 'A').x, 0);
     });
@@ -374,7 +377,7 @@ void main() {
       await tester.pump();
 
       // Verify item is no longer active (cancelInteraction was called)
-      expect(controller.activeItemId.value, isNull);
+      expect(controller.isDragging.value, isFalse);
     });
 
     testWidgets('onShowFocusHighlight updates visual state', (tester) async {
@@ -435,6 +438,65 @@ void main() {
       // Verify item did NOT become active (onDragStart was not called)
       expect(controller.activeItemId.value, isNull);
     });
+
+    testWidgets(
+      'Custom multi-select key (Alt) works',
+      (tester) async {
+        const itemA = LayoutItem(id: 'A', x: 0, y: 0, w: 2, h: 2);
+        controller.layout.value = [itemA];
+
+        controller
+          ..shortcuts = const DashboardShortcuts(
+            multiSelectKeys: [LogicalKeyboardKey.altLeft],
+          )
+          ..toggleSelection('A');
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: DashboardOverlay(
+                controller: controller,
+                scrollController: ScrollController(),
+                itemBuilder: (context, item) => Container(color: Colors.blue),
+                child: CustomScrollView(
+                  slivers: [
+                    SliverDashboard(
+                      itemBuilder: (context, item) => Container(color: Colors.blue),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+
+        // 4. Simulate ALT Key DOWN
+        await simulateKeyDownEvent(
+          LogicalKeyboardKey.altLeft,
+          physicalKey: PhysicalKeyboardKey.altLeft,
+        );
+
+        // Pump. HardwareKeyboard process "Down" event.
+        await tester.pump();
+
+        // 5. Tap on 'A'
+        final itemFinder = find.byType(DashboardItem).first;
+        await tester.tap(itemFinder);
+
+        // 6. Pump to process tap
+        await tester.pump();
+
+        // 7. Verify 'A' is unselected
+        expect(controller.selectedItemIds.value.contains('A'), isFalse);
+
+        // Cleanup
+        await simulateKeyUpEvent(
+          LogicalKeyboardKey.altLeft,
+          physicalKey: PhysicalKeyboardKey.altLeft,
+        );
+      },
+      variant: TargetPlatformVariant.only(TargetPlatform.windows),
+    );
   });
 
   group('DashboardOverlay Edge Cases', () {
@@ -628,6 +690,164 @@ void main() {
       await gesture.up();
 
       expect(dragUpdateCalled, isTrue);
+    });
+
+    testWidgets('backgroundBuilder renders custom widget instead of grid', (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: DashboardOverlay(
+              controller: controller,
+              scrollController: ScrollController(),
+              itemBuilder: (context, item) => Container(),
+              // Provide a custom background builder
+              backgroundBuilder: (context) => Container(
+                key: const ValueKey('custom_bg'),
+                color: Colors.yellow,
+              ),
+              child:
+                  CustomScrollView(slivers: [SliverDashboard(itemBuilder: (_, __) => Container())]),
+            ),
+          ),
+        ),
+      );
+
+      // Verify custom background is rendered
+      expect(find.byKey(const ValueKey('custom_bg')), findsOneWidget);
+      // Verify default grid is NOT rendered
+      expect(find.byType(DashboardGrid), findsNothing);
+    });
+
+    testWidgets('External drop is cancelled if onDrop returns null', (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Column(
+              children: [
+                Draggable<String>(
+                  data: 'data',
+                  feedback: Container(width: 50, height: 50, color: Colors.red),
+                  child: Container(
+                    key: const ValueKey('source'),
+                    width: 50,
+                    height: 50,
+                    color: Colors.green,
+                  ),
+                ),
+                Expanded(
+                  child: DashboardOverlay(
+                    controller: controller,
+                    scrollController: ScrollController(),
+                    itemBuilder: (context, item) => Container(color: Colors.blue),
+                    // Return null to cancel drop
+                    onDrop: (data, item) => null,
+                    child: CustomScrollView(
+                      slivers: [SliverDashboard(itemBuilder: (_, __) => Container())],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+
+      final source = find.byKey(const ValueKey('source'));
+      final target = find.byType(DashboardOverlay);
+
+      // 1. Start Drag manually
+      final gesture = await tester.startGesture(tester.getCenter(source));
+      await tester.pump();
+
+      // 2. Move to target
+      await gesture.moveTo(tester.getCenter(target));
+      await tester.pump();
+
+      // Verify placeholder is active
+      expect(controller.currentDragPlaceholder, isNotNull);
+
+      // 3. Drop (Up)
+      await gesture.up();
+      await tester.pump();
+
+      // Verify placeholder is hidden (cancelled)
+      expect(controller.currentDragPlaceholder, isNull);
+      expect(controller.layout.value.length, 1);
+    });
+
+    testWidgets('Trash deletion can be cancelled via onWillDelete', (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: DashboardOverlay(
+              controller: controller,
+              scrollController: ScrollController(),
+              itemBuilder: (context, item) => Container(key: ValueKey(item.id), color: Colors.blue),
+              trashHoverDelay: const Duration(milliseconds: 100),
+              // Return false to cancel deletion
+              onWillDelete: (items) async => false,
+              trashBuilder: (context, hovered, armed, activeItemId) {
+                return const Align(
+                  alignment: Alignment.bottomCenter,
+                  child: SizedBox(key: ValueKey('trash'), width: 100, height: 100),
+                );
+              },
+              child:
+                  CustomScrollView(slivers: [SliverDashboard(itemBuilder: (_, __) => Container())]),
+            ),
+          ),
+        ),
+      );
+
+      final itemFinder = find.byKey(const ValueKey('1')); // Item ID from setup
+      final gesture = await tester.startGesture(tester.getCenter(itemFinder));
+      await tester.pump(kLongPressTimeout); // Start drag
+      await tester.pump();
+
+      // Move to trash
+      final trashCenter = tester.getCenter(find.byKey(const ValueKey('trash')));
+      await gesture.moveTo(trashCenter);
+      await tester.pump(const Duration(milliseconds: 500)); // Wait for arming
+
+      // Drop
+      await gesture.up();
+      await tester.pump();
+
+      // Verify item was NOT deleted
+      expect(controller.layout.value.isNotEmpty, isTrue);
+      // Verify drag ended
+      expect(controller.isDragging.value, isFalse);
+    });
+
+    testWidgets('Drag end handles case where item was removed during drag', (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: DashboardOverlay(
+              controller: controller,
+              scrollController: ScrollController(),
+              itemBuilder: (context, item) => Container(color: Colors.blue),
+              child:
+                  CustomScrollView(slivers: [SliverDashboard(itemBuilder: (_, __) => Container())]),
+            ),
+          ),
+        ),
+      );
+
+      final itemFinder = find.byType(DashboardItem).first;
+      final gesture = await tester.startGesture(tester.getCenter(itemFinder));
+      await tester.pump(kLongPressTimeout); // Start drag
+
+      // Simulate external removal of the item while dragging
+      controller.layout.value = [];
+      await tester.pump();
+
+      // Drop
+      await gesture.up();
+      await tester.pump();
+
+      // Should not crash, and state should be reset
+      expect(controller.isDragging.value, isFalse);
     });
   });
 }

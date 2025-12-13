@@ -15,7 +15,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
-          // FIX: Add Provider here
+          // Add Provider here
           body: DashboardControllerProvider(
             controller: controller,
             child: CustomScrollView(

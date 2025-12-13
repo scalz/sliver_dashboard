@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:sliver_dashboard/src/controller/dashboard_controller_impl.dart';
 import 'package:sliver_dashboard/src/controller/dashboard_controller_interface.dart';
@@ -56,7 +54,7 @@ class Dashboard<T extends Object> extends StatefulWidget {
     this.trashLayout = TrashLayout.bottomCenter,
     this.trashBuilder,
     this.onWillDelete,
-    this.onItemDeleted,
+    this.onItemsDeleted,
     this.trashHoverDelay = const Duration(milliseconds: 800),
   });
 
@@ -154,11 +152,12 @@ class Dashboard<T extends Object> extends StatefulWidget {
   /// A builder for the trash/delete area.
   final DashboardTrashBuilder? trashBuilder;
 
-  /// Called when an item is dropped into the trash area.
-  final Future<bool> Function(LayoutItem item)? onWillDelete;
+  /// Called when items are dropped into the trash area.
+  /// Used to confirm deletion of one or multiple items.
+  final DashboardWillDeleteCallback? onWillDelete;
 
-  /// Called when an item is deleted.
-  final void Function(LayoutItem item)? onItemDeleted;
+  /// Called when items are deleted.
+  final DashboardItemsDeletedCallback? onItemsDeleted;
 
   /// The duration the user must hover over the trash area before it becomes armed.
   final Duration trashHoverDelay;
@@ -234,7 +233,7 @@ class _DashboardState<T extends Object> extends State<Dashboard<T>> {
       trashLayout: widget.trashLayout,
       trashHoverDelay: widget.trashHoverDelay,
       onWillDelete: widget.onWillDelete,
-      onItemDeleted: widget.onItemDeleted,
+      onItemsDeleted: widget.onItemsDeleted,
       onItemDragStart: widget.onItemDragStart,
       onItemDragUpdate: widget.onItemDragUpdate,
       onItemDragEnd: widget.onItemDragEnd,

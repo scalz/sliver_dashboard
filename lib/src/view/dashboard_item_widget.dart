@@ -115,10 +115,15 @@ class _DashboardItemState extends State<DashboardItem> {
       child: widget.builder(context, widget.item),
     );
 
-    // 2. Determine Active State (Grabbed)
-    // We watch the beacon so this widget rebuilds when Grab/Drop happens.
-    final activeId = controller.activeItemId.watch(context);
-    final isActive = activeId == widget.item.id;
+    // Watch Selection State
+    final selectedIds = controller.selectedItemIds.watch(context);
+    final isSelected = selectedIds.contains(widget.item.id);
+
+    // Watch Dragging State
+    final isDragging = controller.isDragging.watch(context);
+
+    // Active means "Part of the group being dragged"
+    final isActive = isDragging && isSelected;
 
     final semanticLabel = 'Item ${widget.item.id}, Row ${widget.item.y}, Column ${widget.item.x}';
 
@@ -205,7 +210,7 @@ class _DashboardItemState extends State<DashboardItem> {
       child: FocusableActionDetector(
         actions: actions,
         shortcuts: widget.isEditing ? shortcuts : {},
-        enabled: widget.isEditing && !widget.item.isStatic,
+        enabled: widget.isEditing && !widget.item.isStatic && !widget.isFeedback,
         onFocusChange: (hasFocus) {
           // If we lose focus while item was active (eg. moving),
           // cancel interaction to clean state (close Trash, put back item).
@@ -225,18 +230,20 @@ class _DashboardItemState extends State<DashboardItem> {
           hint: widget.isEditing
               ? (isActive ? guidance.semanticsHintDrop : guidance.semanticsHintGrab)
               : null,
-          selected: isActive,
+          selected: isSelected,
           child: Opacity(
+            // Hide if dragged AND not the feedback
             opacity: (isActive && !widget.isFeedback) ? 0.0 : 1.0,
             child: Container(
-              decoration: _isFocused
+              decoration: widget.isEditing &&
+                      (_isFocused || isSelected) // Show border if editMode && (focused OR selected)
                   ? (style.focusDecoration ??
                       BoxDecoration(
                         border: Border.all(
                           color: isActive
                               ? Colors.deepOrange
                               : (style.focusColor ?? Theme.of(context).primaryColor),
-                          width: isActive ? 4 : 3,
+                          width: (isActive || _isFocused) ? 4 : 3,
                         ),
                         borderRadius: style.borderRadius,
                       ))

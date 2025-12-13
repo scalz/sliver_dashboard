@@ -184,9 +184,11 @@ class _GuidanceInteractorState extends State<GuidanceInteractor> {
       return;
     }
 
+    final isDragging = _dashboardController.isDragging.peek();
     final activeId = _dashboardController.activeItemId.peek();
-    // action in progress (drag, resize)
-    if (activeId != null) {
+
+    // If a drag is in progress, show the moving message only on the active item (pivot).
+    if (isDragging && activeId != null) {
       if (activeId == widget.item.id) {
         _show(messages.moving.message);
       }

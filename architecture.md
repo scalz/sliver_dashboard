@@ -65,8 +65,9 @@ graph TD
 - **Responsibility:** To be the single source of truth for the dashboard's state and to expose a clean, public API.
 - **Implementation:**
     - **Interface Separation:** The public `DashboardController` is an abstract interface. The logic resides in `DashboardControllerImpl`.
+    - **Multi-Selection State:** Manages `selectedItemIds` (Set) and `isDragging` (bool). The concept of "Active Item" is derived: it is the **Pivot** during a drag, or the primary selection otherwise.
     - **Drag Offset:** Manages a `dragOffset` beacon to provide smooth visual feedback during drags without committing every pixel change to the logical grid layout.
-    - **Orchestrator:** It acts as a bridge. When an action occurs (e.g., `onDragUpdate` or `moveActiveItemBy`), it:
+    - **Orchestrator:** It acts as a bridge. When an action occurs (e.g., `onDragUpdate` or `moveActiveItemBy`). It calculates the delta based on the **Pivot Item** and applies it to the entire cluster via the Engine.
         1. Reads the current state.
         2. Calls the pure `LayoutEngine`.
         3. Updates the beacons with the result.
@@ -79,6 +80,7 @@ graph TD
     - A library of top-level, pure functions (e.g., `compact`, `moveElement`, `resizeItem`).
     - **Decoupled:** Has no knowledge of Flutter widgets or the controller. Operates purely on the `LayoutItem` data model.
     - **Deterministic:** Given the same input layout and parameters, it always returns the same output layout.
+    - **Cluster Logic:** Handles group movements by calculating a **Bounding Box** for selected items. The engine moves this virtual box against obstacles and applies the resulting delta to all items in the cluster.
 
 ### 3. The View Layer (Overlay & Slivers)
 
@@ -189,8 +191,8 @@ When an item is being dragged:
 
 ### Feedback Layering
 When an item is being dragged:
-1.  **Grid:** The actual item in the grid acts as a placeholder (or is hidden).
-2.  **Overlay:** A visual copy of the item is rendered in the `DashboardOverlay` stack, floating above the scroll view.
+1.  **Grid:** The actual items stay in the tree but are made invisible (`Opacity 0`) to keep their FocusNodes alive.
+2.  **Overlay (Cluster):** The Overlay renders a `Stack` containing visual copies of **all selected items**. They are positioned relative to the **Pivot Item** (the one under the cursor) to maintain their formation.
 3.  **Synchronization:** The overlay follows the finger/mouse, while the grid placeholder snaps to the nearest valid slot.
 
 ### Minimap Rendering Strategy

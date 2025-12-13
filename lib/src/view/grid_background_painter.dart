@@ -13,7 +13,7 @@ class GridBackgroundPainter extends CustomPainter {
   const GridBackgroundPainter({
     required this.metrics,
     required this.scrollOffset,
-    this.activeItem,
+    this.draggedItems = const [],
     this.placeholder,
     this.lineColor = Colors.black12,
     this.lineWidth = 1.0,
@@ -29,8 +29,9 @@ class GridBackgroundPainter extends CustomPainter {
   /// The current scroll offset of the viewport.
   final double scrollOffset;
 
-  /// The item currently being dragged/resized by the user (internal).
-  final LayoutItem? activeItem;
+  /// The items currently being dragged/resized by the user (internal).
+  /// These represent the "shadows" on the grid.
+  final List<LayoutItem> draggedItems;
 
   /// The placeholder item representing an external drag entering the grid.
   final LayoutItem? placeholder;
@@ -108,37 +109,38 @@ class GridBackgroundPainter extends CustomPainter {
         ..translate(visualStart, metrics.padding.top);
     }
 
-    // 2. Draw Item Highlight (Shadow/Placeholder)
-    // Prioritize the active item (internal drag), otherwise use placeholder (external drag).
-    final itemToHighlight = activeItem ?? placeholder;
+    // 2. Draw Item Highlights (Shadows)
+    // We combine the internal dragged items and the external placeholder
+    final itemsToHighlight = [...draggedItems];
+    if (placeholder != null) {
+      itemsToHighlight.add(placeholder!);
+    }
 
-    if (itemToHighlight != null) {
+    if (itemsToHighlight.isNotEmpty) {
       final fillPaint = Paint()..color = fillColor;
-      final item = itemToHighlight;
+      for (final item in itemsToHighlight) {
+        final double left;
+        final double top;
+        final double width;
+        final double height;
 
-      final double left;
-      final double top;
-      final double width;
-      final double height;
+        if (isVertical) {
+          left = item.x * (metrics.slotWidth + metrics.crossAxisSpacing);
+          top = item.y * (metrics.slotHeight + metrics.mainAxisSpacing);
+          width =
+              item.w * (metrics.slotWidth + metrics.crossAxisSpacing) - metrics.crossAxisSpacing;
+          height =
+              item.h * (metrics.slotHeight + metrics.mainAxisSpacing) - metrics.mainAxisSpacing;
+        } else {
+          left = item.x * (metrics.slotWidth + metrics.mainAxisSpacing);
+          top = item.y * (metrics.slotHeight + metrics.crossAxisSpacing);
+          width = item.w * (metrics.slotWidth + metrics.mainAxisSpacing) - metrics.mainAxisSpacing;
+          height =
+              item.h * (metrics.slotHeight + metrics.crossAxisSpacing) - metrics.crossAxisSpacing;
+        }
 
-      // Calculate exact pixel coordinates based on grid slots.
-      // Reason: Since we translated the canvas origin to the grid's start,
-      // we can calculate positions purely based on slot index * size,
-      // without worrying about scroll offsets here.
-      if (isVertical) {
-        left = item.x * (metrics.slotWidth + metrics.crossAxisSpacing);
-        top = item.y * (metrics.slotHeight + metrics.mainAxisSpacing);
-        width = item.w * (metrics.slotWidth + metrics.crossAxisSpacing) - metrics.crossAxisSpacing;
-        height = item.h * (metrics.slotHeight + metrics.mainAxisSpacing) - metrics.mainAxisSpacing;
-      } else {
-        left = item.x * (metrics.slotWidth + metrics.mainAxisSpacing);
-        top = item.y * (metrics.slotHeight + metrics.crossAxisSpacing);
-        width = item.w * (metrics.slotWidth + metrics.mainAxisSpacing) - metrics.mainAxisSpacing;
-        height =
-            item.h * (metrics.slotHeight + metrics.crossAxisSpacing) - metrics.crossAxisSpacing;
+        canvas.drawRect(Rect.fromLTWH(left, top, width, height), fillPaint);
       }
-
-      canvas.drawRect(Rect.fromLTWH(left, top, width, height), fillPaint);
     }
 
     // 3. Draw Grid Lines
@@ -208,9 +210,20 @@ class GridBackgroundPainter extends CustomPainter {
   bool shouldRepaint(covariant GridBackgroundPainter oldDelegate) {
     return oldDelegate.metrics != metrics ||
         oldDelegate.scrollOffset != scrollOffset ||
-        oldDelegate.activeItem != activeItem ||
+        !listEquals(oldDelegate.draggedItems, draggedItems) ||
         oldDelegate.placeholder != placeholder ||
         oldDelegate.sliverTop != sliverTop ||
         oldDelegate.sliverHeight != sliverHeight;
+  }
+
+  /// Helper for list comparison if you don't have foundation imported
+  bool listEquals<T>(List<T>? a, List<T>? b) {
+    if (a == null) return b == null;
+    if (b == null || a.length != b.length) return false;
+    if (identical(a, b)) return true;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
   }
 }

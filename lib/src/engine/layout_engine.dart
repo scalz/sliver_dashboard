@@ -1,8 +1,8 @@
 import 'dart:collection';
 import 'dart:math';
 
-import 'package:sliver_dashboard/src/controller/utility.dart';
 import 'package:sliver_dashboard/src/models/layout_item.dart';
+import 'package:sliver_dashboard/src/models/utility.dart';
 
 /// Defines the compaction strategy for the layout.
 enum CompactType {
@@ -678,4 +678,103 @@ List<LayoutItem> optimizeLayout(List<LayoutItem> layout, int columns) {
   // this function will detect it and push the dynamic item down, ensuring
   // a valid layout with zero overlaps.
   return resolveCollisions(placedItems, CompactType.vertical);
+}
+
+/// Calculates the bounding box of a group of items.
+/// Returns a virtual [LayoutItem] that encompasses all items.
+LayoutItem calculateBoundingBox(List<LayoutItem> items) {
+  if (items.isEmpty) {
+    return const LayoutItem(id: 'empty_cluster', x: 0, y: 0, w: 0, h: 0);
+  }
+
+  var minX = 100000; // Arbitrary large number
+  var minY = 100000;
+  var maxX = -100000;
+  var maxY = -100000;
+
+  for (final item in items) {
+    if (item.x < minX) minX = item.x;
+    if (item.y < minY) minY = item.y;
+    if (item.x + item.w > maxX) maxX = item.x + item.w;
+    if (item.y + item.h > maxY) maxY = item.y + item.h;
+  }
+
+  return LayoutItem(
+    id: 'cluster_bbox',
+    x: minX,
+    y: minY,
+    w: maxX - minX,
+    h: maxY - minY,
+    isDraggable: true, // Virtual item is draggable
+  );
+}
+
+/// Moves a group of items (cluster) together.
+///
+/// [layout] The full layout.
+/// [clusterIds] The IDs of the items to move.
+/// [targetX] The target X coordinate for the *top-left* of the bounding box.
+/// [targetY] The target Y coordinate for the *top-left* of the bounding box.
+Layout moveCluster(
+  Layout layout,
+  Set<String> clusterIds,
+  int targetX,
+  int targetY, {
+  required int cols,
+  required CompactType compactType,
+  bool preventCollision = false,
+}) {
+  if (clusterIds.isEmpty) return layout;
+
+  // 1. Separate Cluster and Obstacles
+  final cluster = layout.where((i) => clusterIds.contains(i.id)).toList();
+  final obstacles = layout.where((i) => !clusterIds.contains(i.id)).toList();
+
+  if (cluster.isEmpty) return layout;
+
+  // 2. Calculate Bounding Box
+  final bbox = calculateBoundingBox(cluster);
+
+  // 3. Move the Bounding Box against Obstacles
+  // We treat the bbox as a single item being moved in a layout consisting of obstacles.
+  // We add the bbox to the obstacles list for the moveElement function to work.
+  final layoutForMove = [...obstacles, bbox];
+
+  final resultLayoutWithBBox = moveElement(
+    layoutForMove,
+    bbox,
+    targetX,
+    targetY,
+    cols: cols,
+    compactType: compactType,
+    preventCollision: preventCollision,
+    force: true, // Force move to trigger collision resolution
+  );
+
+  // 4. Extract the new Bounding Box position
+  // It might have been pushed by static items or boundaries
+  final newBBox = resultLayoutWithBBox.firstWhere((i) => i.id == bbox.id);
+
+  // 5. Calculate Delta (Movement vector)
+  final dx = newBBox.x - bbox.x;
+  final dy = newBBox.y - bbox.y;
+
+  // 6. Apply Delta to Cluster Items
+  final movedCluster = cluster.map((item) {
+    return item.copyWith(
+      x: item.x + dx,
+      y: item.y + dy,
+      moved: true, // Mark as moved
+    );
+  }).toList();
+
+  // 7. Reconstruct Final Layout
+  // Take the result from moveElement (which has pushed obstacles),
+  // remove the virtual bbox, and add moved cluster items.
+  final finalLayout = resultLayoutWithBBox
+      .where((i) => i.id != bbox.id) // Remove virtual bbox
+      .toList()
+    ..addAll(movedCluster);
+
+  return finalLayout;
 }

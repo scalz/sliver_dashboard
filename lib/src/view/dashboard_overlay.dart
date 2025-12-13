@@ -4,11 +4,14 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'package:sliver_dashboard/src/controller/dashboard_controller_interface.dart';
 import 'package:sliver_dashboard/src/controller/dashboard_controller_provider.dart';
 import 'package:sliver_dashboard/src/controller/layout_metrics.dart';
 import 'package:sliver_dashboard/src/controller/utility.dart';
 import 'package:sliver_dashboard/src/models/layout_item.dart';
+import 'package:sliver_dashboard/src/models/utility.dart';
+import 'package:sliver_dashboard/src/view/a11y/dashboard_shortcuts.dart';
 import 'package:sliver_dashboard/src/view/dashboard_configuration.dart';
 import 'package:sliver_dashboard/src/view/dashboard_feedback_widget.dart';
 import 'package:sliver_dashboard/src/view/dashboard_grid.dart';
@@ -46,7 +49,7 @@ class DashboardOverlay<T extends Object> extends StatefulWidget {
     this.trashLayout = TrashLayout.bottomCenter,
     this.trashBuilder,
     this.onWillDelete,
-    this.onItemDeleted,
+    this.onItemsDeleted,
     this.trashHoverDelay = const Duration(milliseconds: 800),
     this.resizeHandleSide = 20.0,
     this.placeholderWidth = 1,
@@ -115,10 +118,10 @@ class DashboardOverlay<T extends Object> extends StatefulWidget {
   final DashboardTrashBuilder? trashBuilder;
 
   /// Called when an item is dropped into the trash area.
-  final Future<bool> Function(LayoutItem item)? onWillDelete;
+  final DashboardWillDeleteCallback? onWillDelete;
 
-  /// Called when an item is deleted.
-  final void Function(LayoutItem item)? onItemDeleted;
+  /// Called when items are deleted.
+  final DashboardItemsDeletedCallback? onItemsDeleted;
 
   /// The duration the user must hover over the trash area before it becomes armed.
   final Duration trashHoverDelay;
@@ -185,6 +188,9 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
   Timer? _leaveTimer;
   // Store last valid placeholder to restore it on drop
   LayoutItem? _lastValidPlaceholder;
+
+  // Flag for defering selection to PointerUp if we clic on an already selected item
+  bool _shouldClearSelectionOnUp = false;
 
   bool get _isMobile =>
       defaultTargetPlatform == TargetPlatform.android ||
@@ -275,23 +281,69 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
 
               // 2. Content
               Positioned.fill(
-                child: GestureDetector(
-                  behavior: HitTestBehavior.translucent,
-                  onPanStart:
-                      _isMobile ? null : (details) => _onPointerDown(details.globalPosition),
-                  onPanUpdate:
-                      _isMobile ? null : (details) => _onPointerMove(details.globalPosition),
-                  onPanEnd: _isMobile ? null : (details) => _onPointerUp(),
-                  onPanCancel: _isMobile ? null : _onPointerUp,
-                  onLongPressStart:
-                      !_isMobile ? null : (details) => _onPointerDown(details.globalPosition),
-                  onLongPressMoveUpdate:
-                      !_isMobile ? null : (details) => _onPointerMove(details.globalPosition),
-                  onLongPressEnd: !_isMobile ? null : (details) => _onPointerUp(),
-                  child: widget.child,
+                // We use a Listener to handle raw pointer events.
+                // This is necessary for two reasons:
+                // 1. Desktop: To provide immediate feedback (selection) on pointer down,
+                //    bypassing the delay introduced by GestureDetector's tap/long-press logic.
+                // 2. Mobile: To implement a manual "Tap" detection. Since we disable
+                //    onPanStart to allow native scrolling, we need a way to detect
+                //    selection taps that might otherwise be consumed by child widgets.
+                child: Listener(
+                  // DESKTOP LOGIC: Raw Pointer Events
+                  // On Desktop, we want instant reaction. We handle selection on 'Down'
+                  // and drag initiation on 'Move' (with a threshold).
+                  onPointerDown: (event) {
+                    // 1. Store the initial position to calculate distance later (for Mobile Tap detection).
+                    _pointerDownPosition = event.position;
+
+                    // 2. On Desktop, trigger selection logic immediately.
+                    if (!_isMobile) _onPointerDown(event.position);
+                  },
+                  // On Mobile, we leave 'Move' to the GestureDetector/ScrollView to avoid conflicts.
+                  onPointerMove: _isMobile ? null : (event) => _onPointerMove(event.position),
+                  onPointerUp: (event) {
+                    if (_isMobile) {
+                      // MOBILE TAP DETECTION
+                      // Since onPanStart is null on mobile (to favor scrolling),
+                      // standard onTap might be lost if children (like buttons) capture the gesture.
+                      // We manually detect a "Tap" if the pointer went Down and Up
+                      // without moving more than a small threshold (10px).
+                      if (_pointerDownPosition != null &&
+                          (event.position - _pointerDownPosition!).distance < 10.0) {
+                        _handleMobileTap(event.position);
+                      }
+                    } else {
+                      // Desktop only
+                      // On Mobile, onLongPressEnd is in charge, else it's called twice (Listener + GestureDetector).
+                      _onPointerUp().ignore();
+                    }
+                    _pointerDownPosition = null; // Cleanup
+                  },
+
+                  onPointerCancel: (event) {
+                    if (!_isMobile) {
+                      // Desktop only
+                      // On Mobile, onLongPressEnd is in charge, else it's called twice (Listener + GestureDetector).
+                      _onPointerUp().ignore();
+                    }
+                    _pointerDownPosition = null; // Cleanup
+                  },
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.translucent,
+                    onLongPressStart: _isMobile
+                        ? (details) {
+                            // Sur mobile, le LongPress déclenche tout :
+                            // 1. Identification (HitTest + Sélection)
+                            _onPointerDown(details.globalPosition);
+                          }
+                        : null,
+                    onLongPressMoveUpdate:
+                        _isMobile ? (details) => _onPointerMove(details.globalPosition) : null,
+                    onLongPressEnd: _isMobile ? (details) => _onPointerUp() : null,
+                    child: widget.child,
+                  ),
                 ),
               ),
-
               // 3. Feedback & Trash
               _buildFeedbackLayer(),
               _buildTrashLayer(),
@@ -302,27 +354,53 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
     );
   }
 
+  Offset? _pointerDownPosition;
+
+  /// Handles simple tap on Mobile to toggle selection.
+  void _handleMobileTap(Offset globalPosition) {
+    if (!widget.controller.isEditing.value) return;
+
+    final hit = _hitTest(globalPosition);
+    final foundItem = hit.item;
+
+    if (foundItem != null && !foundItem.isStatic) {
+      widget.controller.toggleSelection(foundItem.id, multi: true);
+    } else {
+      widget.controller.clearSelection();
+    }
+  }
+
   Widget _buildFeedbackLayer() {
     return AnimatedBuilder(
       animation: widget.scrollController,
       builder: (context, _) {
         widget.controller.layout.watch(context);
-        final activeItemId = widget.controller.activeItemId.watch(context);
-        if (activeItemId == null || activeItemId == '__placeholder__') {
+
+        final isDragging = widget.controller.isDragging.watch(context);
+        if (!isDragging) return const SizedBox.shrink();
+
+        // Get Selected Items
+        final selectedIds = widget.controller.selectedItemIds.watch(context);
+        final activeItemId = widget.controller.activeItemId.watch(context); // The Pivot
+
+        if (selectedIds.isEmpty || activeItemId == null) {
           return const SizedBox.shrink();
         }
 
-        final activeItem =
-            widget.controller.layout.value.firstWhereOrNull((i) => i.id == activeItemId) ??
-                _activeItemInitialLayout;
+        // Find Pivot Item (The reference for positioning)
+        final layout = widget.controller.layout.value;
+        final pivotItem = layout.firstWhereOrNull((i) => i.id == activeItemId);
 
-        // Retrieve the render sliver and update metrics.
+        // Find All Cluster Items
+        final clusterItems = layout.where((i) => selectedIds.contains(i.id)).toList();
+
         final renderSliver = _findRenderSliver();
         if (renderSliver != null) {
           _activeSliverMetrics = _getMetricsFromSliver(renderSliver);
         }
 
-        if (activeItem == null ||
+        if (pivotItem == null ||
+            clusterItems.isEmpty ||
             _activeSliverMetrics == null ||
             renderSliver == null ||
             !renderSliver.attached) {
@@ -333,73 +411,56 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
         final metrics = _activeSliverMetrics!;
         final isVertical = metrics.scrollDirection == Axis.vertical;
 
-        // --- PRECISE CALCULATION VIA MATRIX ---
-        // We use the render object's transformation matrix to get exact pixel coordinates,
-        // ensuring the feedback item stays perfectly synced with the grid during scrolls.
+        // Position & Clipping (Same robust logic as before)
+
+        final sliverLayoutStart = renderSliver.constraints.precedingScrollExtent;
+        final scrollOffset =
+            widget.scrollController.hasClients ? widget.scrollController.offset : 0.0;
+        final visualStart = sliverLayoutStart - scrollOffset;
+
+        final Offset currentSliverStart;
+        if (isVertical) {
+          currentSliverStart = Offset(metrics.padding.left, visualStart + metrics.padding.top);
+        } else {
+          currentSliverStart = Offset(visualStart + metrics.padding.left, metrics.padding.top);
+        }
 
         Rect? sliverBounds;
-        var currentSliverStart = Offset.zero;
-
-        // Use the key to find the main Overlay Stack (to get the full screen/viewport size).
         final overlayBox = _overlayStackKey.currentContext?.findRenderObject() as RenderBox?;
 
         if (overlayBox != null) {
-          // 1. Transformation Matrix: Sliver -> Overlay
-          // This provides the exact pixel position managed by the render engine,
-          // accounting for scroll offsets and parent transforms.
-          final transform = renderSliver.getTransformTo(overlayBox);
-
-          // 'visualOrigin' is the VISIBLE top-left corner of the Sliver on screen.
-          // (This corresponds to point (0,0) in the Sliver's paint coordinate system).
-          final visualOrigin = MatrixUtils.transformPoint(transform, Offset.zero);
-
-          // 2. Calculate the logical grid origin (0,0)
-          // The Sliver might be scrolled internally (constraints.scrollOffset).
-          // If we scroll down, the logical content moves up relative to the visual origin.
-          final sliverScrollOffset = renderSliver.constraints.scrollOffset;
-
-          if (isVertical) {
-            currentSliverStart = visualOrigin - Offset(0, sliverScrollOffset);
-          } else {
-            currentSliverStart = visualOrigin - Offset(sliverScrollOffset, 0);
-          }
-          // NOTE: We do NOT add metrics.padding here manually.
-          // The RenderSliver is already inside the SliverPadding, so its
-          // visualOrigin already accounts for that padding.
-
-          // 3. Calculate Clipping (Based on Overlap)
           final overlaySize = overlayBox.size;
           final overlap = renderSliver.constraints.overlap;
-
-          // The visible area starts at visualOrigin + overlap.
-          // (If overlap > 0, it means the sliver is sliding under a pinned header/AppBar).
+          final clipStart = max(visualStart, overlap);
 
           if (isVertical) {
-            final clipTop = visualOrigin.dy + overlap;
-            sliverBounds = Rect.fromLTRB(0, clipTop, overlaySize.width, overlaySize.height);
+            sliverBounds = Rect.fromLTRB(0, clipStart, overlaySize.width, overlaySize.height);
           } else {
-            final clipLeft = visualOrigin.dx + overlap;
-            sliverBounds = Rect.fromLTRB(clipLeft, 0, overlaySize.width, overlaySize.height);
+            sliverBounds = Rect.fromLTRB(clipStart, 0, overlaySize.width, overlaySize.height);
           }
-
-          // Safety intersection with the overlay bounds.
           sliverBounds = sliverBounds.intersect(Offset.zero & overlaySize);
         }
 
-        return DashboardFeedbackItem(
-          item: activeItem,
-          builder: widget.itemBuilder,
-          feedbackBuilder: widget.itemFeedbackBuilder,
-          controller: widget.controller,
-          slotWidth: metrics.slotWidth,
-          slotHeight: metrics.slotHeight,
-          mainAxisSpacing: metrics.mainAxisSpacing,
-          crossAxisSpacing: metrics.crossAxisSpacing,
-          scrollDirection: metrics.scrollDirection,
-          itemGlobalKeySuffix: widget.itemGlobalKeySuffix,
-          isEditing: isEditing,
-          sliverStartPos: currentSliverStart,
-          sliverBounds: sliverBounds,
+        // RENDER CLUSTER
+        return Stack(
+          children: clusterItems.map((item) {
+            return DashboardFeedbackItem(
+              key: ValueKey('feedback_${item.id}'),
+              item: item,
+              builder: widget.itemBuilder,
+              feedbackBuilder: widget.itemFeedbackBuilder,
+              controller: widget.controller,
+              slotWidth: metrics.slotWidth,
+              slotHeight: metrics.slotHeight,
+              mainAxisSpacing: metrics.mainAxisSpacing,
+              crossAxisSpacing: metrics.crossAxisSpacing,
+              scrollDirection: metrics.scrollDirection,
+              itemGlobalKeySuffix: widget.itemGlobalKeySuffix,
+              isEditing: isEditing,
+              sliverStartPos: currentSliverStart,
+              sliverBounds: sliverBounds,
+            );
+          }).toList(),
         );
       },
     );
@@ -411,8 +472,8 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
     return Builder(
       builder: (context) {
         final activeItemId = widget.controller.activeItemId.watch(context);
-        final isResizing = widget.controller.internal.isResizing.watch(context);
-        final showTrash = activeItemId != null && !isResizing;
+        final isDragging = widget.controller.isDragging.watch(context);
+        final showTrash = activeItemId != null && isDragging;
 
         final layout = widget.trashLayout;
         final targetPos = showTrash ? layout.visible : layout.hidden;
@@ -446,7 +507,7 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
     );
   }
 
-  // --- Interaction Logic ---
+  // Interaction Logic
 
   ({LayoutItem? item, RenderSliverDashboard? renderSliver, RenderBox? itemRenderBox}) _hitTest(
     Offset globalPosition,
@@ -508,6 +569,34 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
     if (foundItem != null && itemRenderBox != null && renderSliver != null) {
       if (foundItem.isStatic) return;
 
+      // MULTI-SELECTION LOGIC
+      final shortcuts = widget.controller.shortcuts ?? DashboardShortcuts.defaultShortcuts;
+      final pressedKeys = HardwareKeyboard.instance.logicalKeysPressed;
+      final isMultiSelect = shortcuts.multiSelectKeys.any(pressedKeys.contains);
+      final isAlreadySelected = widget.controller.selectedItemIds.peek().contains(foundItem.id);
+      _shouldClearSelectionOnUp = false;
+
+      if (isMultiSelect) {
+        // Case 1: Shift pressed -> Toggle immediately
+        widget.controller.toggleSelection(foundItem.id, multi: true);
+
+        // If we just unselected item, don't start drag
+        if (!widget.controller.selectedItemIds.peek().contains(foundItem.id)) {
+          return;
+        }
+      } else {
+        // Case 2: No Shift
+        if (isAlreadySelected) {
+          // Case 2a: Already selected -> Perhaps a Group Drag.
+          // Do NOT change selection now.
+          // Cleanup others if this is a simple clic (PointerUp).
+          _shouldClearSelectionOnUp = true;
+        } else {
+          // Case 2b: Not selected -> Single selection immediately (replace others).
+          widget.controller.toggleSelection(foundItem.id, multi: false);
+        }
+      }
+
       widget.controller.onInteractionStart?.call(foundItem);
 
       _activeSliverMetrics = _getMetricsFromSliver(renderSliver);
@@ -563,6 +652,12 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
 
   void _onPointerMove(Offset position) {
     if (_activeItemId == null) return;
+
+    // If it starts tp move, this is not a "clic", so we won't unselect group at the end.
+    if ((position - _operationStartPosition).distance > 2.0) {
+      // Tolerance threshold
+      _shouldClearSelectionOnUp = false;
+    }
 
     _lastGlobalPosition = position;
     _handleAutoScroll(position);
@@ -667,6 +762,14 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
     _stopScrollTimer();
     _trashTimer?.cancel();
 
+    // Clic management for group
+    if (_shouldClearSelectionOnUp && _activeItemId != null) {
+      // User clicked on an item without moving (without Shift).
+      // Keep only this item selected.
+      widget.controller.toggleSelection(_activeItemId!, multi: false);
+      _shouldClearSelectionOnUp = false;
+    }
+
     if (_activeItemId == null) return;
 
     final currentItem =
@@ -683,13 +786,32 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
       widget.onItemResizeEnd?.call(currentItem);
     } else {
       if (widget.trashBuilder != null && _isTrashActive.value) {
+        // Identify all items to delete (Pivot + Selection)
+        final selectedIds = widget.controller.selectedItemIds.value;
+
+        // Safety: If selection is empty (rare edge case), take the current dragged item
+        final idsToDelete = selectedIds.isEmpty ? {currentItem.id} : selectedIds;
+
+        // Retrieve LayoutItem objects
+        final itemsToDelete =
+            widget.controller.layout.value.where((i) => idsToDelete.contains(i.id)).toList();
+
+        // Fallback safety
+        if (itemsToDelete.isEmpty) {
+          itemsToDelete.add(currentItem);
+        }
+
         var shouldDelete = true;
+
         if (widget.onWillDelete != null) {
-          shouldDelete = await widget.onWillDelete!(currentItem);
+          shouldDelete = await widget.onWillDelete!(itemsToDelete);
         }
         if (shouldDelete) {
-          widget.controller.removeItem(currentItem.id);
-          widget.onItemDeleted?.call(currentItem);
+          widget.controller.removeItems(itemsToDelete.map((e) => e.id).toList());
+
+          // Notify for each deleted item
+          widget.onItemsDeleted?.call(itemsToDelete);
+
           widget.controller.internal.onDragEnd(currentItem.id);
         } else {
           widget.controller.internal.onDragEnd(currentItem.id);
@@ -718,7 +840,7 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
     widget.controller.internal.setDragOffset(Offset.zero);
   }
 
-  // --- Auto Scroll ---
+  // Auto Scroll
 
   void _handleAutoScroll(Offset globalPosition) {
     final overlayBox = _overlayStackKey.currentContext?.findRenderObject() as RenderBox?;

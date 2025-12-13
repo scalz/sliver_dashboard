@@ -31,9 +31,9 @@ class _SliverExamplePageState extends State<SliverExamplePage> {
   // Create and manage your DashboardController.
   late final controller = DashboardController(
     initialSlotCount: slotCount,
-    onLayoutChanged: (items) {
+    onLayoutChanged: (items, bkSlotCount) {
       debugPrint(
-        'Layout changed! Saving ${items.length} items to persistence...',
+        'Layout changed! Saving ${items.length} items to persistence for bkSlotCount=$bkSlotCount...',
       );
       // In a real app, you would save the layout to a DB or SharedPreferences.
       // You can get a JSON-ready list of maps using:
@@ -188,12 +188,14 @@ class _SliverExamplePageState extends State<SliverExamplePage> {
           );
         },
         // Validate the Trash deletion
-        onWillDelete: (item) async {
+        onWillDelete: (items) async {
           return await showDialog<bool>(
                 context: context,
                 builder: (ctx) => AlertDialog(
                   title: Text("Delete ?"),
-                  content: Text("Do you want remove item ${item.id} ?"),
+                  content: Text(
+                    "Do you want remove items ${items.map((e) => e.id).join(',')} ?",
+                  ),
                   actions: [
                     TextButton(
                       onPressed: () => Navigator.pop(ctx, false),
@@ -209,10 +211,14 @@ class _SliverExamplePageState extends State<SliverExamplePage> {
               false;
         },
         // Optional: Called when an item is deleted
-        onItemDeleted: (item) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(SnackBar(content: Text('Item ${item.id} deleted')));
+        onItemsDeleted: (items) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Items ${items.map((e) => e.id).join(',')} deleted',
+              ),
+            ),
+          );
         },
         itemBuilder: (context, item) => Card(
           color: Colors.blue[100],

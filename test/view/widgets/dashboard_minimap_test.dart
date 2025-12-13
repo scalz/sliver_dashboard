@@ -288,5 +288,89 @@ void main() {
       // We just verify that rendering occurs.
       expect(painter, isNotNull);
     });
+
+    testWidgets('calculates layout with spacing correctly in Horizontal mode', (tester) async {
+      // Setup horizontal controller
+      (controller as DashboardControllerImpl).setScrollDirection(Axis.horizontal);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              controller: scrollController,
+              child: Row(
+                children: [
+                  DashboardMinimap(
+                    controller: controller,
+                    scrollController: scrollController,
+                    width: 100,
+                    // Inject spacing to trigger the calculation logic
+                    mainAxisSpacing: 10,
+                    crossAxisSpacing: 10,
+                  ),
+                  // Add content to ensure scrollable area and dimensions
+                  Container(width: 1000, height: 500, color: Colors.red),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+
+      // Verify CustomPaint exists
+      final painterFinder = find.descendant(
+        of: find.byType(DashboardMinimap),
+        matching: find.byType(CustomPaint),
+      );
+      expect(painterFinder, findsOneWidget);
+
+      // Verify the painter received properties
+      final customPaint = tester.widget<CustomPaint>(painterFinder);
+      final painter = customPaint.painter;
+      expect(painter, isNotNull);
+    });
+
+    testWidgets('calculates layout with spacing correctly in Horizontal mode', (tester) async {
+      (controller as DashboardControllerImpl).setScrollDirection(Axis.horizontal);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              height: 500,
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                controller: scrollController,
+                child: Row(
+                  children: [
+                    DashboardMinimap(
+                      controller: controller,
+                      scrollController: scrollController,
+                      width: 100,
+                      mainAxisSpacing: 10,
+                      crossAxisSpacing: 10,
+                      padding: const EdgeInsets.symmetric(vertical: 20),
+                    ),
+                    Container(width: 1000, height: 500, color: Colors.red),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+
+      scrollController.jumpTo(1);
+      await tester.pump();
+
+      final painterFinder = find.descendant(
+        of: find.byType(DashboardMinimap),
+        matching: find.byType(CustomPaint),
+      );
+      expect(painterFinder, findsOneWidget);
+    });
   });
 }

@@ -26,8 +26,10 @@ The project follows a strict separation of concerns. **Do not violate layer boun
 
 ### B. State Layer (`lib/src/controller/`)
 - **Interface Separation:** `DashboardController` is a public abstract interface. The logic resides in `DashboardControllerImpl` (hidden).
+- **Controller Access:** Remember that `DashboardController` is an interface. To call `onDragStart`, `showPlaceholder`, etc., you must cast to `DashboardControllerImpl`.
 - **Reactive:** Use `Beacon` to expose state.
 - **Orchestrator:** The controller calls Engine methods and updates Beacons. It contains NO layout calculation logic.
+- **Selection Source of Truth:** `selectedItemIds` (Set<String>) is the source of truth. `activeItemId` is a read-only derived value (Pivot or First Selected). Never try to set `activeItemId` directly.
 
 ### C. View Layer (`lib/src/view/`)
 - **Slivers:** The core grid uses `RenderSliverDashboard`.
@@ -63,6 +65,12 @@ The project follows a strict separation of concerns. **Do not violate layer boun
 - **Immutability:** All models (`LayoutItem`, `GridStyle` ..) must be immutable (`@immutable`).
 - **Serialization:** Implement `fromMap`, `toMap`, `copyWith`, and `==`/`hashCode` for data models.
 
+### Multi-Selection & Clustering
+- **Pivot Logic:** During a drag, one item acts as the **Pivot** (the one under the cursor).
+- **Delta Calculation:** Movement deltas are calculated based on the Pivot's position change.
+- **Cluster Movement:** The Engine moves the **Bounding Box** of the selection. The resulting delta is applied to all selected items.
+- **Feedback:** The Overlay must render the entire cluster, maintaining relative positions to the Pivot.
+
 ### Specific Patterns
 - **Prop Drilling:** Configuration (styles, physics) is passed down via constructor parameters (Dashboard -> Sliver -> Item). This is intentional to decouple Logic from UI styling.
 - **Edit Mode:** Visual cues (handles) and interaction wrappers are only built/mounted when `isEditing` is true.
@@ -75,7 +83,7 @@ The project follows a strict separation of concerns. **Do not violate layer boun
   - **View:** Handles translation to **Pixel Coordinates** (`double offset`) using `SlotMetrics`.
   - **Rule:** Never pass pixel values to the `LayoutEngine`.
 - **Feedback Layering:**
-- **Layering:** The item being dragged is rendered in a dedicated overlay (`Stack`) above the `CustomScrollView`.
+- **Layering:** The **cluster of items** being dragged is rendered in a dedicated overlay (`Stack`) above the `CustomScrollView`.
 - **Clipping Strategy:** The feedback item must be visually contained within the Sliver's visible area.
   - **Rule:** Calculate the clip rect dynamically based on `SliverConstraints.overlap` (e.g., `max(visualPos, overlap)`).
 - **Hit-Testing:** Use a specific `GlobalKey` on the Overlay's main Stack to ensure hit-tests are performed on the full screen area.
@@ -101,7 +109,7 @@ The project follows a strict separation of concerns. **Do not violate layer boun
 - **Performance:** Ensure no regression in rebuild counts (use the `BuildCounter` pattern in tests).
 
 ## 6. Documentation
-
+- **Reference:** Read latest `architecture.md` and `AI_AGENTS.md` before starting a new task.
 - Update `README.md` if public API changes.
 - Update `architecture.md` if the data flow or component structure changes.
 - Keep the `example/` app up-to-date and runnable on all platforms.

@@ -3,6 +3,7 @@ import 'package:flutter/rendering.dart';
 import 'package:sliver_dashboard/src/controller/dashboard_controller_interface.dart';
 import 'package:sliver_dashboard/src/controller/layout_metrics.dart';
 import 'package:sliver_dashboard/src/controller/utility.dart';
+import 'package:sliver_dashboard/src/models/layout_item.dart';
 import 'package:sliver_dashboard/src/view/dashboard_configuration.dart';
 import 'package:sliver_dashboard/src/view/grid_background_painter.dart';
 import 'package:sliver_dashboard/src/view/sliver_dashboard.dart';
@@ -76,7 +77,7 @@ class _DashboardGridState extends State<DashboardGrid> {
         return LayoutBuilder(
           builder: (context, constraints) {
             // Watch for layout changes to repaint the placeholder/active item correctly.
-            widget.controller.layout.watch(context);
+            final layout = widget.controller.layout.watch(context);
 
             final metrics = SlotMetrics.fromConstraints(
               constraints,
@@ -91,10 +92,14 @@ class _DashboardGridState extends State<DashboardGrid> {
             final isEditing = widget.controller.isEditing.watch(context);
             if (!isEditing) return const SizedBox.shrink();
 
-            final activeItemId = widget.controller.activeItemId.watch(context);
-            final activeItem = activeItemId != null
-                ? widget.controller.layout.value.firstWhereOrNull((i) => i.id == activeItemId)
-                : null;
+            final isDragging = widget.controller.isDragging.watch(context);
+            final selectedIds = widget.controller.selectedItemIds.watch(context);
+            var draggedItems = <LayoutItem>[];
+
+            // Only show shadows if we are actively dragging (or resizing)
+            if (isDragging || widget.controller.internal.isResizing.value) {
+              draggedItems = layout.where((i) => selectedIds.contains(i.id)).toList();
+            }
 
             final placeholder = widget.controller.currentDragPlaceholder;
 
@@ -124,7 +129,7 @@ class _DashboardGridState extends State<DashboardGrid> {
                 metrics: metrics,
                 scrollOffset:
                     widget.scrollController.hasClients ? widget.scrollController.offset : 0.0,
-                activeItem: activeItem,
+                draggedItems: draggedItems,
                 placeholder: placeholder,
                 lineColor: widget.gridStyle.lineColor,
                 lineWidth: widget.gridStyle.lineWidth,

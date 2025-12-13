@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'dart:math';
 import 'package:flutter/services.dart';
 import 'package:sliver_dashboard/sliver_dashboard.dart';
@@ -43,6 +44,7 @@ class _DashboardPageState extends State<DashboardPage> {
 
   final editMode = ValueNotifier(false);
   final compactionType = ValueNotifier<CompactType>(CompactType.vertical);
+  final showMap = ValueNotifier(false);
   var scrollDirection = Axis.vertical;
   var resizeBehavior = ResizeBehavior.push;
   final cardColors = <String, Color>{};
@@ -65,9 +67,9 @@ class _DashboardPageState extends State<DashboardPage> {
     // Create and manage your DashboardController.
     controller = DashboardController(
       initialSlotCount: slotCount,
-      onLayoutChanged: (items) {
+      onLayoutChanged: (items, bkSlotCount) {
         debugPrint(
-          'Layout changed! Saving ${items.length} items to persistence...',
+          'Layout changed! Saving ${items.length} items to persistence for bkSlotCount=$bkSlotCount...',
         );
         // In a real app, you would save the layout to a DB or SharedPreferences.
         // You can get a JSON-ready list of maps using:
@@ -132,6 +134,7 @@ class _DashboardPageState extends State<DashboardPage> {
   @override
   void dispose() {
     editMode.dispose();
+    showMap.value = false;
     compactionType.dispose();
     controller.dispose();
     super.dispose();
@@ -139,10 +142,25 @@ class _DashboardPageState extends State<DashboardPage> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Sliver Dashboard Example'),
         actions: [
+          ValueListenableBuilder(
+            valueListenable: showMap,
+            builder: (context, value, _) {
+              return IconButton(
+                tooltip: 'Show Map',
+                icon: Icon(
+                  Icons.map,
+                  color: value ? theme.colorScheme.primary : null,
+                ),
+                onPressed: () => showMap.value = !showMap.value,
+              );
+            },
+          ),
           IconButton(
             tooltip: 'Optimize Layout',
             icon: const Icon(Icons.auto_awesome),
@@ -166,10 +184,11 @@ class _DashboardPageState extends State<DashboardPage> {
       ),
       body: Column(
         children: [
+          SizedBox(height: 8),
           Wrap(
             direction: Axis.horizontal,
             alignment: WrapAlignment.center,
-            runSpacing: 8,
+            runSpacing: 0,
             spacing: 8,
             children: [
               ValueListenableBuilder(
@@ -236,10 +255,38 @@ class _DashboardPageState extends State<DashboardPage> {
               ),
             ],
           ),
+          const Divider(),
+          RichText(
+            text: TextSpan(
+              style: theme.textTheme.bodyMedium,
+              children: [
+                if (!Platform.isAndroid && !Platform.isIOS)
+                  TextSpan(
+                    text: 'Keyboard navigation: ',
+                    style: TextStyle(fontWeight: FontWeight.w500),
+                  ),
+                if (!Platform.isAndroid && !Platform.isIOS)
+                  TextSpan(
+                    text: 'Tab, Space to start/stop moving, Arrows.\n',
+                    style: TextStyle(fontWeight: FontWeight.normal),
+                  ),
+                TextSpan(
+                  text: 'Multi-select: ',
+                  style: TextStyle(fontWeight: FontWeight.w500),
+                ),
+                TextSpan(
+                  text: !Platform.isAndroid && !Platform.isIOS
+                      ? 'Select and move multiple items at once using Shift + Click (Single tap on mobile).'
+                      : 'Single tap to select and move multiple items at once.',
+                  style: TextStyle(fontWeight: FontWeight.normal),
+                ),
+              ],
+            ),
+          ),
           // Add some external draggables to demonstrate dropping new items.
           const Divider(),
           const Padding(
-            padding: EdgeInsets.all(8),
+            padding: EdgeInsets.symmetric(horizontal: 8),
             child: Wrap(
               spacing: 10,
               runSpacing: 10,
@@ -282,195 +329,200 @@ class _DashboardPageState extends State<DashboardPage> {
           const Divider(),
           Expanded(
             // Build the Dashboard widget.
-            child: Padding(
-              padding: const EdgeInsets.all(8.0),
-              // Optional: Breakpoint wrapper widget for responsive
-              child: Stack(
-                children: [
-                  Dashboard<String>(
-                    controller: controller,
-                    trashHoverDelay: const Duration(seconds: 1),
-                    scrollDirection: scrollDirection,
-                    scrollController: scrollController,
-                    // ResizeBehavior.push or ResizeBehavior.shrink
-                    resizeBehavior: resizeBehavior,
-                    showScrollbar: false,
-                    slotAspectRatio: 1.0,
-                    // Responsive breakpoints:
-                    breakpoints: {
-                      0: 4, // Mobile: 4 cols
-                      600: 8, // Tablet: 8 cols
-                      1200: 12, // Desktop: 12 cols
-                    },
-                    // The size of the touch target
-                    resizeHandleSide: 20, // default 20.0
-                    padding: EdgeInsets.zero,
-                    mainAxisSpacing: 8.0, // default 8.0
-                    crossAxisSpacing: 8.0, // default 8.0
-                    // how many non visible pixels to preload on top and bottom
-                    cacheExtent: 500,
-                    guidance: DashboardGuidance
-                        .byDefault, // default null for no guidance
-                    // guidance: const DashboardGuidance(
-                    //   move: InteractionGuidance(
-                    //     SystemMouseCursors.grab,
-                    //     'Click and drag to move item',
-                    //   ),
-                    // ),
-                    gridStyle: GridStyle(
-                      fillColor: Colors.black.withValues(alpha: 0.5),
-                      handleColor: Colors.red.withValues(alpha: 0.5),
-                      lineColor: Colors.black26.withValues(alpha: 0.5),
-                      lineWidth: 1,
-                    ),
-                    // Custom Feedback Builder
-                    itemFeedbackBuilder: (context, item, child) {
-                      return Opacity(
-                        opacity: 0.7,
-                        child: Material(
-                          elevation: 8,
-                          shadowColor: Colors.black,
-                          borderRadius: BorderRadius.circular(12),
-                          color: Colors.transparent,
-                          child: child,
-                        ),
-                      );
-                    },
-                    // Handle drops from external sources.
-                    onDrop: (data, layoutItem) {
-                      debugPrint('Dropped data: $data');
-                      return DateTime.now().millisecondsSinceEpoch.toString();
-                    },
-                    // The itemBuilder builds the visual representation of each item.
-                    itemBuilder: (context, item) {
-                      return MyCard(
-                        key: ValueKey(item.id),
-                        item: item,
-                        color: getColorForItem(item.id),
-                        onDeleteItem: () => controller.removeItem(item.id),
-                        isEditing: controller.isEditing.value,
-                      );
-                    },
-                    // trashLayout: TrashLayout.bottomCenter,
-                    trashLayout: TrashLayout(
-                      visible: TrashLayout.bottomCenter.visible.copyWith(
-                        bottom: 0,
-                      ),
-                      hidden: TrashLayout.bottomCenter.hidden,
-                    ),
-                    // Optional: Customize the trash area.
-                    trashBuilder: (context, isHovered, isActive, activeItemId) {
-                      return Align(
-                        alignment: Alignment.bottomCenter,
-                        child: Container(
-                          height: 60,
-                          width: 200,
-                          margin: const EdgeInsets.all(20.0),
-                          decoration: BoxDecoration(
-                            color: isActive
-                                ? Colors.red
-                                : (isHovered
-                                      ? Colors.orange
-                                      : Colors.redAccent),
-                            borderRadius: BorderRadius.circular(30),
-                            boxShadow: const [
-                              BoxShadow(blurRadius: 10, color: Colors.black26),
-                            ],
-                            border: isHovered
-                                ? Border.all(color: Colors.white, width: 2)
-                                : null,
-                          ),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(
-                                isActive ? Icons.delete_forever : Icons.delete,
-                                color: Colors.white,
-                                size: isActive ? 30 : 24,
-                              ),
-                              const SizedBox(width: 8),
-                              Text(
-                                isActive
-                                    ? 'Release to Delete'
-                                    : 'Drop to Delete',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: isActive ? 18 : 16,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      );
-                    },
-                    // Validate the Trash deletion
-                    onWillDelete: (item) async {
-                      return await showDialog<bool>(
-                            context: context,
-                            builder: (ctx) => AlertDialog(
-                              title: Text("Delete ?"),
-                              content: Text(
-                                "Do you want remove item ${item.id} ?",
-                              ),
-                              actions: [
-                                TextButton(
-                                  onPressed: () => Navigator.pop(ctx, false),
-                                  child: Text("No"),
-                                ),
-                                TextButton(
-                                  onPressed: () => Navigator.pop(ctx, true),
-                                  child: Text("Yes"),
-                                ),
-                              ],
-                            ),
-                          ) ??
-                          false;
-                    },
-                    // Optional: Called when an item is deleted
-                    onItemDeleted: (item) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text('Item ${item.id} deleted')),
-                      );
-                    },
+            child: Stack(
+              children: [
+                Dashboard<String>(
+                  controller: controller,
+                  trashHoverDelay: const Duration(seconds: 1),
+                  scrollDirection: scrollDirection,
+                  scrollController: scrollController,
+                  // ResizeBehavior.push or ResizeBehavior.shrink
+                  resizeBehavior: resizeBehavior,
+                  showScrollbar: true,
+                  slotAspectRatio: 1.0,
+                  // Responsive breakpoints:
+                  breakpoints: {
+                    0: 4, // Mobile: 4 cols
+                    600: 8, // Tablet: 8 cols
+                    1200: 12, // Desktop: 12 cols
+                  },
+                  // The size of the touch target
+                  resizeHandleSide: 20, // default 20.0
+                  padding: EdgeInsets.symmetric(horizontal: 8),
+                  mainAxisSpacing: 8.0, // default 8.0
+                  crossAxisSpacing: 8.0, // default 8.0
+                  // how many non visible pixels to preload on top and bottom
+                  cacheExtent: 500,
+                  guidance: DashboardGuidance
+                      .byDefault, // default null for no guidance
+                  // guidance: const DashboardGuidance(
+                  //   move: InteractionGuidance(
+                  //     SystemMouseCursors.grab,
+                  //     'Click and drag to move item',
+                  //   ),
+                  // ),
+                  gridStyle: GridStyle(
+                    fillColor: Colors.black.withValues(alpha: 0.5),
+                    handleColor: Colors.red.withValues(alpha: 0.5),
+                    lineColor: Colors.black26.withValues(alpha: 0.5),
+                    lineWidth: 1,
                   ),
-                  Positioned(
-                    left: 20,
-                    bottom: 20,
-                    child: Material(
-                      elevation: 4,
-                      borderRadius: BorderRadius.circular(8),
-                      clipBehavior: Clip.antiAlias,
+                  // Custom Feedback Builder
+                  itemFeedbackBuilder: (context, item, child) {
+                    return Opacity(
+                      opacity: 0.7,
+                      child: Material(
+                        elevation: 8,
+                        shadowColor: Colors.black,
+                        borderRadius: BorderRadius.circular(12),
+                        color: Colors.transparent,
+                        child: child,
+                      ),
+                    );
+                  },
+                  // Handle drops from external sources.
+                  onDrop: (data, layoutItem) {
+                    debugPrint('Dropped data: $data');
+                    return DateTime.now().millisecondsSinceEpoch.toString();
+                  },
+                  // The itemBuilder builds the visual representation of each item.
+                  itemBuilder: (context, item) {
+                    return MyCard(
+                      key: ValueKey(item.id),
+                      item: item,
+                      color: getColorForItem(item.id),
+                      onDeleteItem: () => controller.removeItem(item.id),
+                      isEditing: controller.isEditing.value,
+                    );
+                  },
+                  // trashLayout: TrashLayout.bottomCenter,
+                  trashLayout: TrashLayout(
+                    visible: TrashLayout.bottomCenter.visible.copyWith(
+                      bottom: 0,
+                    ),
+                    hidden: TrashLayout.bottomCenter.hidden,
+                  ),
+                  // Optional: Customize the trash area.
+                  trashBuilder: (context, isHovered, isActive, activeItemId) {
+                    return Align(
+                      alignment: Alignment.bottomCenter,
                       child: Container(
-                        // Vertical : Fixed width (120), flexible height (max 200)
-                        // Horizontal : Fixed height (120), flexible width (max 200 or more)
-                        width: scrollDirection == Axis.vertical ? 120 : null,
-                        height: scrollDirection == Axis.vertical ? null : 120,
-                        constraints: BoxConstraints(
-                          maxHeight: scrollDirection == Axis.vertical
-                              ? 200
-                              : 120,
-                          maxWidth: scrollDirection == Axis.vertical
-                              ? 120
-                              : 200,
-                        ),
+                        height: 60,
+                        width: 200,
+                        margin: const EdgeInsets.all(20.0),
                         decoration: BoxDecoration(
-                          border: Border.all(color: Colors.grey.shade300),
-                          borderRadius: BorderRadius.circular(8),
+                          color: isActive
+                              ? Colors.red
+                              : (isHovered ? Colors.orange : Colors.redAccent),
+                          borderRadius: BorderRadius.circular(30),
+                          boxShadow: const [
+                            BoxShadow(blurRadius: 10, color: Colors.black26),
+                          ],
+                          border: isHovered
+                              ? Border.all(color: Colors.white, width: 2)
+                              : null,
                         ),
-                        child: DashboardMinimap(
-                          controller: controller,
-                          scrollController: scrollController,
-                          // Important : use fixed width only if vertical
-                          // Else let the widget's LayoutBuilder calculate its constraints
-                          width: scrollDirection == Axis.vertical ? 120 : null,
-                          padding: EdgeInsets.zero,
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              isActive ? Icons.delete_forever : Icons.delete,
+                              color: Colors.white,
+                              size: isActive ? 30 : 24,
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              isActive ? 'Release to Delete' : 'Drop to Delete',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontSize: isActive ? 18 : 16,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
-                    ),
+                    );
+                  },
+                  // Validate the Trash deletion
+                  onWillDelete: (items) async {
+                    return await showDialog<bool>(
+                          context: context,
+                          builder: (ctx) => AlertDialog(
+                            title: Text("Delete ?"),
+                            content: Text(
+                              "Do you want remove items ${items.map((e) => e.id).join(',')} ?",
+                            ),
+                            actions: [
+                              TextButton(
+                                onPressed: () => Navigator.pop(ctx, false),
+                                child: Text("No"),
+                              ),
+                              TextButton(
+                                onPressed: () => Navigator.pop(ctx, true),
+                                child: Text("Yes"),
+                              ),
+                            ],
+                          ),
+                        ) ??
+                        false;
+                  },
+                  // Optional: Called when an item is deleted
+                  onItemsDeleted: (items) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          'Items ${items.map((e) => e.id).join(',')} deleted',
+                        ),
+                      ),
+                    );
+                  },
+                ),
+                Positioned(
+                  left: 20,
+                  bottom: 20,
+                  child: ValueListenableBuilder(
+                    valueListenable: showMap,
+                    builder: (context, value, _) {
+                      if (!value) return const SizedBox.shrink();
+
+                      return Material(
+                        elevation: 4,
+                        borderRadius: BorderRadius.circular(8),
+                        clipBehavior: Clip.antiAlias,
+                        child: Container(
+                          // Vertical : Fixed width (120), flexible height (max 200)
+                          // Horizontal : Fixed height (120), flexible width (max 200 or more)
+                          width: scrollDirection == Axis.vertical ? 120 : null,
+                          height: scrollDirection == Axis.vertical ? null : 120,
+                          constraints: BoxConstraints(
+                            maxHeight: scrollDirection == Axis.vertical
+                                ? 200
+                                : 120,
+                            maxWidth: scrollDirection == Axis.vertical
+                                ? 120
+                                : 200,
+                          ),
+                          decoration: BoxDecoration(
+                            border: Border.all(color: Colors.grey.shade300),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: DashboardMinimap(
+                            controller: controller,
+                            scrollController: scrollController,
+                            // Important : use fixed width only if vertical
+                            // Else let the widget's LayoutBuilder calculate its constraints
+                            width: scrollDirection == Axis.vertical
+                                ? 120
+                                : null,
+                            padding: EdgeInsets.zero,
+                          ),
+                        ),
+                      );
+                    },
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
           ),
         ],
