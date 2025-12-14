@@ -25,6 +25,451 @@ enum ResizeBehavior {
   shrink,
 }
 
+/// A strategy delegate for compacting the layout and resolving collisions.
+///
+/// Implement this interface to create custom layout behaviors (e.g. Tetris-like,
+/// Gravity-based, or fixed-position layouts).
+abstract class CompactorDelegate {
+  /// Constructor for [CompactorDelegate].
+  const CompactorDelegate();
+
+  /// Compacts the layout by removing gaps according to specific rules.
+  List<LayoutItem> compact(
+    List<LayoutItem> layout,
+    int cols, {
+    bool allowOverlap = false,
+  });
+
+  /// Resolves overlaps by pushing items without necessarily compacting (pulling back).
+  /// Used primarily during drag operations to ensure validity without fighting the user.
+  List<LayoutItem> resolveCollisions(
+    List<LayoutItem> layout,
+    int cols,
+  );
+}
+
+// ============================================================================
+// DEFAULT IMPLEMENTATIONS
+// ============================================================================
+
+/// Default vertical compaction (Gravity pulls up).
+class VerticalCompactor extends CompactorDelegate {
+  /// Creates a new [VerticalCompactor].
+  const VerticalCompactor();
+
+  @override
+  List<LayoutItem> compact(
+    List<LayoutItem> layout,
+    int cols, {
+    bool allowOverlap = false,
+  }) {
+    if (allowOverlap) return List.from(layout);
+
+    final compareWith = getStatics(layout).toList();
+    final sorted = sortLayoutItems(layout, CompactType.vertical);
+    final out = List<LayoutItem?>.filled(layout.length, null);
+
+    for (final l in sorted) {
+      var newL = l;
+      if (!l.isStatic) {
+        newL = _compactItemVertical(compareWith, l, cols, sorted);
+        compareWith.add(newL);
+      }
+
+      final index = layout.indexWhere((item) => item.id == l.id);
+      if (newL.x == l.x && newL.y == l.y && !l.moved) {
+        out[index] = l;
+      } else {
+        out[index] = newL.copyWith(moved: false);
+      }
+    }
+    return out.whereType<LayoutItem>().toList();
+  }
+
+  @override
+  List<LayoutItem> resolveCollisions(List<LayoutItem> layout, int cols) {
+    return _resolveCollisionsDefault(layout, CompactType.vertical);
+  }
+
+  LayoutItem _compactItemVertical(
+    List<LayoutItem> compareWith,
+    LayoutItem l,
+    int cols,
+    List<LayoutItem> fullLayout,
+  ) {
+    var currentItem = l;
+
+    // Move up
+    while (currentItem.y > 0 && getFirstCollision(compareWith, currentItem) == null) {
+      currentItem = currentItem.copyWith(y: currentItem.y - 1);
+    }
+
+    // Resolve collisions by moving down
+    LayoutItem? collidesWith;
+    while ((collidesWith = getFirstCollision(compareWith, currentItem)) != null) {
+      currentItem = resolveCompactionCollision(
+        fullLayout,
+        currentItem,
+        collidesWith!.y + collidesWith.h,
+        'y',
+      );
+    }
+
+    return currentItem.copyWith(y: max(currentItem.y, 0));
+  }
+}
+
+/// Horizontal compaction (Gravity pulls left).
+class HorizontalCompactor extends CompactorDelegate {
+  /// Creates a new [HorizontalCompactor].
+  const HorizontalCompactor();
+
+  @override
+  List<LayoutItem> compact(
+    List<LayoutItem> layout,
+    int cols, {
+    bool allowOverlap = false,
+  }) {
+    if (allowOverlap) return List.from(layout);
+
+    final compareWith = getStatics(layout).toList();
+    final sorted = sortLayoutItems(layout, CompactType.horizontal);
+    final out = List<LayoutItem?>.filled(layout.length, null);
+
+    for (final l in sorted) {
+      var newL = l;
+      if (!l.isStatic) {
+        newL = _compactItemHorizontal(compareWith, l, cols, sorted);
+        compareWith.add(newL);
+      }
+
+      final index = layout.indexWhere((item) => item.id == l.id);
+      if (newL.x == l.x && newL.y == l.y && !l.moved) {
+        out[index] = l;
+      } else {
+        out[index] = newL.copyWith(moved: false);
+      }
+    }
+    return out.whereType<LayoutItem>().toList();
+  }
+
+  @override
+  List<LayoutItem> resolveCollisions(List<LayoutItem> layout, int cols) {
+    return _resolveCollisionsDefault(layout, CompactType.horizontal);
+  }
+
+  LayoutItem _compactItemHorizontal(
+    List<LayoutItem> compareWith,
+    LayoutItem l,
+    int cols,
+    List<LayoutItem> fullLayout,
+  ) {
+    var currentItem = l;
+
+    // 1. Move left as far as possible
+    while (currentItem.x > 0 && getFirstCollision(compareWith, currentItem) == null) {
+      currentItem = currentItem.copyWith(x: currentItem.x - 1);
+    }
+
+    // 2. Resolve collisions AND overflows
+    while (true) {
+      final collidesWith = getFirstCollision(compareWith, currentItem);
+
+      if (collidesWith != null) {
+        // Collision: Push right
+        currentItem = resolveCompactionCollision(
+          fullLayout,
+          currentItem,
+          collidesWith.x + collidesWith.w,
+          'x',
+        );
+      }
+
+      // Check Overflow (Always check, even if no collision yet)
+      if (currentItem.x + currentItem.w > cols) {
+        // Wrap to next row, reset X to 0
+        currentItem = currentItem.copyWith(x: 0, y: currentItem.y + 1);
+
+        // Since we moved to a new position (new row), we must re-check collisions.
+        // We continue the loop.
+        continue;
+      }
+
+      // If we are here, it means:
+      // 1. We fit within bounds.
+      // 2. We didn't collide in this iteration (or we resolved it and fit).
+      if (collidesWith == null) {
+        break;
+      }
+    }
+
+    return currentItem.copyWith(x: max(currentItem.x, 0));
+  }
+}
+
+/// No compaction (Free movement), but resolves overlaps.
+class NoCompactor extends CompactorDelegate {
+  /// Creates a new [NoCompactor].
+  const NoCompactor();
+
+  @override
+  List<LayoutItem> compact(
+    List<LayoutItem> layout,
+    int cols, {
+    bool allowOverlap = false,
+  }) {
+    // In "None" mode, we don't pull items back.
+    // We just ensure no overlaps if requested.
+    if (allowOverlap) return List.from(layout);
+
+    // We use vertical resolution by default for "None" to prevent stacking
+    return _resolveCollisionsDefault(layout, CompactType.vertical);
+  }
+
+  @override
+  List<LayoutItem> resolveCollisions(List<LayoutItem> layout, int cols) {
+    return _resolveCollisionsDefault(layout, CompactType.vertical);
+  }
+}
+
+/// A high-performance vertical compactor using the "Rising Tide" (Skyline) algorithm.
+/// Complexity: O(N) roughly, instead of O(N^2).
+class FastVerticalCompactor extends CompactorDelegate {
+  /// Creates a new [FastVerticalCompactor].
+  const FastVerticalCompactor();
+
+  @override
+  List<LayoutItem> compact(
+    List<LayoutItem> layout,
+    int cols, {
+    bool allowOverlap = false,
+  }) {
+    // 1. Clone and Sort
+    // We need a mutable list to sort, but items remain immutable until we replace them.
+    final sorted = List<LayoutItem>.from(layout)
+      ..sort((a, b) {
+        // Sort by Y, then X
+        if (a.y != b.y) return a.y.compareTo(b.y);
+        if (a.x != b.x) return a.x.compareTo(b.x);
+        // Static first to act as anchors
+        if (a.isStatic && !b.isStatic) return -1;
+        if (!a.isStatic && b.isStatic) return 1;
+        return 0;
+      });
+
+    // 2. Initialize Tide (Skyline)
+    // tide[x] = the lowest free Y coordinate in column x
+    final tide = List<int>.filled(cols, 0);
+
+    final out = <LayoutItem>[];
+
+    // Separate statics for collision check optimization
+    final statics = sorted.where((i) => i.isStatic).toList();
+    // Index tracker for statics (optimization from the TS algo)
+    var staticOffset = 0;
+
+    for (final item in sorted) {
+      // If item is static, it stays put, but updates the tide.
+      if (item.isStatic) {
+        _updateTide(tide, item, cols);
+        out.add(item);
+        staticOffset++; // Advance static cursor
+        continue;
+      }
+
+      // --- DYNAMIC ITEM PLACEMENT ---
+
+      // 1. Find the highest point in the tide for the item's width
+      var y = 0;
+      final xEnd = min(item.x + item.w, cols);
+
+      for (var x = item.x; x < xEnd; x++) {
+        if (tide[x] > y) {
+          y = tide[x];
+        }
+      }
+
+      // "y" is now the candidate position (snapped to the tide)
+
+      // 2. Resolve collisions with Static items
+      // The TS algo moves the item DOWN if it hits a static item.
+      if (!allowOverlap) {
+        // We iterate through statics that are potentially below our candidate Y
+        var j = staticOffset;
+        while (j < statics.length) {
+          final staticItem = statics[j];
+
+          // Check collision manually since we haven't created the object yet
+          if (collidesWithCoords(item, y, staticItem)) {
+            // Collision! Push below the static item
+            y = staticItem.y + staticItem.h;
+
+            // Reset search because by moving down, we might now collide
+            // with a static item we previously skipped or haven't reached.
+            j = staticOffset;
+          } else {
+            j++;
+          }
+        }
+      }
+
+      // 3. Create the moved item
+      final newItem = item.copyWith(y: y, moved: false); // Reset moved flag
+      out.add(newItem);
+
+      // 4. Update Tide
+      _updateTide(tide, newItem, cols);
+    }
+
+    return out;
+  }
+
+  void _updateTide(List<int> tide, LayoutItem item, int cols) {
+    final bottom = item.y + item.h;
+    final xEnd = min(item.x + item.w, cols);
+    for (var x = item.x; x < xEnd; x++) {
+      // In Rising Tide, the tide always goes UP (or stays same).
+      // We set the tide to the bottom of this item.
+      if (tide[x] < bottom) {
+        tide[x] = bottom;
+      }
+    }
+  }
+
+  /// Helper to check collision without creating a LayoutItem instance
+  bool collidesWithCoords(LayoutItem dynamicItem, int dynamicY, LayoutItem staticItem) {
+    if (dynamicItem.x + dynamicItem.w <= staticItem.x) return false;
+    if (dynamicItem.x >= staticItem.x + staticItem.w) return false;
+    if (dynamicY + dynamicItem.h <= staticItem.y) return false;
+    if (dynamicY >= staticItem.y + staticItem.h) return false;
+    return true;
+  }
+
+  @override
+  List<LayoutItem> resolveCollisions(List<LayoutItem> layout, int cols) {
+    // For drag operations, we can keep the default implementation
+    // or implement a "Fast Push" if needed.
+    // For now, let's reuse the default one as it's robust for user interaction.
+    return const VerticalCompactor().resolveCollisions(layout, cols);
+  }
+}
+
+/// A high-performance horizontal compactor using the "Rising Tide" (Skyline) algorithm.
+/// Gravity pulls items to the LEFT.
+class FastHorizontalCompactor extends CompactorDelegate {
+  /// Creates a new [FastHorizontalCompactor].
+  const FastHorizontalCompactor();
+
+  @override
+  List<LayoutItem> compact(
+    List<LayoutItem> layout,
+    int rows, {
+    // 'cols' param actually means 'crossAxisCount', so here it is rows
+    bool allowOverlap = false,
+  }) {
+    // 1. Clone and Sort
+    final sorted = List<LayoutItem>.from(layout)
+      ..sort((a, b) {
+        // Sort by X (Main Axis), then Y (Cross Axis)
+        if (a.x != b.x) return a.x.compareTo(b.x);
+        if (a.y != b.y) return a.y.compareTo(b.y);
+
+        // Static first
+        if (a.isStatic && !b.isStatic) return -1;
+        if (!a.isStatic && b.isStatic) return 1;
+        return 0;
+      });
+
+    // 2. Initialize Tide (Skyline)
+    // tide[y] = the lowest free X coordinate in row y
+    final tide = List<int>.filled(rows, 0);
+
+    final out = <LayoutItem>[];
+    final statics = sorted.where((i) => i.isStatic).toList();
+    var staticOffset = 0;
+
+    for (final item in sorted) {
+      if (item.isStatic) {
+        _updateTide(tide, item, rows);
+        out.add(item);
+        staticOffset++;
+        continue;
+      }
+
+      // --- DYNAMIC ITEM PLACEMENT ---
+
+      // 1. Find the furthest X in the tide for the item's height (rows spanned)
+      var x = 0;
+      // We check rows from item.y to item.y + item.h
+      final yEnd = min(item.y + item.h, rows);
+
+      for (var y = item.y; y < yEnd; y++) {
+        if (tide[y] > x) {
+          x = tide[y];
+        }
+      }
+
+      // "x" is now the candidate position
+
+      // 2. Resolve collisions with Static items (Push Right)
+      if (!allowOverlap) {
+        var j = staticOffset;
+        while (j < statics.length) {
+          final staticItem = statics[j];
+
+          if (collidesWithCoords(item, x, staticItem)) {
+            // Collision! Push to the right of the static item
+            x = staticItem.x + staticItem.w;
+            j = staticOffset; // Reset search
+          } else {
+            j++;
+          }
+        }
+      }
+
+      // 3. Create the moved item
+      final newItem = item.copyWith(x: x, moved: false);
+      out.add(newItem);
+
+      // 4. Update Tide
+      _updateTide(tide, newItem, rows);
+    }
+
+    return out;
+  }
+
+  void _updateTide(List<int> tide, LayoutItem item, int rows) {
+    final right = item.x + item.w;
+    final yEnd = min(item.y + item.h, rows);
+
+    for (var y = item.y; y < yEnd; y++) {
+      // The tide always goes RIGHT (increases X).
+      if (tide[y] < right) {
+        tide[y] = right;
+      }
+    }
+  }
+
+  /// Helper to check collision (Horizontal logic: we test candidate X)
+  bool collidesWithCoords(LayoutItem dynamicItem, int dynamicX, LayoutItem staticItem) {
+    if (dynamicX + dynamicItem.w <= staticItem.x) return false;
+    if (dynamicX >= staticItem.x + staticItem.w) return false;
+    if (dynamicItem.y + dynamicItem.h <= staticItem.y) return false;
+    if (dynamicItem.y >= staticItem.y + staticItem.h) return false;
+    return true;
+  }
+
+  @override
+  List<LayoutItem> resolveCollisions(List<LayoutItem> layout, int cols) {
+    // Reuse standard resolution for drag interactions
+    return const HorizontalCompactor().resolveCollisions(layout, cols);
+  }
+}
+
+// ============================================================================
+// SHARED LOGIC & HELPERS (Exposed for Custom Compactors)
+// ============================================================================
+
 /// Returns the bottom-most coordinate of the layout.
 int bottom(Layout layout) {
   var max = 0;
@@ -38,7 +483,7 @@ int bottom(Layout layout) {
 }
 
 /// Sorts layout items based on the compaction type.
-Layout sortLayoutItems(Layout layout, CompactType compactType) {
+List<LayoutItem> sortLayoutItems(Layout layout, CompactType compactType) {
   final newLayout = List<LayoutItem>.from(layout);
   if (compactType == CompactType.horizontal) {
     newLayout.sort((a, b) {
@@ -64,12 +509,12 @@ Layout sortLayoutItems(Layout layout, CompactType compactType) {
 
 /// Checks if two layout items collide.
 bool collides(LayoutItem l1, LayoutItem l2) {
-  if (l1.id == l2.id) return false; // same element
-  if (l1.x + l1.w <= l2.x) return false; // l1 is left of l2
-  if (l1.x >= l2.x + l2.w) return false; // l1 is right of l2
-  if (l1.y + l1.h <= l2.y) return false; // l1 is above l2
-  if (l1.y >= l2.y + l2.h) return false; // l1 is below l2
-  return true; // boxes overlap
+  if (l1.id == l2.id) return false;
+  if (l1.x + l1.w <= l2.x) return false;
+  if (l1.x >= l2.x + l2.w) return false;
+  if (l1.y + l1.h <= l2.y) return false;
+  if (l1.y >= l2.y + l2.h) return false;
+  return true;
 }
 
 /// Gets the first item in the layout that collides with the given item.
@@ -85,8 +530,6 @@ LayoutItem? getFirstCollision(Layout layout, LayoutItem layoutItem) {
 /// Gets all items in the layout that collide with the given item.
 List<LayoutItem> getAllCollisions(Layout layout, LayoutItem layoutItem) {
   final collisions = <LayoutItem>[];
-
-  // Avoid unnecessary props access
   final targetLeft = layoutItem.x;
   final targetRight = layoutItem.x + layoutItem.w;
   final targetTop = layoutItem.y;
@@ -95,24 +538,155 @@ List<LayoutItem> getAllCollisions(Layout layout, LayoutItem layoutItem) {
 
   for (final item in layout) {
     if (item.id == targetId) continue;
-
-    // Check AABB (Axis-Aligned Bounding Box) inlined for performance
-    // Same as collides() without calling function
-    if (targetRight <= item.x) continue; // Left target
-    if (targetLeft >= item.x + item.w) continue; // Right target
-    if (targetBottom <= item.y) continue; // Top target
-    if (targetTop >= item.y + item.h) continue; // Bottom target
-
+    if (targetRight <= item.x) continue;
+    if (targetLeft >= item.x + item.w) continue;
+    if (targetBottom <= item.y) continue;
+    if (targetTop >= item.y + item.h) continue;
     collisions.add(item);
   }
   return collisions;
 }
 
 /// Returns a list of all static items in the layout.
-Layout getStatics(Layout layout) {
+List<LayoutItem> getStatics(Layout layout) {
   return layout.where((item) => item.isStatic).toList();
 }
 
+/// Recursively resolves collisions during compaction by moving items down/right.
+/// Exposed for custom compactors.
+LayoutItem resolveCompactionCollision(
+  Layout layout,
+  LayoutItem item,
+  int moveToCoord,
+  String axis,
+) {
+  var currentItem = item;
+  final sizeProp = axis == 'x' ? currentItem.w : currentItem.h;
+  currentItem = currentItem.copyWith(
+    x: axis == 'x' ? currentItem.x + 1 : currentItem.x,
+    y: axis == 'y' ? currentItem.y + 1 : currentItem.y,
+  );
+
+  final itemIndex = layout.indexWhere((element) => element.id == currentItem.id);
+
+  for (var i = itemIndex + 1; i < layout.length; i++) {
+    final otherItem = layout[i];
+    if (otherItem.isStatic) continue;
+
+    if (collides(currentItem, otherItem)) {
+      resolveCompactionCollision(layout, otherItem, moveToCoord + sizeProp, axis);
+    }
+  }
+
+  return currentItem.copyWith(
+    x: axis == 'x' ? moveToCoord : currentItem.x,
+    y: axis == 'y' ? moveToCoord : currentItem.y,
+  );
+}
+
+// --- Internal Helper for Default Collision Resolution ---
+List<LayoutItem> _resolveCollisionsDefault(List<LayoutItem> layout, CompactType compactType) {
+  final items = List<LayoutItem>.from(layout);
+  final isHorizontal = compactType == CompactType.horizontal;
+
+  items.sort((a, b) {
+    if (isHorizontal) {
+      if (a.x != b.x) return a.x.compareTo(b.x);
+      return a.y.compareTo(b.y);
+    } else {
+      if (a.y != b.y) return a.y.compareTo(b.y);
+      return a.x.compareTo(b.x);
+    }
+  });
+
+  final processed = <LayoutItem>[];
+
+  for (var i = 0; i < items.length; i++) {
+    var current = items[i];
+    if (current.isStatic) {
+      processed.add(current);
+      continue;
+    }
+
+    var hasCollision = true;
+    var safety = 0;
+
+    while (hasCollision && safety < 1000) {
+      hasCollision = false;
+      for (final obstacle in processed) {
+        if (collides(current, obstacle)) {
+          if (isHorizontal) {
+            current = current.copyWith(x: obstacle.x + obstacle.w);
+          } else {
+            current = current.copyWith(y: obstacle.y + obstacle.h);
+          }
+          hasCollision = true;
+          break;
+        }
+      }
+      safety++;
+    }
+    processed.add(current);
+  }
+  return processed;
+}
+
+// ============================================================================
+// LEGACY API (Forwarding to Delegates)
+// ============================================================================
+
+/// Compacts the layout.
+///
+/// This function now delegates to the appropriate [CompactorDelegate].
+List<LayoutItem> compact(
+  List<LayoutItem> layout,
+  CompactType compactType,
+  int cols, {
+  bool allowOverlap = false,
+}) {
+  final delegate = _getDelegate(compactType);
+  return delegate.compact(layout, cols, allowOverlap: allowOverlap);
+}
+
+/// Resolves collisions.
+///
+/// This function now delegates to the appropriate [CompactorDelegate].
+List<LayoutItem> resolveCollisions(List<LayoutItem> layout, CompactType compactType) {
+  final delegate = _getDelegate(compactType);
+  return delegate.resolveCollisions(layout, 10000);
+}
+
+CompactorDelegate _getDelegate(CompactType type) {
+  switch (type) {
+    case CompactType.vertical:
+      return const VerticalCompactor();
+    case CompactType.horizontal:
+      return const HorizontalCompactor();
+    case CompactType.none:
+      return const NoCompactor();
+  }
+}
+
+/// Compact a single item within the layout.
+///
+/// @deprecated Use compact() instead, which handles the full layout.
+LayoutItem compactItem(
+  List<LayoutItem> compareWith,
+  LayoutItem l,
+  CompactType compactType,
+  int cols,
+  List<LayoutItem> fullLayout,
+) {
+  final delegate = _getDelegate(compactType);
+  if (delegate is VerticalCompactor) {
+    return delegate._compactItemVertical(compareWith, l, cols, fullLayout);
+  } else if (delegate is HorizontalCompactor) {
+    return delegate._compactItemHorizontal(compareWith, l, cols, fullLayout);
+  }
+  return l;
+}
+
+/*
 /// Compacts a single item in the layout.
 ///
 /// This function moves the item up as much as possible without colliding with
@@ -162,68 +736,7 @@ LayoutItem compactItem(
 
   return currentItem.copyWith(y: max(currentItem.y, 0), x: max(currentItem.x, 0));
 }
-
-/// Recursively resolves collisions during compaction by moving items down.
-LayoutItem resolveCompactionCollision(
-  Layout layout,
-  LayoutItem item,
-  int moveToCoord,
-  String axis,
-) {
-  var currentItem = item;
-  final sizeProp = axis == 'x' ? currentItem.w : currentItem.h;
-  currentItem = currentItem.copyWith(
-    x: axis == 'x' ? currentItem.x + 1 : currentItem.x,
-    y: axis == 'y' ? currentItem.y + 1 : currentItem.y,
-  );
-
-  final itemIndex = layout.indexWhere((element) => element.id == currentItem.id);
-
-  for (var i = itemIndex + 1; i < layout.length; i++) {
-    final otherItem = layout[i];
-    if (otherItem.isStatic) continue;
-    if (otherItem.y > currentItem.y + currentItem.h) break;
-    if (collides(currentItem, otherItem)) {
-      resolveCompactionCollision(layout, otherItem, moveToCoord + sizeProp, axis);
-    }
-  }
-
-  return currentItem.copyWith(
-    x: axis == 'x' ? moveToCoord : currentItem.x,
-    y: axis == 'y' ? moveToCoord : currentItem.y,
-  );
-}
-
-/// Compacts the layout by moving all items up as much as possible.
-///
-/// This function sorts the layout items and then compacts each one, ensuring
-/// that there are no unnecessary gaps in the layout.
-Layout compact(Layout layout, CompactType compactType, int cols, {bool allowOverlap = false}) {
-  if (allowOverlap) return layout;
-
-  final compareWith = getStatics(layout).toList();
-  final sorted = sortLayoutItems(layout, compactType);
-  final out = List<LayoutItem?>.filled(layout.length, null);
-
-  for (final l in sorted) {
-    var newL = l;
-    if (!l.isStatic) {
-      newL = compactItem(compareWith, l, compactType, cols, sorted);
-      compareWith.add(newL);
-    }
-
-    final index = layout.indexWhere((item) => item.id == l.id);
-    // if item didn't move (same x, y) and 'moved' flag is already false
-    // just return instance to avoid unnecessary copy
-    if (newL.x == l.x && newL.y == l.y && !l.moved) {
-      out[index] = l;
-    } else {
-      out[index] = newL.copyWith(moved: false);
-    }
-  }
-
-  return out.whereType<LayoutItem>().toList();
-}
+*/
 
 /// Corrects the bounds of the layout items to ensure they fit within the
 /// specified number of columns.
@@ -294,8 +807,21 @@ Layout moveElement(
   final queue = ListQueue<LayoutItem>.from([itemWithNewPos]);
   final processed = <String>{itemWithNewPos.id};
 
+  // SAFETY: Prevent infinite loops.
+  // We allow visiting every item at least once, plus a safety margin.
+  // If the loop exceeds this, it means we have a circular dependency bug.
+  var safetyLoop = 0;
+  final maxLoops = max(5000, layout.length * 2);
+
   // check AABB (Axis-Aligned Bounding Box).
   while (queue.isNotEmpty) {
+    if (safetyLoop++ > maxLoops) {
+      // Dart only, don't import flutter foundation
+      // ignore_for_file: avoid_print
+      print('SliverDashboard: Collision resolution limit reached ($maxLoops).');
+      break;
+    }
+
     final currentItem = queue.removeFirst();
 
     // Calc edges to avoid to repeat access to props
@@ -350,7 +876,11 @@ Layout moveElement(
 
   // Prevent secondary overlaps while moving
   if (preventCollision) {
-    return resolveCollisions(resultLayout, compactType);
+    // return resolveCollisions(resultLayout, compactType);
+    return resolveCollisions(
+      resultLayout,
+      compactType == CompactType.none ? CompactType.vertical : compactType,
+    );
   }
 
   return resultLayout;
@@ -515,12 +1045,15 @@ List<LayoutItem> placeNewItems({
   var currentY = bottom(finalLayout);
   var currentX = 0;
 
+  // SAFETY: Allow searching at least 1000 rows down, or 10k iterations minimum.
+  final maxIterations = max(10000, cols * 1000);
+
   for (final item in itemsToPlace) {
     var placed = false;
     var safetyLoop = 0;
 
     // Try to find the first valid spot
-    while (!placed && safetyLoop < 10000) {
+    while (!placed && safetyLoop < maxIterations) {
       // 1. Check grid boundaries (Wrap to next row if needed)
       if (currentX + item.w > cols) {
         currentX = 0;
@@ -556,63 +1089,6 @@ List<LayoutItem> placeNewItems({
   }
 
   return finalLayout;
-}
-
-/// Resolves overlaps by pushing items down (or right) without compacting (pulling up).
-/// This ensures a valid layout without fighting the user's drag action.
-List<LayoutItem> resolveCollisions(List<LayoutItem> layout, CompactType compactType) {
-  final items = List<LayoutItem>.from(layout);
-
-  final isHorizontal = compactType == CompactType.horizontal;
-
-  // 1. Sort items to process them in order (Top-Down or Left-Right)
-  items.sort((a, b) {
-    if (isHorizontal) {
-      if (a.x != b.x) return a.x.compareTo(b.x);
-      return a.y.compareTo(b.y);
-    } else {
-      if (a.y != b.y) return a.y.compareTo(b.y);
-      return a.x.compareTo(b.x);
-    }
-  });
-
-  final processed = <LayoutItem>[];
-
-  for (var i = 0; i < items.length; i++) {
-    var current = items[i];
-
-    // Static items act as anchors, they don't move in this pass
-    // (assuming moveElement already handled static collisions, but safety first)
-    if (current.isStatic) {
-      processed.add(current);
-      continue;
-    }
-
-    // Check against all previously processed items (which are "above" or "left" of current)
-    var hasCollision = true;
-    var safety = 0;
-
-    while (hasCollision && safety < 1000) {
-      hasCollision = false;
-      for (final obstacle in processed) {
-        if (collides(current, obstacle)) {
-          // Push away
-          if (isHorizontal) {
-            current = current.copyWith(x: obstacle.x + obstacle.w);
-          } else {
-            current = current.copyWith(y: obstacle.y + obstacle.h);
-          }
-          hasCollision = true;
-          // Restart check with new position to ensure we don't overlap another obstacle
-          break;
-        }
-      }
-      safety++;
-    }
-    processed.add(current);
-  }
-
-  return processed;
 }
 
 /// Optimizes the layout by compacting items to remove gaps,

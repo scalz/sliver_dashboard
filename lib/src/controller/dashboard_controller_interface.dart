@@ -63,6 +63,11 @@ abstract class DashboardController {
   /// If null, no compaction for precise placement.
   WritableBeacon<engine.CompactType> get compactionType;
 
+  /// Sets a custom compaction strategy.
+  ///
+  /// This allows you to implement custom algorithms for filling gaps and resolving collisions.
+  void setCompactor(engine.CompactorDelegate compactor);
+
   /// The scroll direction of the dashboard.
   WritableBeacon<Axis> get scrollDirection;
 

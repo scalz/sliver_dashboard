@@ -4,13 +4,15 @@ import 'package:mocktail/mocktail.dart';
 import 'package:sliver_dashboard/src/controller/dashboard_controller_impl.dart';
 import 'package:sliver_dashboard/src/controller/dashboard_controller_interface.dart';
 import 'package:sliver_dashboard/src/controller/utility.dart';
-import 'package:sliver_dashboard/src/engine/layout_engine.dart' show CompactType;
+import 'package:sliver_dashboard/src/engine/layout_engine.dart';
 import 'package:sliver_dashboard/src/models/layout_item.dart';
 import 'package:sliver_dashboard/src/view/resize_handle.dart';
 
 class MockLayoutChangeListener extends Mock {
   void call(List<LayoutItem> items, int slotCount);
 }
+
+class MockCompactorDelegate extends Mock implements CompactorDelegate {}
 
 void main() {
   group('DashboardController', () {
@@ -1415,6 +1417,76 @@ void main() {
         // Listener called
         verify(() => mockListener.call(any(), any())).called(1);
       });
+    });
+  });
+
+  group('Compaction Strategies & Overrides', () {
+    late MockLayoutChangeListener mockListener;
+    late DashboardControllerImpl controller;
+    final initialLayout = [
+      const LayoutItem(id: 'a', x: 0, y: 0, w: 2, h: 2, minW: 1, minH: 1),
+      const LayoutItem(id: 'b', x: 2, y: 0, w: 1, h: 1),
+      const LayoutItem(id: 'static', x: 0, y: 2, w: 1, h: 1, isStatic: true),
+    ];
+
+    setUp(() {
+      mockListener = MockLayoutChangeListener();
+      controller = DashboardController(
+        initialLayout: initialLayout,
+        initialSlotCount: 4,
+        onLayoutChanged: mockListener.call,
+      ) as DashboardControllerImpl;
+    });
+
+    test('setCompactionType handles Horizontal type correctly', () {
+      controller.setCompactionType(CompactType.horizontal);
+      expect(controller.compactionType.value, CompactType.horizontal);
+
+      // Trigger a layout change to ensure the new compactor is used
+      controller.addItem(const LayoutItem(id: 'h', x: 0, y: 0, w: 1, h: 1));
+      // Horizontal compaction logic would apply here
+    });
+
+    test('setCompactor injects custom strategy and triggers re-layout', () {
+      final mockCompactor = MockCompactorDelegate();
+      final currentLayout = controller.layout.value;
+
+      // Setup mock to return the same layout
+      when(() => mockCompactor.compact(any(), any(), allowOverlap: any(named: 'allowOverlap')))
+          .thenReturn(currentLayout);
+
+      controller.setCompactor(mockCompactor);
+
+      // Verify the custom compactor was used immediately
+      verify(() => mockCompactor.compact(currentLayout, 4)).called(1);
+      // Verify layout listener was notified
+      verify(() => mockListener.call(currentLayout, 4)).called(1);
+    });
+
+    test('addItem uses temporary delegate overrides (Vertical, Horizontal, None)', () {
+      // 1. Vertical Override
+      controller
+        ..addItem(
+          const LayoutItem(id: 'v', x: 0, y: 0, w: 1, h: 1),
+          overrideCompactType: CompactType.vertical,
+        )
+
+        // 2. Horizontal Override
+        ..addItem(
+          const LayoutItem(id: 'h', x: 0, y: 0, w: 1, h: 1),
+          overrideCompactType: CompactType.horizontal,
+        )
+
+        // 3. None Override
+        ..addItem(
+          const LayoutItem(id: 'n', x: 0, y: 0, w: 1, h: 1),
+          overrideCompactType: CompactType.none,
+        );
+
+      // Verify items were added successfully
+      expect(controller.layout.value.any((i) => i.id == 'v'), isTrue);
+      expect(controller.layout.value.any((i) => i.id == 'h'), isTrue);
+      expect(controller.layout.value.any((i) => i.id == 'n'), isTrue);
     });
   });
 }

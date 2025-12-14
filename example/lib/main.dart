@@ -1,8 +1,9 @@
-import 'dart:io';
 import 'dart:math';
+
+import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:sliver_dashboard/sliver_dashboard.dart';
-import 'package:flutter/material.dart';
 
 void main() {
   runApp(const MyApp());
@@ -49,6 +50,15 @@ class _DashboardPageState extends State<DashboardPage> {
   var resizeBehavior = ResizeBehavior.push;
   final cardColors = <String, Color>{};
   final random = Random();
+
+  bool get isMobile {
+    if (kIsWeb) {
+      return defaultTargetPlatform == TargetPlatform.android ||
+          defaultTargetPlatform == TargetPlatform.iOS;
+    }
+    return defaultTargetPlatform == TargetPlatform.android ||
+        defaultTargetPlatform == TargetPlatform.iOS;
+  }
 
   Color getColorForItem(String id) {
     return cardColors.putIfAbsent(id, () {
@@ -184,7 +194,7 @@ class _DashboardPageState extends State<DashboardPage> {
       ),
       body: Column(
         children: [
-          SizedBox(height: 8),
+          const SizedBox(height: 8),
           Wrap(
             direction: Axis.horizontal,
             alignment: WrapAlignment.center,
@@ -201,7 +211,7 @@ class _DashboardPageState extends State<DashboardPage> {
                       controller.setCompactionType(value.first);
                     },
                     segments: [
-                      ButtonSegment(
+                      const ButtonSegment(
                         label: Text('None'),
                         value: CompactType.none,
                       ),
@@ -242,7 +252,7 @@ class _DashboardPageState extends State<DashboardPage> {
                       ? ResizeBehavior.shrink
                       : ResizeBehavior.push;
                 }),
-                segments: [
+                segments: const [
                   ButtonSegment(
                     label: Text('Resize Push'),
                     value: ResizeBehavior.push,
@@ -260,31 +270,31 @@ class _DashboardPageState extends State<DashboardPage> {
             text: TextSpan(
               style: theme.textTheme.bodyMedium,
               children: [
-                if (!Platform.isAndroid && !Platform.isIOS)
-                  TextSpan(
+                if (!isMobile)
+                  const TextSpan(
                     text: 'Keyboard navigation: ',
                     style: TextStyle(fontWeight: FontWeight.w500),
                   ),
-                if (!Platform.isAndroid && !Platform.isIOS)
-                  TextSpan(
+                if (!isMobile)
+                  const TextSpan(
                     text: 'Tab, Space to start/stop moving, Arrows.\n',
                     style: TextStyle(fontWeight: FontWeight.normal),
                   ),
-                TextSpan(
+                const TextSpan(
                   text: 'Multi-select: ',
                   style: TextStyle(fontWeight: FontWeight.w500),
                 ),
                 TextSpan(
-                  text: !Platform.isAndroid && !Platform.isIOS
+                  text: !isMobile
                       ? 'Select and move multiple items at once using Shift + Click (Single tap on mobile).'
                       : 'Single tap to select and move multiple items at once.',
-                  style: TextStyle(fontWeight: FontWeight.normal),
+                  style: const TextStyle(fontWeight: FontWeight.normal),
                 ),
               ],
             ),
           ),
-          // Add some external draggables to demonstrate dropping new items.
           const Divider(),
+          // Add some external draggables to demonstrate dropping new items.
           const Padding(
             padding: EdgeInsets.symmetric(horizontal: 8),
             child: Wrap(
@@ -449,18 +459,18 @@ class _DashboardPageState extends State<DashboardPage> {
                     return await showDialog<bool>(
                           context: context,
                           builder: (ctx) => AlertDialog(
-                            title: Text("Delete ?"),
+                            title: const Text("Delete ?"),
                             content: Text(
                               "Do you want remove items ${items.map((e) => e.id).join(',')} ?",
                             ),
                             actions: [
                               TextButton(
                                 onPressed: () => Navigator.pop(ctx, false),
-                                child: Text("No"),
+                                child: const Text("No"),
                               ),
                               TextButton(
                                 onPressed: () => Navigator.pop(ctx, true),
-                                child: Text("Yes"),
+                                child: const Text("Yes"),
                               ),
                             ],
                           ),

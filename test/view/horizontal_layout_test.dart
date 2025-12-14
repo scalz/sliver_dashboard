@@ -22,7 +22,7 @@ void main() {
               width: 800,
               child: Dashboard(
                 controller: controller,
-                scrollDirection: Axis.horizontal, // <--- Key for coverage
+                scrollDirection: Axis.horizontal,
                 slotAspectRatio: 1,
                 itemBuilder: (context, item) => Text('Item ${item.id}'),
               ),

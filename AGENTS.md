@@ -23,6 +23,7 @@ The project follows a strict separation of concerns. **Do not violate layer boun
 - **Pure Functions Only:** No Flutter imports (`material.dart`).
 - **Deterministic:** Same input layout + parameters = Same output layout.
 - **Functional Style:** Prefer declarative patterns, but avoid external FP libraries (like fpdart) to keep dependencies low.
+- **Pluggable Compaction:** The `compact` and `resolveCollisions` logic is not hardcoded. It must go through the `CompactorDelegate` interface. When modifying default behaviors, edit the specific `*Compactor` class, not the abstract interface.
 
 ### B. State Layer (`lib/src/controller/`)
 - **Interface Separation:** `DashboardController` is a public abstract interface. The logic resides in `DashboardControllerImpl` (hidden).

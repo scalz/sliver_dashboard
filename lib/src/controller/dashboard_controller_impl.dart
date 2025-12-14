@@ -66,6 +66,9 @@ class DashboardControllerImpl implements DashboardController {
   @override
   final compactionType = Beacon.writable<engine.CompactType>(engine.CompactType.vertical);
 
+  // Internal delegate reference
+  engine.CompactorDelegate _compactor = const engine.VerticalCompactor();
+
   @override
   final resizeHandleSide = Beacon.writable<double>(20);
 
@@ -173,9 +176,8 @@ class DashboardControllerImpl implements DashboardController {
     } else {
       // 3b. Standard behavior: Calculate new layout from scratch
       final corrected = engine.correctBounds(currentLayout, newSlotCount);
-      nextLayout = engine.compact(
+      nextLayout = _compactor.compact(
         corrected,
-        engine.CompactType.vertical,
         newSlotCount,
       );
     }
@@ -223,9 +225,8 @@ class DashboardControllerImpl implements DashboardController {
     }
 
     // 4. Final compaction to ensure everything is tidy
-    return engine.compact(
+    return _compactor.compact(
       result,
-      compactionType.value,
       newSlotCount,
     );
   }
@@ -238,6 +239,28 @@ class DashboardControllerImpl implements DashboardController {
   @override
   void setCompactionType(engine.CompactType type) {
     compactionType.value = type;
+    switch (type) {
+      case engine.CompactType.vertical:
+        _compactor = const engine.VerticalCompactor();
+      case engine.CompactType.horizontal:
+        _compactor = const engine.HorizontalCompactor();
+      case engine.CompactType.none:
+        _compactor = const engine.NoCompactor();
+    }
+    // Re-compact with new strategy
+    layout.value = _compactor.compact(layout.value, slotCount.value);
+    onLayoutChanged?.call(layout.value, slotCount.value);
+  }
+
+  @override
+  void setCompactor(engine.CompactorDelegate compactor) {
+    _compactor = compactor;
+    // Note: We do not update the `compactionType` beacon here because custom
+    // strategies might not map to the enum values.
+
+    // Trigger an immediate re-layout using the new strategy.
+    layout.value = _compactor.compact(layout.value, slotCount.value);
+    onLayoutChanged?.call(layout.value, slotCount.value);
   }
 
   @override
@@ -274,12 +297,15 @@ class DashboardControllerImpl implements DashboardController {
       }
     }
 
+    // Use delegate (or temporary override)
+    final strategy =
+        overrideCompactType != null ? _getTempDelegate(overrideCompactType) : _compactor;
+
     // Run compaction.
     // This will pull the auto-placed items (which are at the bottom)
     // up into any available empty spaces above them.
-    final newLayout = engine.compact(
+    final newLayout = strategy.compact(
       currentLayout,
-      overrideCompactType ?? compactionType.value,
       slotCount.value,
     );
 
@@ -294,9 +320,12 @@ class DashboardControllerImpl implements DashboardController {
       return;
     }
     final currentLayout = layout.value;
-    final newLayout = engine.compact(
+
+    final strategy =
+        overrideCompactType != null ? _getTempDelegate(overrideCompactType) : _compactor;
+
+    final newLayout = strategy.compact(
       [...currentLayout, newItem],
-      overrideCompactType ?? compactionType.value,
       slotCount.value,
     );
     layout.value = newLayout;
@@ -306,14 +335,7 @@ class DashboardControllerImpl implements DashboardController {
 
   @override
   void removeItem(String itemId, {engine.CompactType? overrideCompactType}) {
-    final currentLayout = layout.value;
-    final newLayout = engine.compact(
-      currentLayout.where((item) => item.id != itemId).toList(),
-      overrideCompactType ?? compactionType.value,
-      slotCount.value,
-    );
-    layout.value = newLayout;
-    onLayoutChanged?.call(layout.value, slotCount.value);
+    removeItems([itemId]);
   }
 
   @override
@@ -321,9 +343,8 @@ class DashboardControllerImpl implements DashboardController {
     final idsToRemove = itemIds.toSet();
     final currentLayout = layout.value;
 
-    final newLayout = engine.compact(
+    final newLayout = _compactor.compact(
       currentLayout.where((item) => !idsToRemove.contains(item.id)).toList(),
-      compactionType.value,
       slotCount.value,
     );
 
@@ -376,9 +397,8 @@ class DashboardControllerImpl implements DashboardController {
     final corrected = engine.correctBounds(newLayout, slotCount.value);
 
     // Apply compaction if configured, otherwise just resolve overlaps
-    layout.value = engine.compact(
+    layout.value = _compactor.compact(
       corrected,
-      compactionType.value,
       slotCount.value,
       allowOverlap: false, // Ensure imported layout is clean
     );
@@ -483,10 +503,10 @@ class DashboardControllerImpl implements DashboardController {
       force: true,
     );
 
-    // When no compaction, do not compact final result, keep result from moveElement
-    // which potentially has already pushed items.
+    // If compaction is enabled, run it to fill gaps.
+    // Otherwise, keep the result from `moveElement` (which only resolves collisions).
     final compactedLayout = compactionType.value != engine.CompactType.none
-        ? engine.compact(newLayout, compactionType.value, slotCount.value)
+        ? _compactor.compact(newLayout, slotCount.value)
         : newLayout;
 
     layout.value = compactedLayout;
@@ -518,20 +538,16 @@ class DashboardControllerImpl implements DashboardController {
       moved: false,
     );
 
-    // Simply replace placeholder with real item
+    //  Replace the placeholder with the actual item.
     final finalLayout = layout.value.map((item) {
       if (item.id == '__placeholder__') return newItem;
       return item;
     }).toList();
 
-    // No need to call again moveElement or compaction if showPlaceholder
-    // already did its job on last frame.
-    // For safety, eg. compact is none, ALWAYS call compact.
-    // If compactionType is null, this won't compact,
-    // But this will prevent collision (overlaps) by pushing items.
-    layout.value = engine.compact(
+    // Run a final pass to ensure the layout is valid and stable after the drop.
+    // This ensures no overlaps remain and respects the current compaction strategy.
+    layout.value = _compactor.compact(
       finalLayout,
-      compactionType.value,
       slotCount.value,
       allowOverlap: false,
     );
@@ -644,21 +660,11 @@ class DashboardControllerImpl implements DashboardController {
     List<LayoutItem> finalLayout;
 
     // Apply Compaction on Drop
+    // Use delegate to resolve collisions or compact
     if (compactionType.value == engine.CompactType.none) {
-      // If no compaction, we just resolve overlaps (Push Only)
-      // so items stay where they were dropped.
-      finalLayout = engine.resolveCollisions(
-        layout.value,
-        compactionType.value,
-      );
+      finalLayout = _compactor.resolveCollisions(layout.value, slotCount.value);
     } else {
-      // If compaction is enabled (Vertical/Horizontal), we run the full
-      // compaction algorithm to fill the gaps created during the drag.
-      finalLayout = engine.compact(
-        layout.value,
-        compactionType.value,
-        slotCount.value,
-      );
+      finalLayout = _compactor.compact(layout.value, slotCount.value);
     }
 
     layout.value = finalLayout;
@@ -775,20 +781,17 @@ class DashboardControllerImpl implements DashboardController {
   void onResizeEnd(String itemId) {
     if (!isResizing.value) return;
 
-    // For safety, eg. compact is none, ALWAYS call compact.
-    // If compactionType is null, this won't compact,
-    // But this will prevent collision (overlaps) by pushing items.
-    final finalLayout = engine.compact(
+    final finalLayout = _compactor.resolveCollisions(
       layout.value,
-      compactionType.value,
       slotCount.value,
-      allowOverlap: false,
     );
 
     layout.value = finalLayout;
 
     onLayoutChanged?.call(layout.value, slotCount.value);
 
+    isResizing.value = false;
+    _pivotItemId = null;
     activeItem.value = null;
     originalLayoutOnStart.value = [];
     dragOffset.value = Offset.zero;
@@ -870,5 +873,17 @@ class DashboardControllerImpl implements DashboardController {
 
     layout.value = optimized;
     onLayoutChanged?.call(layout.value, slotCount.value);
+  }
+
+  // Helper to get temporary delegate for overrides
+  engine.CompactorDelegate _getTempDelegate(engine.CompactType type) {
+    switch (type) {
+      case engine.CompactType.vertical:
+        return const engine.VerticalCompactor();
+      case engine.CompactType.horizontal:
+        return const engine.HorizontalCompactor();
+      case engine.CompactType.none:
+        return const engine.NoCompactor();
+    }
   }
 }

@@ -25,6 +25,7 @@ Perfect for analytics dashboards, IoT control panels, project management tools, 
     - **None:** Free positioning. Items are not compacted.
     - **Vertical:** Items are compacted to top. 
     - **Horizontal:** Items are compacted to left.
+    - **Custom:** Implement `CompactorDelegate` to define custom rules (e.g., specific gravity, fixed zones).
 - 🗑️ **Built-in Trash:** Easy-to-implement drag-to-delete functionality. Or implement your own using available callbacks.
 - ✨ **Custom Feedback:** Customize the appearance of items while they are being dragged. Use onInteractionStart callback for haptic feedback...
 - 📥 **Drag From Outside:** Drop new items from external sources directly into the grid with auto-scrolling support.
@@ -62,6 +63,7 @@ Perfect for analytics dashboards, IoT control panels, project management tools, 
   - [Accessibility and Keyboard Navigation](#accessibility-and-keyboard-navigation)
   - [Multi Selection and Cluster Drag](#multi-selection-and-cluster-drag)
   - [Layout Optimizer](#layout-optimizer)
+  - [Custom Compaction Strategy](#custom-compaction-strategy)
   - [Utilities](#utilities)
 - [Contributing](#contributing)
 - [Roadmap](#roadmap)
@@ -725,6 +727,34 @@ It uses a "Visual Bin Packing" algorithm that fills gaps while preserving the vi
 controller.optimizeLayout();
 ```
 
+### Custom Compaction Strategy
+
+If the default vertical/horizontal compaction doesn't fit your needs (e.g., you want a Tetris-like gravity or specific sorting rules), you can implement your own strategy.
+
+1.  Create a class that extends `CompactorDelegate`.
+2.  Implement `compact` and `resolveCollisions`.
+3.  Inject it into the controller.
+
+```dart
+class MyCustomCompactor extends CompactorDelegate {
+  @override
+  List<LayoutItem> compact(List<LayoutItem> layout, int cols, {bool allowOverlap = false}) {
+    // Your custom logic here...
+    // You can use helpers like sortLayoutItems, getFirstCollision, etc.
+    return layout;
+  }
+
+  @override
+  List<LayoutItem> resolveCollisions(List<LayoutItem> layout, int cols) {
+    // Logic to push items away during drag
+    return layout;
+  }
+}
+
+// Usage
+controller.setCompactor(MyCustomCompactor());
+```
+
 ### Utilities
 
 The controller provides useful getters to help you interact with the layout programmatically.
@@ -763,6 +793,39 @@ if (spotInLastRow != null) {
   );
   controller.addItem(newItem);
 }
+```
+
+## Benchmark
+- Setup: /test/engine/benchmark.dart in AOT mode, on Ryzen 2600, Windows 11. Dart only, requires to comment immutable annotation in layout_item.dart
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│                         BENCHMARK RESULTS                                │
+├──────────────────────────────────────────────────────┬───────────────────┤
+│ Test                                                 │ Time              │
+├──────────────────────────────────────────────────────┼───────────────────┤
+│ COMPACTION                                           │                   │
+├──────────────────────────────────────────────────────┼───────────────────┤
+│   Vertical (100 items)                               │             17 µs │
+│   Horizontal (100 items)                             │             17 µs │
+│   Vertical (500 items)                               │            100 µs │
+│   Horizontal (500 items)                             │            101 µs │
+│   Vertical (1000 items)                              │            238 µs │
+│   Horizontal (1000 items)                            │            223 µs │
+│ MOVE                                                 │                   │
+├──────────────────────────────────────────────────────┼───────────────────┤
+│   Move Element (100 items)                           │             73 µs │
+│   Move Element (500 items)                           │           1.41 ms │
+│ SORT                                                 │                   │
+├──────────────────────────────────────────────────────┼───────────────────┤
+│   Sort Layout (100 items)                            │              6 µs │
+│   Sort Layout (500 items)                            │             43 µs │
+│   Sort Layout (1000 items)                           │            103 µs │
+│ OPTIMIZE                                             │                   │
+├──────────────────────────────────────────────────────┼───────────────────┤
+│   Defrag (100 items)                                 │           4.78 ms │
+│   Defrag (500 items)                                 │         849.88 ms │
+└──────────────────────────────────────────────────────┴───────────────────┘
 ```
 
 ## Contributing

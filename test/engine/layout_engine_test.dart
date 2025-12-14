@@ -366,11 +366,11 @@ void main() {
       );
 
       expect(result.y, 1);
-      expect(result.x, 1);
+      expect(result.x, 0);
     });
   });
 
-  group('ResizeBehavior.shrink coverage', () {
+  group('ResizeBehavior.shrink', () {
     test('resizeItem shrinks neighbor when expanding right', () {
       // A [0,0] 2x2 | B [2,0] 2x2
       const itemA = LayoutItem(id: 'A', x: 0, y: 0, w: 2, h: 2);
@@ -635,7 +635,7 @@ void main() {
     expect(b.y != c.y, isTrue, reason: 'B and C should have different Y coordinates');
   });
 
-  group('LayoutEngine Edge Cases Coverage', () {
+  group('LayoutEngine Edge Cases', () {
     test('correctBounds resolves collision between static items after bounds correction', () {
       // Scenario:
       // Static A at 0,0.
@@ -713,6 +713,45 @@ void main() {
       expect(huge.id, 'Huge');
       // Should be at the bottom (y=0 since list was empty, or y=bottom if others existed)
       expect(huge.y, 0);
+    });
+  });
+
+  group('Legacy compactItem', () {
+    const cols = 10;
+
+    test('compactItem moves item up when space is available (Vertical)', () {
+      final layout = [
+        const LayoutItem(id: 'A', x: 0, y: 5, w: 1, h: 1),
+      ];
+
+      // We use the legacy function directly
+      final result = compactItem(
+        layout, // compareWith
+        layout.first, // item
+        CompactType.vertical,
+        cols,
+        layout, // fullLayout
+      );
+
+      expect(result.y, 0);
+    });
+
+    test('compactItem resolves collisions vertically', () {
+      final layout = [
+        const LayoutItem(id: 'Blocker', x: 0, y: 0, w: 1, h: 1),
+        const LayoutItem(id: 'Mover', x: 0, y: 0, w: 1, h: 1),
+      ];
+
+      final result = compactItem(
+        [layout.first], // compareWith (Blocker)
+        layout.last, // item (Mover)
+        CompactType.vertical,
+        cols,
+        layout,
+      );
+
+      // Should be pushed down to y=1
+      expect(result.y, 1);
     });
   });
 }

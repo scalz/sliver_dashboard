@@ -88,7 +88,7 @@ class SliverDashboard extends StatefulWidget {
 }
 
 class _SliverDashboardState extends State<SliverDashboard> {
-  late final DashboardController _controller;
+  late DashboardController _controller;
 
   @override
   void didChangeDependencies() {

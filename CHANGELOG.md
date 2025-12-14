@@ -1,3 +1,15 @@
+## 0.9.0
+
+### New Feature
+- Added **Pluggable Compaction Strategies**.
+  - You can now implement your own compaction algorithms by extending `CompactorDelegate` and passing it to `controller.setCompactor()`.
+  - Useful for specific business rules (e.g., "Gravity towards center", "Fixed headers") or performance optimizations.
+- **Refactor:** The internal compaction logic now uses the Strategy Pattern (`VerticalCompactor`, `HorizontalCompactor`).
+- Huge performance improvements on compaction algorithm
+- Added benchmark.dart in tests and results to readme
+- Added tests
+- Updated README and example
+
 ## 0.8.0
 
 ### New Features

@@ -81,6 +81,7 @@ graph TD
     - **Decoupled:** Has no knowledge of Flutter widgets or the controller. Operates purely on the `LayoutItem` data model.
     - **Deterministic:** Given the same input layout and parameters, it always returns the same output layout.
     - **Cluster Logic:** Handles group movements by calculating a **Bounding Box** for selected items. The engine moves this virtual box against obstacles and applies the resulting delta to all items in the cluster.
+    - **Strategy Pattern:** Compaction logic is delegated to a `CompactorDelegate`. Default implementations (`VerticalCompactor`, `HorizontalCompactor`) are provided, but can be swapped at runtime.
 
 ### 3. The View Layer (Overlay & Slivers)
 
