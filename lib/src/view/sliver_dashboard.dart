@@ -132,6 +132,7 @@ class _SliverDashboardState extends State<SliverDashboard> {
           mainAxisSpacing: widget.mainAxisSpacing,
           crossAxisSpacing: widget.crossAxisSpacing,
           onPerformLayout: widget.onPerformLayout,
+          isEditing: isEditing,
           delegate: SliverChildBuilderDelegate(
             (context, index) {
               final item = _controller.layout.value[index];
@@ -198,6 +199,7 @@ class SliverDashboardLayout extends SliverMultiBoxAdaptorWidget {
     this.mainAxisSpacing = 8.0,
     this.crossAxisSpacing = 8.0,
     this.onPerformLayout,
+    this.isEditing = false,
     super.key,
   });
 
@@ -222,6 +224,9 @@ class SliverDashboardLayout extends SliverMultiBoxAdaptorWidget {
   /// Callback for testing/profiling layout performance.
   final LayoutProfileCallback? onPerformLayout;
 
+  /// Whether the dashboard is in edit mode.
+  final bool isEditing;
+
   @override
   RenderSliverDashboard createRenderObject(BuildContext context) {
     final element = context as SliverMultiBoxAdaptorElement;
@@ -234,6 +239,7 @@ class SliverDashboardLayout extends SliverMultiBoxAdaptorWidget {
       mainAxisSpacing: mainAxisSpacing,
       crossAxisSpacing: crossAxisSpacing,
       onPerformLayout: onPerformLayout,
+      isEditing: isEditing,
     );
   }
 
@@ -246,7 +252,8 @@ class SliverDashboardLayout extends SliverMultiBoxAdaptorWidget {
       ..slotAspectRatio = slotAspectRatio
       ..mainAxisSpacing = mainAxisSpacing
       ..crossAxisSpacing = crossAxisSpacing
-      ..onPerformLayout = onPerformLayout;
+      ..onPerformLayout = onPerformLayout
+      ..isEditing = isEditing;
   }
 }
 
@@ -262,19 +269,21 @@ class RenderSliverDashboard extends RenderSliverMultiBoxAdaptor {
     required double mainAxisSpacing,
     required double crossAxisSpacing,
     this.onPerformLayout,
+    bool isEditing = false,
   })  : _items = items,
         _slotCount = slotCount,
         _scrollDirection = scrollDirection,
         _slotAspectRatio = slotAspectRatio,
         _mainAxisSpacing = mainAxisSpacing,
-        _crossAxisSpacing = crossAxisSpacing;
+        _crossAxisSpacing = crossAxisSpacing,
+        _isEditing = isEditing;
 
   List<LayoutItem> _items;
 
   /// The list of layout items to display.
   List<LayoutItem> get items => _items;
   set items(List<LayoutItem> value) {
-    if (_items == value) return;
+    //if (_items == value) return;
     _items = value;
     markNeedsLayout();
   }
@@ -329,6 +338,16 @@ class RenderSliverDashboard extends RenderSliverMultiBoxAdaptor {
     markNeedsLayout();
   }
 
+  bool _isEditing;
+
+  /// Whether the dashboard is in edit mode.
+  bool get isEditing => _isEditing;
+  set isEditing(bool value) {
+    if (_isEditing == value) return;
+    _isEditing = value;
+    markNeedsLayout();
+  }
+
   /// Callback for testing/profiling layout performance.
   LayoutProfileCallback? onPerformLayout;
 
@@ -351,7 +370,15 @@ class RenderSliverDashboard extends RenderSliverMultiBoxAdaptor {
       childManager
         ..didStartLayout()
         ..didFinishLayout();
-      geometry = SliverGeometry.zero;
+
+      final emptyExtent = _isEditing ? 200.0 : 0.0;
+
+      geometry = SliverGeometry(
+        scrollExtent: emptyExtent,
+        paintExtent: calculatePaintOffset(constraints, from: 0, to: emptyExtent),
+        maxPaintExtent: emptyExtent,
+      );
+
       if (stopwatch != null) {
         stopwatch.stop();
         onPerformLayout?.call(stopwatch.elapsed);
@@ -408,7 +435,11 @@ class RenderSliverDashboard extends RenderSliverMultiBoxAdaptor {
       itemRects[i] = Rect.fromLTWH(x, y, w > 0 ? w : 0, h > 0 ? h : 0);
     }
 
-    // 4. Determine Visible Window (including cache)
+    if (_isEditing) {
+      maxScrollExtent += isVertical ? slotHeight : slotWidth;
+    }
+
+    // 4. Determine Visible Window
     final targetStart = constraints.scrollOffset + constraints.cacheOrigin;
     final targetEnd = constraints.scrollOffset + constraints.remainingCacheExtent;
 
@@ -427,13 +458,12 @@ class RenderSliverDashboard extends RenderSliverMultiBoxAdaptor {
       }
     }
 
-    // Handle case where no items are visible
     if (maxVisibleIndex < minVisibleIndex) {
       minVisibleIndex = 0;
       maxVisibleIndex = -1;
     }
 
-    // 6. Garbage Collection (Robust)
+    // 6. Garbage Collection
     var leadingGarbage = 0;
     var trailingGarbage = 0;
 
@@ -441,15 +471,11 @@ class RenderSliverDashboard extends RenderSliverMultiBoxAdaptor {
       final firstChildIndex = indexOf(firstChild!);
       final lastChildIndex = indexOf(lastChild!);
 
-      // Calculate leading garbage: items in [firstChildIndex, lastChildIndex] that are < minVisibleIndex
-      // The last index to remove is min(lastChildIndex, minVisibleIndex - 1)
       final int lastRemoveIndex = min(lastChildIndex, minVisibleIndex - 1);
       if (lastRemoveIndex >= firstChildIndex) {
         leadingGarbage = lastRemoveIndex - firstChildIndex + 1;
       }
 
-      // Calculate trailing garbage: items in [firstChildIndex, lastChildIndex] that are > maxVisibleIndex
-      // The first index to remove is max(firstChildIndex, maxVisibleIndex + 1)
       final int firstRemoveIndex = max(firstChildIndex, maxVisibleIndex + 1);
       if (firstRemoveIndex <= lastChildIndex) {
         trailingGarbage = lastChildIndex - firstRemoveIndex + 1;
@@ -458,7 +484,7 @@ class RenderSliverDashboard extends RenderSliverMultiBoxAdaptor {
       collectGarbage(leadingGarbage, trailingGarbage);
     }
 
-    // 7. Layout Children
+    // 7. Layout Children & Fill Gaps
 
     // Case A: No children exist yet (fresh start or after full GC).
     if (firstChild == null) {
@@ -467,50 +493,21 @@ class RenderSliverDashboard extends RenderSliverMultiBoxAdaptor {
         final initialOffset = isVertical ? rect.top : rect.left;
 
         if (addInitialChild(index: minVisibleIndex, layoutOffset: initialOffset)) {
-          // Important: Set the paintOffset for the initial child immediately
           final childParentData = firstChild?.parentData;
           if (childParentData is SliverDashboardParentData) {
             childParentData.paintOffset = Offset(rect.left, rect.top);
           }
-        } else {
-          minVisibleIndex = maxVisibleIndex + 1;
         }
       }
     }
 
-    // Case B: Fill trailing
-    var trailingChild = lastChild;
-    while (trailingChild != null && indexOf(trailingChild) < maxVisibleIndex) {
-      final index = indexOf(trailingChild) + 1;
-      final rect = itemRects[index];
-
-      final childConstraints = BoxConstraints.tightFor(
-        width: rect.width,
-        height: rect.height,
-      );
-
-      final newChild =
-          insertAndLayoutChild(childConstraints, after: trailingChild, parentUsesSize: true);
-      final childParentData = newChild?.parentData;
-      if (newChild == null || childParentData is! SliverDashboardParentData) break;
-
-      childParentData
-        ..layoutOffset = isVertical ? rect.top : rect.left
-        ..paintOffset = Offset(rect.left, rect.top);
-
-      trailingChild = newChild;
-    }
-
-    // Case C: Fill leading
+    // Case B: Fill Leading (Before firstChild)
+    // We do this before the main loop to ensure we start at minVisibleIndex
     var leadingChild = firstChild;
     while (leadingChild != null && indexOf(leadingChild) > minVisibleIndex) {
       final index = indexOf(leadingChild) - 1;
       final rect = itemRects[index];
-
-      final childConstraints = BoxConstraints.tightFor(
-        width: rect.width,
-        height: rect.height,
-      );
+      final childConstraints = BoxConstraints.tightFor(width: rect.width, height: rect.height);
 
       final newChild = insertAndLayoutLeadingChild(childConstraints, parentUsesSize: true);
       final childParentData = newChild?.parentData;
@@ -523,23 +520,60 @@ class RenderSliverDashboard extends RenderSliverMultiBoxAdaptor {
       leadingChild = newChild;
     }
 
-    // 8. Re-layout existing children
+    // Case C: Fill Gaps & Trailing (From firstChild onwards)
+    // This single loop handles both filling gaps in the middle and extending to the end.
     var child = firstChild;
     while (child != null) {
       final index = indexOf(child);
+
+      // 1. Layout current child
       final rect = itemRects[index];
-
       final childParentData = child.parentData;
-      if (childParentData is! SliverDashboardParentData) break;
-
-      childParentData
-        ..layoutOffset = isVertical ? rect.top : rect.left
-        ..paintOffset = Offset(rect.left, rect.top);
-
+      if (childParentData is SliverDashboardParentData) {
+        childParentData
+          ..layoutOffset = isVertical ? rect.top : rect.left
+          ..paintOffset = Offset(rect.left, rect.top);
+      }
       child.layout(
         BoxConstraints.tightFor(width: rect.width, height: rect.height),
         parentUsesSize: true,
       );
+
+      // 2. Check for Gap after this child
+      // If this is the last child, we check up to maxVisibleIndex.
+      // If there is a next child, we check up to its index.
+      final nextChild = childAfter(child);
+      final nextIndex = nextChild == null ? maxVisibleIndex + 1 : indexOf(nextChild);
+
+      if (nextIndex > index + 1) {
+        // Gap detected! Insert missing children.
+        var insertIndex = index + 1;
+        var previousChild = child;
+
+        while (insertIndex < nextIndex) {
+          final insertRect = itemRects[insertIndex];
+          final insertConstraints =
+              BoxConstraints.tightFor(width: insertRect.width, height: insertRect.height);
+
+          final newChild =
+              insertAndLayoutChild(insertConstraints, after: previousChild, parentUsesSize: true);
+
+          if (newChild == null) break; // Should not happen
+
+          final newParentData = newChild.parentData;
+          if (newParentData is SliverDashboardParentData) {
+            newParentData
+              ..layoutOffset = isVertical ? insertRect.top : insertRect.left
+              ..paintOffset = Offset(insertRect.left, insertRect.top);
+          }
+
+          previousChild = newChild;
+          insertIndex++;
+        }
+        // After filling the gap, the 'nextChild' (if it existed) is still valid
+        // and will be processed in the next iteration of the outer loop.
+        // If nextChild was null, we just filled up to maxVisibleIndex and we are done.
+      }
 
       child = childAfter(child);
     }
