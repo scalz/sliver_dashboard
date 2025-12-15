@@ -10,6 +10,8 @@
 - Added tests
 - Updated README and example
 
+- **Fix:** In free positioning mode (compaction: none), autoscroll of external draggable item.
+
 ## 0.8.0
 
 ### New Features
