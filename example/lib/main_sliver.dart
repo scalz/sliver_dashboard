@@ -1,5 +1,6 @@
 import 'dart:math';
 
+import 'package:example/pointer_dot_widget.dart';
 import 'package:flutter/material.dart';
 import 'package:sliver_dashboard/sliver_dashboard.dart';
 
@@ -464,6 +465,7 @@ class MyCard extends StatelessWidget {
       elevation: 2,
       color: color,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      clipBehavior: Clip.antiAlias,
       child: Stack(
         children: [
           Center(
@@ -481,6 +483,9 @@ class MyCard extends StatelessWidget {
               ],
             ),
           ),
+          if (!isEditing) ...[
+            Positioned.fill(child: PointerDotWidget(child: SizedBox())),
+          ],
           if (isEditing && !item.isStatic)
             Positioned(
               top: 4,
