@@ -643,61 +643,6 @@ class RenderSliverDashboard extends RenderSliverMultiBoxAdaptor {
     }
   }
 
-  @override
-  bool hitTestChildren(
-    SliverHitTestResult result, {
-    required double mainAxisPosition,
-    required double crossAxisPosition,
-  }) {
-    var child = lastChild;
-    final isVertical = scrollDirection == Axis.vertical;
-    while (child != null) {
-      final parentData = child.parentData;
-      if (parentData is! SliverDashboardParentData) break;
-
-      // The `mainAxisPosition` passed to hitTestChildren is relative to the
-      // sliver's paint origin, which is the top of the visible portion.
-      // We need to compare it against the child's position, which is also
-      // relative to that same origin.
-      final childMainAxisPosition = parentData.layoutOffset! - constraints.scrollOffset;
-      final childCrossAxisPosition =
-          isVertical ? parentData.paintOffset.dx : parentData.paintOffset.dy;
-
-      final childCrossAxisExtent = isVertical ? child.size.width : child.size.height;
-      final childMainAxisExtent = isVertical ? child.size.height : child.size.width;
-
-      if (mainAxisPosition >= childMainAxisPosition &&
-          mainAxisPosition < childMainAxisPosition + childMainAxisExtent &&
-          crossAxisPosition >= childCrossAxisPosition &&
-          crossAxisPosition < childCrossAxisPosition + childCrossAxisExtent) {
-        // The hit is within the child's bounds, so we now convert to the
-        // child's local coordinate system to perform the final hit test.
-        final localCrossAxis = crossAxisPosition - childCrossAxisPosition;
-        final localMainAxis = mainAxisPosition - childMainAxisPosition;
-
-        if (child.hitTest(
-          BoxHitTestResult.wrap(result),
-          position: isVertical
-              ? Offset(localCrossAxis, localMainAxis)
-              : Offset(localMainAxis, localCrossAxis),
-        )) {
-          // The hit was successful, so we have found our target.
-          // Add the child to the result and report the hit.
-          result.add(
-            SliverHitTestEntry(
-              this,
-              mainAxisPosition: mainAxisPosition,
-              crossAxisPosition: crossAxisPosition,
-            ),
-          );
-          return true;
-        }
-      }
-      child = childBefore(child);
-    }
-    return false;
-  }
-
   // override childMainAxisPosition, childCrossAxisPosition and applyPaintTransform
   // to ensure consistency with the paint logic and Flutter's tooltips alignment.
   @override
