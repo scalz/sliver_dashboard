@@ -211,11 +211,11 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
     return DashboardControllerProvider(
       controller: widget.controller,
       child: DragTarget<T>(
-        onWillAcceptWithDetails: (DragTargetDetails<T> details) {
+        onWillAcceptWithDetails: (details) {
           _updatePlaceholderPosition(details.offset);
           return true;
         },
-        onMove: (DragTargetDetails<T> details) {
+        onMove: (details) {
           _lastGlobalPosition = details.offset;
           _updatePlaceholderPosition(details.offset);
           _handleAutoScroll(details.offset);
@@ -233,7 +233,7 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
             _lastValidPlaceholder = null;
           });
         },
-        onAcceptWithDetails: (DragTargetDetails<T> details) async {
+        onAcceptWithDetails: (details) async {
           _leaveTimer?.cancel(); // Cancel any pending hide
           _stopScrollTimer();
           _lastGlobalPosition = null;

@@ -52,7 +52,7 @@ class _DotPainter extends CustomPainter {
 
   _DotPainter(this.position)
     : _paint = Paint()
-        ..color = Colors.blue.withOpacity(0.5)
+        ..color = Colors.blue.withValues(alpha: 0.5)
         ..style = PaintingStyle.fill;
 
   @override

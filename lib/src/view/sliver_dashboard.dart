@@ -152,7 +152,7 @@ class _SliverDashboardState extends State<SliverDashboard> {
             },
             childCount: _controller.layout.value.length,
             // Allows Flutter to track a reordered item and preserve its State (and thus our cache).
-            findChildIndexCallback: (Key key) {
+            findChildIndexCallback: (key) {
               if (key is ValueKey<String>) {
                 final layout = _controller.layout.value;
                 for (var i = 0; i < layout.length; i++) {

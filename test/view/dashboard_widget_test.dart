@@ -62,7 +62,7 @@ void main() {
       );
     }
 
-    testWidgets('renders items from the controller', (WidgetTester tester) async {
+    testWidgets('renders items from the controller', (tester) async {
       await tester.pumpWidget(buildTestableWidget(controller));
       await tester.pumpAndSettle();
 
@@ -71,7 +71,7 @@ void main() {
       expect(find.text('static'), findsOneWidget);
     });
 
-    testWidgets('onInteractionStart callback is fired on mobile', (WidgetTester tester) async {
+    testWidgets('onInteractionStart callback is fired on mobile', (tester) async {
       final originalPlatform = debugDefaultTargetPlatformOverride;
       debugDefaultTargetPlatformOverride = TargetPlatform.android;
       try {
@@ -96,7 +96,7 @@ void main() {
       }
     });
 
-    testWidgets('tapping a static item does not start an operation', (WidgetTester tester) async {
+    testWidgets('tapping a static item does not start an operation', (tester) async {
       controller.toggleEditing();
       await tester.pumpWidget(buildTestableWidget(controller));
       await tester.pumpAndSettle();
@@ -109,7 +109,7 @@ void main() {
       expect(controller.internal.activeItem.value, isNull);
     });
 
-    testWidgets('dragging from center starts a drag operation', (WidgetTester tester) async {
+    testWidgets('dragging from center starts a drag operation', (tester) async {
       final originalPlatform = debugDefaultTargetPlatformOverride;
       debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
       try {
@@ -136,7 +136,7 @@ void main() {
     });
 
     testWidgets('dragging from bottom-right corner starts a resize operation', (
-      WidgetTester tester,
+      tester,
     ) async {
       final originalPlatform = debugDefaultTargetPlatformOverride;
       debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
@@ -175,7 +175,7 @@ void main() {
       }
     });
 
-    testWidgets('renders and drags correctly in horizontal mode', (WidgetTester tester) async {
+    testWidgets('renders and drags correctly in horizontal mode', (tester) async {
       final originalPlatform = debugDefaultTargetPlatformOverride;
       debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
       try {
@@ -211,7 +211,7 @@ void main() {
       }
     });
 
-    testWidgets('onPointerCancel gracefully ends a drag operation', (WidgetTester tester) async {
+    testWidgets('onPointerCancel gracefully ends a drag operation', (tester) async {
       final originalPlatform = debugDefaultTargetPlatformOverride;
       debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
       try {
@@ -284,7 +284,7 @@ void main() {
     }
 
     testWidgets('onLeave hides placeholder when external draggable leaves the target', (
-      WidgetTester tester,
+      tester,
     ) async {
       const draggable = Draggable<String>(
         data: 'new_item',
@@ -326,7 +326,7 @@ void main() {
       await tester.pumpAndSettle();
     });
 
-    testWidgets('hides placeholder when onDrop returns null', (WidgetTester tester) async {
+    testWidgets('hides placeholder when onDrop returns null', (tester) async {
       const draggable = Draggable<String>(
         data: 'new_item',
         feedback: SizedBox(width: 20, height: 20, child: Text('Drag')),
