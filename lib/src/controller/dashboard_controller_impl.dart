@@ -1,4 +1,5 @@
 // ignore_for_files: specify_nonobvious_property_types
+import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
@@ -12,6 +13,15 @@ import 'package:sliver_dashboard/src/view/guidance/dashboard_guidance.dart';
 import 'package:sliver_dashboard/src/view/resize_handle.dart';
 import 'package:state_beacon/state_beacon.dart';
 
+/// Data payload for a scroll request.
+typedef ScrollRequest = ({
+  String itemId,
+  double alignment,
+  Duration duration,
+  Curve curve,
+  Completer<void> completer
+});
+
 /// The concrete implementation of [DashboardController].
 /// Manages the state and interactions of the dashboard.
 ///
@@ -19,7 +29,7 @@ import 'package:state_beacon/state_beacon.dart';
 /// It uses `state_beacon` for reactive state management, ensuring that UI
 /// updates are efficient and predictable.
 @internal
-class DashboardControllerImpl implements DashboardController {
+class DashboardControllerImpl with BeaconController implements DashboardController {
   /// Creates a new [DashboardControllerImpl].
   DashboardControllerImpl({
     List<LayoutItem> initialLayout = const [],
@@ -46,42 +56,42 @@ class DashboardControllerImpl implements DashboardController {
   // --- BEACONS (Public via Interface) ---
 
   @override
-  final handleColor = Beacon.writable<Color?>(null);
+  late final handleColor = B.writable<Color?>(null);
 
   @override
-  final layout = Beacon.writable<List<LayoutItem>>([]);
+  late final layout = B.writable<List<LayoutItem>>([]);
 
   @override
-  final scrollDirection = Beacon.writable(Axis.vertical);
+  late final scrollDirection = B.writable(Axis.vertical);
 
   @override
-  final isEditing = Beacon.writable<bool>(false);
+  late final isEditing = B.writable<bool>(false);
 
   @override
-  final slotCount = Beacon.writable<int>(8);
+  late final slotCount = B.writable<int>(8);
 
   @override
-  final preventCollision = Beacon.writable<bool>(true);
+  late final preventCollision = B.writable<bool>(true);
 
   @override
-  final compactionType = Beacon.writable<engine.CompactType>(engine.CompactType.vertical);
+  late final compactionType = B.writable<engine.CompactType>(engine.CompactType.vertical);
 
   // Internal delegate reference
   engine.CompactorDelegate _compactor = const engine.VerticalCompactor();
 
   @override
-  final resizeHandleSide = Beacon.writable<double>(20);
+  late final resizeHandleSide = B.writable<double>(20);
 
   @override
-  final resizeBehavior = Beacon.writable<engine.ResizeBehavior>(
+  late final resizeBehavior = B.writable<engine.ResizeBehavior>(
     engine.ResizeBehavior.push,
   );
 
   @override
-  final selectedItemIds = Beacon.writable<Set<String>>({});
+  late final selectedItemIds = B.writable<Set<String>>({});
 
   // Internal state to track if we are actually moving items vs just selecting
-  final _isDraggingState = Beacon.writable(false);
+  late final _isDraggingState = B.writable(false);
 
   @override
   ReadableBeacon<bool> get isDragging => _isDraggingState;
@@ -91,7 +101,7 @@ class DashboardControllerImpl implements DashboardController {
   String? _pivotItemId;
 
   @override
-  late final ReadableBeacon<String?> activeItemId = Beacon.derived(() {
+  late final ReadableBeacon<String?> activeItemId = B.derived(() {
     // If dragging, the pivot is the active item.
     // If not dragging, the first selected item is "active" (for focus/properties).
     if (_isDraggingState.value) return _pivotItemId;
@@ -100,31 +110,35 @@ class DashboardControllerImpl implements DashboardController {
 
   // --- INTERNAL STATE (Hidden from Interface) ---
 
+  final _scrollToItemController = StreamController<ScrollRequest>.broadcast();
+
   /// Internal cache to store layouts for specific slot counts.
   /// Used to restore the layout when switching back to a previous breakpoint.
   final Map<int, List<LayoutItem>> _layoutsBySlotCount = {};
 
   /// Temporary placeholder item in the layout.
   @visibleForTesting
-  final placeholder = Beacon.writable<LayoutItem?>(null);
+  late final placeholder = B.writable<LayoutItem?>(null);
 
   @override
   LayoutItem? get currentDragPlaceholder => placeholder.value;
 
   /// A reactive property that holds the pixel offset for the actively dragged item,
   /// enabling a smooth visual drag effect.
-  final dragOffset = Beacon.writable<Offset>(Offset.zero);
+  late final dragOffset = B.writable<Offset>(Offset.zero);
 
   /// Indicates if the current interaction is a resize operation.
-  final isResizing = Beacon.writable(false);
+  late final isResizing = B.writable(false);
 
   /// Internal state to track the item being dragged or resized.
   @visibleForTesting
-  final activeItem = Beacon.writable<LayoutItem?>(null);
+  late final activeItem = B.writable<LayoutItem?>(null);
 
   /// Internal state to store the layout at the beginning of an operation.
   @visibleForTesting
-  final originalLayoutOnStart = Beacon.writable<List<LayoutItem>>([]);
+  late final originalLayoutOnStart = B.writable<List<LayoutItem>>([]);
+
+  Stream<ScrollRequest> get scrollToItemRequest => _scrollToItemController.stream;
 
   // --- PUBLIC METHODS IMPLEMENTATION ---
 
@@ -408,21 +422,8 @@ class DashboardControllerImpl implements DashboardController {
 
   @override
   void dispose() {
-    layout.dispose();
-    isEditing.dispose();
-    slotCount.dispose();
-    preventCollision.dispose();
-    compactionType.dispose();
-    activeItem.dispose();
-    placeholder.dispose();
-    resizeBehavior.dispose();
-    dragOffset.dispose();
-    originalLayoutOnStart.dispose();
-    handleColor.dispose();
-    scrollDirection.dispose();
-    isResizing.dispose();
-    resizeHandleSide.dispose();
-    activeItemId.dispose();
+    _scrollToItemController.close().ignore();
+    super.dispose();
   }
 
   // --- INTERNAL METHODS (Not in Interface) ---
@@ -885,5 +886,32 @@ class DashboardControllerImpl implements DashboardController {
       case engine.CompactType.none:
         return const engine.NoCompactor();
     }
+  }
+
+  @override
+  Future<void> scrollToItem(
+    String itemId, {
+    double alignment = 0.0,
+    Duration duration = const Duration(milliseconds: 300),
+    Curve curve = Curves.easeInOut,
+  }) async {
+    if (!layout.value.any((i) => i.id == itemId)) {
+      debugPrint('SliverDashboard: Cannot scroll to item $itemId (not found)');
+      return;
+    }
+
+    final completer = Completer<void>();
+
+    _scrollToItemController.add(
+      (
+        itemId: itemId,
+        alignment: alignment,
+        duration: duration,
+        curve: curve,
+        completer: completer,
+      ),
+    );
+
+    return completer.future;
   }
 }

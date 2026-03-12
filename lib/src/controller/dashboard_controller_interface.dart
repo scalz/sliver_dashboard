@@ -205,6 +205,19 @@ abstract class DashboardController {
   /// [jsonLayout] is the list of maps (e.g. from JSON decode).
   void importLayout(List<dynamic> jsonLayout);
 
+  /// Scrolls the dashboard to make the item with [itemId] visible.
+  ///
+  /// [alignment] : 0.0 aligns the item to the start of the viewport,
+  /// 1.0 aligns it to the end, and 0.5 centers it.
+  /// [duration] : Animation duration.
+  /// [curve] : Animation curve.
+  Future<void> scrollToItem(
+    String itemId, {
+    double alignment = 0.0,
+    Duration duration = const Duration(milliseconds: 300),
+    Curve curve = Curves.easeInOut,
+  });
+
   /// Disposes all the beacons to prevent memory leaks.
   void dispose();
 }

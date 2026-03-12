@@ -864,8 +864,41 @@ void main() {
       expect(clampedItem.y, 3, reason: 'Should clamp Y to slotCount - h');
     });
 
-    test('dispose() disposes all beacons', () {
+    test('dispose() disposes all beacons', () async {
+      // Although BeaconController handles disposal automatically via B.writable,
+      // we explicitly test every beacon here. This acts as a strict anti-regression safeguard
+      // in case a contributor accidentally initializes a state with Beacon.writable()
+      // instead of B.writable(), which would bypass the mixin and cause a silent memory leak.
+
+      // Explicitly wake up all late beacons
+      controller
+        ..layout
+        ..isEditing
+        ..slotCount
+        ..preventCollision
+        ..compactionType
+        ..activeItem
+        ..placeholder
+        ..resizeBehavior
+        ..dragOffset
+        ..originalLayoutOnStart
+        ..handleColor
+        ..scrollDirection
+        ..isResizing
+        ..resizeHandleSide
+        ..activeItemId
+        ..selectedItemIds
+        ..isDragging;
+
+      final streamClosedExpectation = expectLater(
+        controller.internal.scrollToItemRequest,
+        emitsDone,
+      );
+
       controller.dispose();
+
+      await streamClosedExpectation;
+
       expect(controller.layout.isDisposed, isTrue);
       expect(controller.isEditing.isDisposed, isTrue);
       expect(controller.slotCount.isDisposed, isTrue);

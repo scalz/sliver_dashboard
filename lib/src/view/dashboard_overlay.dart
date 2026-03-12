@@ -5,6 +5,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
+import 'package:sliver_dashboard/src/controller/dashboard_controller_impl.dart'
+    show DashboardControllerImpl, ScrollRequest;
 import 'package:sliver_dashboard/src/controller/dashboard_controller_interface.dart';
 import 'package:sliver_dashboard/src/controller/dashboard_controller_provider.dart';
 import 'package:sliver_dashboard/src/controller/layout_metrics.dart';
@@ -154,6 +156,7 @@ class DashboardOverlay<T extends Object> extends StatefulWidget {
 
 class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>> {
   final GlobalKey _overlayStackKey = GlobalKey();
+  StreamSubscription<ScrollRequest>? _scrollSubscription;
 
   // State for tracking the active drag/resize operation
   String? _activeItemId;
@@ -197,7 +200,95 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
       defaultTargetPlatform == TargetPlatform.iOS;
 
   @override
+  void initState() {
+    super.initState();
+    _setupScrollListener();
+  }
+
+  @override
+  void didUpdateWidget(covariant DashboardOverlay<T> oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.controller != oldWidget.controller) {
+      _scrollSubscription?.cancel().ignore();
+      _setupScrollListener();
+    }
+  }
+
+  void _setupScrollListener() {
+    if (widget.controller is DashboardControllerImpl) {
+      _scrollSubscription = (widget.controller as DashboardControllerImpl)
+          .scrollToItemRequest
+          .listen(_handleScrollRequest);
+    }
+  }
+
+  Future<void> _handleScrollRequest(ScrollRequest request) async {
+    final renderSliver = _findRenderSliver();
+    if (renderSliver == null) {
+      if (!request.completer.isCompleted) request.completer.complete();
+      return;
+    }
+
+    final item = widget.controller.layout.value.firstWhereOrNull((i) => i.id == request.itemId);
+    if (item == null) {
+      if (!request.completer.isCompleted) request.completer.complete();
+      return;
+    }
+
+    final metrics = _getMetricsFromSliver(renderSliver);
+
+    // 1. Calculate Item Position relative to the Sliver start
+    final double itemStart;
+    final double itemSize;
+
+    if (metrics.scrollDirection == Axis.vertical) {
+      itemStart = item.y * (metrics.slotHeight + metrics.mainAxisSpacing) + metrics.padding.top;
+      itemSize = item.h * (metrics.slotHeight + metrics.mainAxisSpacing) - metrics.mainAxisSpacing;
+    } else {
+      itemStart = item.x * (metrics.slotWidth + metrics.mainAxisSpacing) + metrics.padding.left;
+      itemSize = item.w * (metrics.slotWidth + metrics.mainAxisSpacing) - metrics.mainAxisSpacing;
+    }
+
+    // 2. Calculate Absolute Scroll Position
+    // precedingScrollExtent is the space taken by slivers BEFORE the dashboard (e.g. AppBar)
+    final sliverStart = renderSliver.constraints.precedingScrollExtent;
+    final targetOffset = sliverStart + itemStart;
+
+    // 3. Apply Alignment
+    // alignment 0.0 = Top of item at Top of viewport
+    // alignment 1.0 = Bottom of item at Bottom of viewport
+    final viewportSize = widget.scrollController.position.viewportDimension;
+
+    // We want: targetOffset - (viewportSize * alignment) + (itemSize * alignment)
+    // Example: Align 0.5 (Center)
+    // Scroll to: ItemTop - (ViewHeight/2) + (ItemHeight/2)
+    final alignedOffset =
+        targetOffset - (viewportSize * request.alignment) + (itemSize * request.alignment);
+
+    // 4. Clamp
+    final clampedOffset = alignedOffset.clamp(
+      widget.scrollController.position.minScrollExtent,
+      widget.scrollController.position.maxScrollExtent,
+    );
+
+    if (request.duration == Duration.zero) {
+      widget.scrollController.jumpTo(clampedOffset);
+    } else {
+      await widget.scrollController.animateTo(
+        clampedOffset,
+        duration: request.duration,
+        curve: request.curve,
+      );
+    }
+
+    if (!request.completer.isCompleted) {
+      request.completer.complete();
+    }
+  }
+
+  @override
   void dispose() {
+    _scrollSubscription?.cancel().ignore();
     _scrollTimer?.cancel();
     _leaveTimer?.cancel();
     _isHoveringTrash.dispose();

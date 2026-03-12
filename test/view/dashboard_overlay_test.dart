@@ -849,5 +849,57 @@ void main() {
       // Should not crash, and state should be reset
       expect(controller.isDragging.value, isFalse);
     });
+
+    testWidgets('scrollToItem scrolls to the exact mathematically correct offset', (tester) async {
+      final scrollController = ScrollController();
+
+      // Setup tall list
+      final items = List.generate(20, (i) => LayoutItem(id: '$i', x: 0, y: i, w: 1, h: 1));
+      controller.layout.value = items;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: DashboardOverlay(
+              controller: controller,
+              scrollController: scrollController,
+              itemBuilder: (context, item) => const SizedBox(),
+              child: CustomScrollView(
+                controller: scrollController,
+                slivers: [
+                  SliverDashboard(
+                    itemBuilder: (context, item) => const SizedBox(),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+
+      // Start scroll
+      final scrollFuture = controller.scrollToItem(
+        '15',
+        duration: const Duration(milliseconds: 100),
+      );
+
+      // advance time until the end of scrolling
+      await tester.pumpAndSettle();
+
+      // make sure Future is done
+      await scrollFuture;
+
+      // - Screen width = 800.0
+      // - crossAxisSpacing = 8.0. For 4 slots, 3 spaces (24.0)
+      // - slotWidth = (800 - 24) / 4 = 194.0
+      // - slotHeight = 194.0 (aspect ratio 1.0)
+      // - Row height = 194.0 + 8.0 (mainAxisSpacing) = 202.0
+      // - Item offset 15 (y=15) = 15 * 202.0 = 3030.0
+      expect(
+        scrollController.offset,
+        closeTo(3030.0, 0.1), // closeTo to avoid rounding errors
+        reason: 'The scroll offset should exactly match the calculated position of item 15',
+      );
+    });
   });
 }

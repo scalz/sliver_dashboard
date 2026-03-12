@@ -48,6 +48,7 @@ Perfect for analytics dashboards, IoT control panels, project management tools, 
 - [API Showcase](#api-showcase)
   - [Controlling Edit Mode](#controlling-edit-mode)
   - [Adding and Removing Items](#adding-and-removing-items)
+  - [Programmatic Scrolling](#programmatic-scrolling)
   - [Scroll direction](#scroll-direction)
   - [Allowing free positioning](#allowing-free-positioning)
   - [Dragging From Outside](#dragging-from-outside)
@@ -233,6 +234,28 @@ void addNewItem() {
 void deleteItem(String id) {
   controller.removeItem(id);
 }
+```
+
+### Programmatic Scrolling
+
+You can programmatically scroll the dashboard to make a specific item visible.
+The method returns a `Future` that completes only when the scroll animation is fully finished, allowing you to chain actions (like highlighting the item after arrival).
+
+```dart
+// Scroll to an item by its ID
+
+// Smooth animated scroll
+await controller.scrollToItem(
+  'item_15',
+  alignment: 0.5, // 0.0 = top edge, 0.5 = center, 1.0 = bottom edge
+  duration: const Duration(milliseconds: 500),
+);
+
+// Instant jump (Perfect for large grids or search results)
+await controller.scrollToItem(
+  'item_1200',
+  duration: Duration.zero,
+);
 ```
 
 ### Scroll direction
