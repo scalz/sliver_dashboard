@@ -1,3 +1,16 @@
+## 0.9.1
+
+### New Feature
+- **Programmatic Scrolling**: Added `scrollToItem` to `DashboardController`.
+  - Supports custom `alignment` (0.0 to 1.0), `duration`, and `curve`.
+  - Returns a `Future<void>` that completes only when the scroll animation is finished.
+  - Automatically uses `jumpTo` instead of `animateTo` when `duration` is set to `Duration.zero`.
+
+- **Fix:** Invalid pointer location in items. (thx @hpoul)
+- Update state_beacon
+- Tests
+ 
+
 ## 0.9.0
 
 ### New Feature
