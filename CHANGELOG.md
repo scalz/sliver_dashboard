@@ -22,7 +22,7 @@
 
 - **Lints**: Maintain backward compatibility with older Flutter versions by temporarily keeping `CustomScrollView`'s `cacheExtent`. This deprecation is ignored locally for now and will be removed once Flutter version will stop to support it.
 
-**No breaking changes in this release.**
+**No breaking change in this release.**
 
 ## 0.9.1
 
