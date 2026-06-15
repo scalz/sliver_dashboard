@@ -248,6 +248,8 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
   // Flag for defering selection to PointerUp if we clic on an already selected item
   bool _shouldClearSelectionOnUp = false;
 
+  bool _isProcessingPointerUp = false;
+
   bool get _isMobile =>
       defaultTargetPlatform == TargetPlatform.android ||
       defaultTargetPlatform == TargetPlatform.iOS;
@@ -928,69 +930,75 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
   }
 
   Future<void> _onPointerUp() async {
-    _stopScrollTimer();
-    _trashTimer?.cancel();
+    if (_isProcessingPointerUp) return;
+    _isProcessingPointerUp = true;
 
-    // Clic management for group
-    if (_shouldClearSelectionOnUp && _activeItemId != null) {
-      // User clicked on an item without moving (without Shift).
-      // Keep only this item selected.
-      widget.controller.toggleSelection(_activeItemId!, multi: false);
-      _shouldClearSelectionOnUp = false;
-    }
+    try {
+      _stopScrollTimer();
+      _trashTimer?.cancel();
 
-    if (_activeItemId == null) return;
-
-    final currentItem =
-        widget.controller.layout.value.firstWhereOrNull((i) => i.id == _activeItemId) ??
-            _activeItemInitialLayout;
-
-    if (currentItem == null) {
-      _resetOperationState();
-      return;
-    }
-
-    if (_activeResizeHandle != null) {
-      widget.controller.internal.onResizeEnd(_activeItemId!);
-      widget.onItemResizeEnd?.call(currentItem);
-    } else {
-      if (widget.trashBuilder != null && _isTrashActive.value) {
-        // Identify all items to delete (Pivot + Selection)
-        final selectedIds = widget.controller.selectedItemIds.value;
-
-        // Safety: If selection is empty (rare edge case), take the current dragged item
-        final idsToDelete = selectedIds.isEmpty ? {currentItem.id} : selectedIds;
-
-        // Retrieve LayoutItem objects
-        final itemsToDelete =
-            widget.controller.layout.value.where((i) => idsToDelete.contains(i.id)).toList();
-
-        // Fallback safety
-        if (itemsToDelete.isEmpty) {
-          itemsToDelete.add(currentItem);
-        }
-
-        var shouldDelete = true;
-
-        if (widget.onWillDelete != null) {
-          shouldDelete = await widget.onWillDelete!(itemsToDelete);
-        }
-        if (shouldDelete) {
-          widget.controller.removeItems(itemsToDelete.map((e) => e.id).toList());
-
-          // Notify for each deleted item
-          widget.onItemsDeleted?.call(itemsToDelete);
-
-          widget.controller.internal.onDragEnd(currentItem.id);
-        } else {
-          widget.controller.internal.onDragEnd(currentItem.id);
-        }
-      } else {
-        widget.controller.internal.onDragEnd(_activeItemId!);
+      // Clic management for group
+      if (_shouldClearSelectionOnUp && _activeItemId != null) {
+        // User clicked on an item without moving (without Shift).
+        // Keep only this item selected.
+        widget.controller.toggleSelection(_activeItemId!, multi: false);
+        _shouldClearSelectionOnUp = false;
       }
-      widget.onItemDragEnd?.call(currentItem);
+
+      if (_activeItemId == null) return;
+
+      final currentItem =
+          widget.controller.layout.value.firstWhereOrNull((i) => i.id == _activeItemId) ??
+              _activeItemInitialLayout;
+
+      if (currentItem == null) {
+        return;
+      }
+
+      if (_activeResizeHandle != null) {
+        widget.controller.internal.onResizeEnd(_activeItemId!);
+        widget.onItemResizeEnd?.call(currentItem);
+      } else {
+        if (widget.trashBuilder != null && _isTrashActive.value) {
+          // Identify all items to delete (Pivot + Selection)
+          final selectedIds = widget.controller.selectedItemIds.value;
+
+          // Safety: If selection is empty (rare edge case), take the current dragged item
+          final idsToDelete = selectedIds.isEmpty ? {currentItem.id} : selectedIds;
+
+          // Retrieve LayoutItem objects
+          final itemsToDelete =
+              widget.controller.layout.value.where((i) => idsToDelete.contains(i.id)).toList();
+
+          // Fallback safety
+          if (itemsToDelete.isEmpty) {
+            itemsToDelete.add(currentItem);
+          }
+
+          var shouldDelete = true;
+
+          if (widget.onWillDelete != null) {
+            shouldDelete = await widget.onWillDelete!(itemsToDelete);
+          }
+          if (shouldDelete) {
+            widget.controller.removeItems(itemsToDelete.map((e) => e.id).toList());
+
+            // Notify for each deleted item
+            widget.onItemsDeleted?.call(itemsToDelete);
+
+            widget.controller.internal.onDragEnd(currentItem.id);
+          } else {
+            widget.controller.internal.onDragEnd(currentItem.id);
+          }
+        } else {
+          widget.controller.internal.onDragEnd(_activeItemId!);
+        }
+        widget.onItemDragEnd?.call(currentItem);
+      }
+    } finally {
+      _resetOperationState();
+      _isProcessingPointerUp = false;
     }
-    _resetOperationState();
   }
 
   void _resetOperationState() {
