@@ -750,9 +750,11 @@ Layout correctBounds(Layout layout, int cols) {
       currentL = currentL.copyWith(x: cols - currentL.w);
     }
     if (currentL.x < 0) {
-      currentL = currentL.copyWith(x: 0, w: cols);
+      currentL = currentL.copyWith(x: 0, w: min(currentL.w, cols));
     }
-
+    if (currentL.y < 0) {
+      currentL = currentL.copyWith(y: 0);
+    }
     if (!currentL.isStatic) {
       collidesWith.add(currentL);
     } else {

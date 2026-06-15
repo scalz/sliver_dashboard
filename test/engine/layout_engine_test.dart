@@ -175,21 +175,28 @@ void main() {
       expect(corrected.first.w, 4);
     });
 
-    test('should correct item starting before left edge', () {
-      // This scenario is tricky. If an item is at x: -2, w: 4,
-      // correcting it to x: 0 would make it x:0, w:4.
-      // The current implementation corrects it to x:0, w:10, which is aggressive.
-      // Let's test the current behavior.
+    test('should correct item starting before left edge by clamping width non-destructively', () {
       final layout = [const LayoutItem(id: 'a', x: -2, y: 0, w: 4, h: 1)];
       final corrected = correctBounds(layout, cols);
+
+      // Expected behavior: position x is corrected to 0,
+      // and width is preserved as 4 instead of aggressively blown up to 10.
       expect(corrected.first.x, 0);
-      expect(corrected.first.w, 10); // As per current implementation
+      expect(corrected.first.w, 4);
     });
 
     test('should not change items within bounds', () {
       final layout = [const LayoutItem(id: 'a', x: 0, y: 0, w: 10, h: 1)];
       final corrected = correctBounds(layout, cols);
       expect(corrected, equals(layout));
+    });
+    test('should correct item with negative y coordinate to y = 0', () {
+      final layout = [const LayoutItem(id: 'a', x: 0, y: -1, w: 2, h: 2)];
+      final corrected = correctBounds(layout, cols);
+
+      // Expected behavior: y coordinate is sanitized and clamped to 0
+      expect(corrected.first.y, 0);
+      expect(corrected.first.x, 0);
     });
   });
 
