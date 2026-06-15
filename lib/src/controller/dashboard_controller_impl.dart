@@ -112,6 +112,9 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     return selectedItemIds.value.firstOrNull;
   });
 
+  @override
+  late final allowAutoShrink = B.writable<bool>(false);
+
   // --- INTERNAL STATE (Hidden from Interface) ---
 
   final _scrollToItemController = StreamController<ScrollRequest>.broadcast();
@@ -616,6 +619,7 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
       compactType: compactionType.value,
       preventCollision: preventCollision.value,
       policy: policy,
+      allowAutoShrink: allowAutoShrink.value,
     );
 
     layout.value = newLayout;

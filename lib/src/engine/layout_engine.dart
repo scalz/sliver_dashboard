@@ -937,6 +937,36 @@ Layout? _tryShrinkCollisions(
   return layoutMap.values.toList();
 }
 
+/// A private helper function that attempts to resolve move collisions by shrinking
+/// the colliding items along the vertical axis to clear vertical overlaps.
+Layout? _tryShrinkMoveCollisions(
+  Layout layout,
+  LayoutItem movingItem,
+  List<LayoutItem> collisions,
+) {
+  final layoutMap = {for (final item in layout) item.id: item};
+
+  for (final collision in collisions) {
+    if (collision.isStatic) return null; // Statics cannot shrink
+
+    // A is the movingItem, B is the collision.
+    // We attempt to shrink B vertically to avoid overlaps if possible.
+    final overlapY = (movingItem.y + movingItem.h) - collision.y;
+    final newCollisionHeight = collision.h - overlapY;
+
+    if (newCollisionHeight >= collision.minH) {
+      layoutMap[collision.id] = collision.copyWith(
+        y: collision.y + overlapY,
+        h: newCollisionHeight,
+      );
+    } else {
+      return null; // Shrink failed, minHeight limit violated
+    }
+  }
+
+  return layoutMap.values.toList();
+}
+
 /// Resize item. Implements the "try shrink, fallback to push" logic.
 Layout resizeItem(
   Layout layout,
@@ -1219,6 +1249,7 @@ Layout moveCluster(
   required CompactType compactType,
   bool preventCollision = false,
   DashboardPolicy? policy,
+  bool allowAutoShrink = false,
 }) {
   if (clusterIds.isEmpty) return layout;
 
@@ -1235,10 +1266,23 @@ Layout moveCluster(
   final bboxId = cluster.length == 1 ? cluster.first.id : 'cluster_bbox';
   final bbox = calculateBoundingBox(cluster, id: bboxId);
 
+  // Create virtual moved BBox to calculate pre-collisions
+  final targetBBox = bbox.copyWith(x: targetX, y: targetY);
+  final directCollisions = getAllCollisions(obstacles, targetBBox);
+
   // 3. Move the Bounding Box against Obstacles
   // We treat the bbox as a single item being moved in a layout consisting of obstacles.
   // We add the bbox to the obstacles list for the moveElement function to work.
-  final layoutForMove = [...obstacles, bbox];
+  var layoutForMove = [...obstacles, bbox];
+
+  // If auto-shrink is enabled and collisions are detected with dynamic items,
+  // we first try to dynamically contract the size of neighbors to avoid massive layout shifts.
+  if (allowAutoShrink && directCollisions.isNotEmpty && !directCollisions.any((i) => i.isStatic)) {
+    final shrunk = _tryShrinkMoveCollisions(layoutForMove, targetBBox, directCollisions);
+    if (shrunk != null) {
+      layoutForMove = shrunk;
+    }
+  }
 
   final resultLayoutWithBBox = moveElement(
     layoutForMove,

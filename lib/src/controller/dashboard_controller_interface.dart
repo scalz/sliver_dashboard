@@ -92,6 +92,9 @@ abstract class DashboardController {
   /// Returns null if no item is selected/active.
   ReadableBeacon<String?> get activeItemId;
 
+  /// Whether moving items can dynamically shrink their neighbors to avoid pushes.
+  WritableBeacon<bool> get allowAutoShrink;
+
   // --- PUBLIC PROPERTIES ---
 
   /// An optional callback that is fired when a user starts a drag or resize
