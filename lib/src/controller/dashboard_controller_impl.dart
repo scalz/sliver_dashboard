@@ -255,9 +255,9 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     compactionType.value = type;
     switch (type) {
       case engine.CompactType.vertical:
-        _compactor = const engine.VerticalCompactor();
+        _compactor = const engine.FastVerticalCompactor();
       case engine.CompactType.horizontal:
-        _compactor = const engine.HorizontalCompactor();
+        _compactor = const engine.FastHorizontalCompactor();
       case engine.CompactType.none:
         _compactor = const engine.NoCompactor();
     }
@@ -850,9 +850,9 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
   engine.CompactorDelegate _getTempDelegate(engine.CompactType type) {
     switch (type) {
       case engine.CompactType.vertical:
-        return const engine.VerticalCompactor();
+        return const engine.FastVerticalCompactor();
       case engine.CompactType.horizontal:
-        return const engine.HorizontalCompactor();
+        return const engine.FastHorizontalCompactor();
       case engine.CompactType.none:
         return const engine.NoCompactor();
     }
