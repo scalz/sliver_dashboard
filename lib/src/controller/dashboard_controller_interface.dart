@@ -116,20 +116,25 @@ abstract class DashboardController {
   /// Adds multiple items to the dashboard.
   ///
   /// If an item has x = -1 or y = -1, it will be automatically placed
-  /// at the bottom of the layout.
+  /// based on the chosen [strategy] (defaults to appending at the bottom).
   ///
   /// [overrideCompactType] allows you to force a specific compaction strategy
   /// for this operation (e.g. force vertical compaction even if the controller is in 'none').
   void addItems(
     List<LayoutItem> items, {
     engine.CompactType? overrideCompactType,
+    AutoPlacementStrategy strategy = AutoPlacementStrategy.appendBottom,
   });
 
   /// Adds a new item to the dashboard.
   ///
   /// The new item is added, and the layout is re-compacted to find a suitable
   /// position for it.
-  void addItem(LayoutItem newItem, {engine.CompactType? overrideCompactType});
+  void addItem(
+    LayoutItem newItem, {
+    engine.CompactType? overrideCompactType,
+    AutoPlacementStrategy strategy = AutoPlacementStrategy.appendBottom,
+  });
 
   /// Removes an item from the dashboard by its ID.
   ///

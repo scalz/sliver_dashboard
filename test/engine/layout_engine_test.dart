@@ -594,6 +594,84 @@ void main() {
     });
   });
 
+  group('placeNewItems with AutoPlacementStrategy', () {
+    test('firstFit should fill empty pockets (gaps) above the bottom of the layout', () {
+      // Setup: Gaps exist at (1,0) and (2,0)
+      // Occupied: [A] [ ] [ ] [B] (cols: 4)
+      final existing = [
+        const LayoutItem(id: 'A', x: 0, y: 0, w: 1, h: 1),
+        const LayoutItem(id: 'B', x: 3, y: 0, w: 1, h: 1),
+      ];
+
+      const newItem = LayoutItem(id: 'new', x: -1, y: -1, w: 1, h: 1);
+
+      final result = placeNewItems(
+        existingLayout: existing,
+        newItems: [newItem],
+        cols: 4,
+        strategy: AutoPlacementStrategy.firstFit,
+      );
+
+      final placed = result.firstWhere((i) => i.id == 'new');
+
+      // Should fill the first available pocket at (1,0)
+      expect(placed.x, 1);
+      expect(placed.y, 0);
+    });
+
+    test('appendBottom should ignore gaps above and append strictly below existing content', () {
+      // Setup: Same layout with gaps
+      final existing = [
+        const LayoutItem(id: 'A', x: 0, y: 0, w: 1, h: 1),
+        const LayoutItem(id: 'B', x: 3, y: 0, w: 1, h: 1),
+      ];
+
+      const newItem = LayoutItem(id: 'new', x: -1, y: -1, w: 1, h: 1);
+
+      final result = placeNewItems(
+        existingLayout: existing,
+        newItems: [newItem],
+        cols: 4,
+        strategy: AutoPlacementStrategy.appendBottom,
+      );
+
+      final placed = result.firstWhere((i) => i.id == 'new');
+
+      // Should append strictly at y=1 (ignoring the empty spaces at y=0)
+      expect(placed.y, 1);
+      expect(placed.x, 0);
+    });
+
+    test('firstFit should place multiple auto-placed items sequentially within gaps', () {
+      // Setup: Two gaps available at (1,0) and (2,0)
+      final existing = [
+        const LayoutItem(id: 'A', x: 0, y: 0, w: 1, h: 1),
+        const LayoutItem(id: 'B', x: 3, y: 0, w: 1, h: 1),
+      ];
+
+      final newItems = [
+        const LayoutItem(id: 'new1', x: -1, y: -1, w: 1, h: 1),
+        const LayoutItem(id: 'new2', x: -1, y: -1, w: 1, h: 1),
+      ];
+
+      final result = placeNewItems(
+        existingLayout: existing,
+        newItems: newItems,
+        cols: 4,
+        strategy: AutoPlacementStrategy.firstFit,
+      );
+
+      final new1 = result.firstWhere((i) => i.id == 'new1');
+      final new2 = result.firstWhere((i) => i.id == 'new2');
+
+      // Both items should fill the gaps sequentially at y=0
+      expect(new1.x, 1);
+      expect(new1.y, 0);
+      expect(new2.x, 2);
+      expect(new2.y, 0);
+    });
+  });
+
   test('moveElement resolves secondary overlaps (stacking) when pushing multiple items', () {
     // Scenario:
     // A [0,0] 2x2

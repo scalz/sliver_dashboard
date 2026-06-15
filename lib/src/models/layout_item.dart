@@ -1,5 +1,15 @@
 import 'package:flutter/foundation.dart';
 
+/// Defines how new items with undefined coordinates (x: -1, y: -1)
+/// are automatically positioned in the grid.
+enum AutoPlacementStrategy {
+  /// Appends new items strictly below the bottom-most coordinate of the current layout.
+  appendBottom,
+
+  /// Searches from the top-left (0,0) down to find the first gap where the item fits.
+  firstFit,
+}
+
 /// A list of [LayoutItem]s representing the entire grid layout.
 typedef Layout = List<LayoutItem>;
 

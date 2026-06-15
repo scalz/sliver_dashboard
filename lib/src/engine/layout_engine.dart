@@ -1028,6 +1028,7 @@ List<LayoutItem> placeNewItems({
   required List<LayoutItem> existingLayout,
   required List<LayoutItem> newItems,
   required int cols,
+  AutoPlacementStrategy strategy = AutoPlacementStrategy.appendBottom,
 }) {
   // Separate items that need placement from those that don't
   final itemsToPlace = newItems.where((i) => i.x == -1 || i.y == -1).toList();
@@ -1040,10 +1041,11 @@ List<LayoutItem> placeNewItems({
     return finalLayout;
   }
 
-  // Start searching for space from the bottom of the current layout.
-  // This ensures we append items instead of filling holes in the user's existing arrangement.
-  var currentY = bottom(finalLayout);
+  // Define starting point for Y search regarding chosen strategy.
+  // appendBottom starts searching from the end, while firstFit starts at (0,0)
+  var startY = (strategy == AutoPlacementStrategy.appendBottom) ? bottom(finalLayout) : 0;
   var currentX = 0;
+  var currentY = startY;
 
   // SAFETY: Allow searching at least 1000 rows down, or 10k iterations minimum.
   final maxIterations = max(10000, cols * 1000);
@@ -1051,6 +1053,12 @@ List<LayoutItem> placeNewItems({
   for (final item in itemsToPlace) {
     var placed = false;
     var safetyLoop = 0;
+
+    // reset start point search when using firstFit
+    if (strategy == AutoPlacementStrategy.firstFit) {
+      currentX = 0;
+      currentY = 0;
+    }
 
     // Try to find the first valid spot
     while (!placed && safetyLoop < maxIterations) {

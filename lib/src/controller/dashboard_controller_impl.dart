@@ -281,70 +281,39 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
   void addItems(
     List<LayoutItem> items, {
     engine.CompactType? overrideCompactType,
+    AutoPlacementStrategy strategy = AutoPlacementStrategy.appendBottom,
   }) {
     final currentLayout = List<LayoutItem>.from(layout.value);
 
-    // We calculate the starting Y for auto-placed items to be at the bottom
-    var autoPlacementY = engine.bottom(currentLayout);
-    var autoPlacementX = 0;
+    final placedLayout = engine.placeNewItems(
+      existingLayout: currentLayout,
+      newItems: items,
+      cols: slotCount.value,
+      strategy: strategy,
+    );
 
-    for (final item in items) {
-      if (item.x == -1 || item.y == -1) {
-        // Auto-placement logic: try to fit in the current "bottom" row
-        if (autoPlacementX + item.w > slotCount.value) {
-          autoPlacementX = 0;
-          autoPlacementY++; // Move to next row (height 1 unit for safety)
-        }
-
-        currentLayout.add(
-          item.copyWith(
-            x: autoPlacementX,
-            y: autoPlacementY,
-          ),
-        );
-
-        // Advance cursor
-        autoPlacementX += item.w;
-      } else {
-        // Fixed position
-        currentLayout.add(item);
-      }
-    }
-
-    // Use delegate (or temporary override)
-    final strategy =
+    final compactorStrategy =
         overrideCompactType != null ? _getTempDelegate(overrideCompactType) : _compactor;
 
-    // Run compaction.
-    // This will pull the auto-placed items (which are at the bottom)
-    // up into any available empty spaces above them.
-    final newLayout = strategy.compact(
-      currentLayout,
+    layout.value = compactorStrategy.compact(
+      placedLayout,
       slotCount.value,
     );
 
-    layout.value = newLayout;
     onLayoutChanged?.call(layout.value, slotCount.value);
   }
 
   @override
-  void addItem(LayoutItem newItem, {engine.CompactType? overrideCompactType}) {
-    if (newItem.x == -1 || newItem.y == -1) {
-      addItems([newItem], overrideCompactType: overrideCompactType);
-      return;
-    }
-    final currentLayout = layout.value;
-
-    final strategy =
-        overrideCompactType != null ? _getTempDelegate(overrideCompactType) : _compactor;
-
-    final newLayout = strategy.compact(
-      [...currentLayout, newItem],
-      slotCount.value,
+  void addItem(
+    LayoutItem newItem, {
+    engine.CompactType? overrideCompactType,
+    AutoPlacementStrategy strategy = AutoPlacementStrategy.appendBottom,
+  }) {
+    addItems(
+      [newItem],
+      overrideCompactType: overrideCompactType,
+      strategy: strategy,
     );
-    layout.value = newLayout;
-
-    onLayoutChanged?.call(layout.value, slotCount.value);
   }
 
   @override

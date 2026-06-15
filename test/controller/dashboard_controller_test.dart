@@ -1067,6 +1067,47 @@ void main() {
       });
     });
 
+    test('addItem with firstFit strategy fills gaps instead of appending', () {
+      // Setup: Clear and configure a 3-column layout with a gap at (1,0)
+      controller.setSlotCount(3);
+      controller.layout.value = [
+        const LayoutItem(id: 'A', x: 0, y: 0, w: 1, h: 1),
+        const LayoutItem(id: 'B', x: 2, y: 0, w: 1, h: 1),
+      ];
+
+      // Action: Add a new item utilizing the FirstFit strategy
+      controller.addItem(
+        const LayoutItem(id: 'new', x: -1, y: -1, w: 1, h: 1),
+        strategy: AutoPlacementStrategy.firstFit,
+      );
+
+      final placed = controller.layout.value.firstWhere((i) => i.id == 'new');
+
+      // Verify it filled the gap at (1,0)
+      expect(placed.x, 1);
+      expect(placed.y, 0);
+    });
+
+    test('addItems with default strategy appends at the bottom', () {
+      // Setup: Gap at (1,0)
+      controller.setSlotCount(3);
+      controller.layout.value = [
+        const LayoutItem(id: 'A', x: 0, y: 0, w: 1, h: 1),
+        const LayoutItem(id: 'B', x: 2, y: 0, w: 1, h: 1),
+      ];
+
+      // Action: Add item without specifying strategy (defaults to appendBottom)
+      controller.addItem(
+        const LayoutItem(id: 'new', x: -1, y: -1, w: 1, h: 1),
+      );
+
+      final placed = controller.layout.value.firstWhere((i) => i.id == 'new');
+
+      // Verify it appended at y=1, keeping backwards-compatibility intact
+      expect(placed.y, 1);
+      expect(placed.x, 0);
+    });
+
     test('importLayout handles untyped Maps (dynamic)', () {
       final untypedList = [
         <dynamic, dynamic>{'id': '1', 'x': 0, 'y': 0, 'w': 1, 'h': 1},
