@@ -53,6 +53,7 @@ Perfect for analytics dashboards, IoT control panels, project management tools, 
   - [Allowing free positioning](#allowing-free-positioning)
   - [Dragging From Outside](#dragging-from-outside)
   - [Drag to Delete (Trash Bin)](#drag-to-delete-trash-bin)
+  - [Custom Drag Handles & Mobile Gestures](#custom-drag-handles--mobile-gestures)
   - [Custom Drag Feedback](#custom-drag-feedback)
   - [Interaction Callbacks](#interaction-callbacks)
   - [Guidance Messages](#guidance-messages)
@@ -428,6 +429,50 @@ Container(
 )
 ```
 
+### Custom Drag Handles & Mobile Gestures
+
+By default, dragging on mobile is initiated by a long-press on any part of the card [INDEX]. You can fully customize this behavior using the `dragStartGesture` parameter [INDEX] or restrict dragging to a **dedicated handle** (like an icon) using `DashboardDragStartListener` [INDEX].
+
+#### 1. Tap-to-drag on Mobile
+If you want items to be draggable immediately on touch/down (without any long-press delay) [INDEX]:
+```dart
+Dashboard(
+  controller: controller,
+  dragStartGesture: DragStartGesture.tap, // Instant dragging on mobile
+  itemBuilder: (context, item) => MyCard(item),
+)
+```
+
+#### 2. Restricting Drag to a Custom Handle (Icon)
+To make your grid items draggable *only* when dragging a specific handle (icon) [INDEX]:
+1. Set `dragStartGesture: DragStartGesture.none` on your `Dashboard` to disable dragging on the card's body [INDEX].
+2. Wrap your handle widget in a `DashboardDragStartListener` [INDEX].
+
+```dart
+Dashboard(
+  controller: controller,
+  dragStartGesture: DragStartGesture.none, // Disable card-body drag
+  itemBuilder: (context, item) {
+    return Card(
+      child: Stack(
+        children: [
+          Center(child: Text('Item ${item.id}')),
+          // Add a custom drag handle in the corner
+          Positioned(
+            right: 8,
+            top: 8,
+            child: DashboardDragStartListener(
+              itemId: item.id,
+              child: const Icon(Icons.drag_handle),
+            ),
+          ),
+        ],
+      ),
+    );
+  },
+)
+```
+*Note: Use `DashboardDelayedDragStartListener` if you want your custom handle to require a long-press to start dragging.*
 
 ### Custom Drag Feedback
 
@@ -632,7 +677,7 @@ Stack(
 
 ### Auto Layout bulk add
 
-Generate a layout automatically or add items without specifying positions (set x/y to -1).
+Generate a layout automatically or add items without specifying coordinates (set `x: -1, y: -1`). By default, the engine appends them below the current layout. You can configure this using the `strategy` parameter:
 
 ```dart
 // Create fresh new page with auto placement
@@ -654,18 +699,20 @@ controller.addItem(
   LayoutItem(id: 'fixed', x: 2, y: 0, w: 2, h: 2),
 );
 
-// Add item automatically at the bottom (Auto-placement)
-// The controller will find the next available row.
+// 1. Tetris-style "First Fit" Placement (Fills gaps from top-left)
 controller.addItem(
   LayoutItem(id: 'new_item', x: -1, y: -1, w: 2, h: 2),
+  strategy: AutoPlacementStrategy.firstFit,
 );
 
-// Bulk add (Efficient)
-// Mixes fixed and auto-placed items.
-controller.addItems([
-  LayoutItem(id: 'a', x: -1, y: -1, w: 2, h: 2), // Auto
-  LayoutItem(id: 'b', x: 0, y: 0, w: 2, h: 2),   // Fixed
-]);
+// 2. Default "Append Bottom" Placement (Appends strictly below existing content)
+controller.addItems(
+  [
+    LayoutItem(id: 'a', x: -1, y: -1, w: 2, h: 2),
+    LayoutItem(id: 'b', x: -1, y: -1, w: 1, h: 1),
+  ],
+  strategy: AutoPlacementStrategy.appendBottom, // Default behavior
+);
 ```
 
 ### Accessibility and Keyboard Navigation

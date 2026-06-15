@@ -22,6 +22,54 @@ import 'package:sliver_dashboard/src/view/resize_handle.dart';
 import 'package:sliver_dashboard/src/view/sliver_dashboard.dart';
 import 'package:state_beacon/state_beacon.dart';
 
+/// The gesture used to trigger a drag operation on mobile platforms.
+enum DragStartGesture {
+  /// Dragging is initiated by holding/long-pressing an item.
+  longPress,
+
+  /// Dragging is initiated by a simple pointer down / tap on the item.
+  tap,
+
+  /// Dragging on the item's main body is disabled. Drags can only be
+  /// initiated using handles (e.g. DashboardDragStartListener).
+  none,
+}
+
+/// An interface to control [DashboardOverlay] programmatically.
+class DashboardOverlayController {
+  /// Creates a [DashboardOverlayController].
+  const DashboardOverlayController();
+
+  /// Starts a drag operation programmatically on the item with the given [itemId]
+  /// using the provided [globalPosition] as the start coordinate.
+  void startDragging(String itemId, Offset globalPosition) {}
+}
+
+/// An InheritedWidget that provides a [DashboardOverlayController] to its descendants.
+class DashboardOverlayProvider extends InheritedWidget {
+  /// Creates a [DashboardOverlayProvider].
+  const DashboardOverlayProvider({
+    required this.overlayController,
+    required super.child,
+    super.key,
+  });
+
+  /// The overlay controller instance to provide.
+  final DashboardOverlayController overlayController;
+
+  /// Retrieves the closest [DashboardOverlayController] instance from the widget tree.
+  static DashboardOverlayController? maybeOf(BuildContext context) {
+    return context
+        .dependOnInheritedWidgetOfExactType<DashboardOverlayProvider>()
+        ?.overlayController;
+  }
+
+  @override
+  bool updateShouldNotify(DashboardOverlayProvider oldWidget) {
+    return overlayController != oldWidget.overlayController;
+  }
+}
+
 /// A widget that provides interaction capabilities (drag, resize, auto-scroll)
 /// for [SliverDashboard]s embedded within its [child].
 ///
@@ -60,6 +108,7 @@ class DashboardOverlay<T extends Object> extends StatefulWidget {
     this.itemGlobalKeySuffix = '',
     this.backgroundBuilder,
     this.fillViewport = false,
+    this.dragStartGesture = DragStartGesture.longPress,
   });
 
   /// The controller that manages the state of the dashboard.
@@ -150,11 +199,15 @@ class DashboardOverlay<T extends Object> extends StatefulWidget {
   /// If true, force grid to fill viewport
   final bool fillViewport;
 
+  /// The gesture used to trigger a drag operation on mobile platforms
+  final DragStartGesture dragStartGesture;
+
   @override
   State<DashboardOverlay<T>> createState() => _DashboardOverlayState<T>();
 }
 
-class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>> {
+class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>>
+    implements DashboardOverlayController {
   final GlobalKey _overlayStackKey = GlobalKey();
   StreamSubscription<ScrollRequest>? _scrollSubscription;
 
@@ -198,6 +251,12 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
   bool get _isMobile =>
       defaultTargetPlatform == TargetPlatform.android ||
       defaultTargetPlatform == TargetPlatform.iOS;
+
+  @override
+  void startDragging(String itemId, Offset globalPosition) {
+    if (!widget.controller.isEditing.value) return;
+    _onPointerDown(globalPosition);
+  }
 
   @override
   void initState() {
@@ -307,138 +366,159 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
   Widget build(BuildContext context) {
     return DashboardControllerProvider(
       controller: widget.controller,
-      child: DragTarget<T>(
-        onWillAcceptWithDetails: (details) {
-          _updatePlaceholderPosition(details.offset);
-          return true;
-        },
-        onMove: (details) {
-          _lastGlobalPosition = details.offset;
-          _updatePlaceholderPosition(details.offset);
-          _handleAutoScroll(details.offset);
-        },
-        onLeave: (data) {
-          _lastGlobalPosition = null;
-          _stopScrollTimer();
+      child: DashboardOverlayProvider(
+        overlayController: this,
+        child: DragTarget<T>(
+          onWillAcceptWithDetails: (details) {
+            _updatePlaceholderPosition(details.offset);
+            return true;
+          },
+          onMove: (details) {
+            _lastGlobalPosition = details.offset;
+            _updatePlaceholderPosition(details.offset);
+            _handleAutoScroll(details.offset);
+          },
+          onLeave: (data) {
+            _lastGlobalPosition = null;
+            _stopScrollTimer();
 
-          // Reason: Debounce hiding to prevent race condition with onAccept.
-          // Sometimes onLeave is called just before onAccept when dropping,
-          // causing the placeholder to disappear prematurely.
-          _leaveTimer?.cancel();
-          _leaveTimer = Timer(const Duration(milliseconds: 50), () {
-            widget.controller.internal.hidePlaceholder();
-            _lastValidPlaceholder = null;
-          });
-        },
-        onAcceptWithDetails: (details) async {
-          _leaveTimer?.cancel(); // Cancel any pending hide
-          _stopScrollTimer();
-          _lastGlobalPosition = null;
+            // Reason: Debounce hiding to prevent race condition with onAccept.
+            // Sometimes onLeave is called just before onAccept when dropping,
+            // causing the placeholder to disappear prematurely.
+            _leaveTimer?.cancel();
+            _leaveTimer = Timer(const Duration(milliseconds: 50), () {
+              widget.controller.internal.hidePlaceholder();
+              _lastValidPlaceholder = null;
+            });
+          },
+          onAcceptWithDetails: (details) async {
+            _leaveTimer?.cancel(); // Cancel any pending hide
+            _stopScrollTimer();
+            _lastGlobalPosition = null;
 
-          // Reason: Use last valid placeholder if controller's is null.
-          // This ensures we have a valid drop target even if onLeave cleared it.
-          final placeholder = widget.controller.currentDragPlaceholder ?? _lastValidPlaceholder;
+            // Reason: Use last valid placeholder if controller's is null.
+            // This ensures we have a valid drop target even if onLeave cleared it.
+            final placeholder = widget.controller.currentDragPlaceholder ?? _lastValidPlaceholder;
 
-          if (placeholder != null) {
-            final newId = await widget.onDrop?.call(details.data, placeholder);
-            if (newId != null) {
-              widget.controller.internal.onDropExternal(newId: newId);
+            if (placeholder != null) {
+              final newId = await widget.onDrop?.call(details.data, placeholder);
+              if (newId != null) {
+                widget.controller.internal.onDropExternal(newId: newId);
+              } else {
+                widget.controller.internal.hidePlaceholder();
+              }
             } else {
               widget.controller.internal.hidePlaceholder();
             }
-          } else {
-            widget.controller.internal.hidePlaceholder();
-          }
 
-          _lastValidPlaceholder = null;
-        },
-        builder: (context, candidateData, rejectedData) {
-          return Stack(
-            key: _overlayStackKey,
-            fit: StackFit.expand,
-            clipBehavior: Clip.none,
-            children: [
-              // 1. Background (Grid)
-              if (widget.backgroundBuilder != null)
-                Positioned.fill(child: widget.backgroundBuilder!(context))
-              else if (widget.gridStyle != null)
+            _lastValidPlaceholder = null;
+          },
+          builder: (context, candidateData, rejectedData) {
+            // Watching isDragging here guarantees that the overlay re-evaluates
+            // gesture handling and activates raw pointer movement tracing on mobile immediately.
+            widget.controller.isDragging.watch(context);
+
+            return Stack(
+              key: _overlayStackKey,
+              fit: StackFit.expand,
+              clipBehavior: Clip.none,
+              children: [
+                // 1. Background (Grid)
+                if (widget.backgroundBuilder != null)
+                  Positioned.fill(child: widget.backgroundBuilder!(context))
+                else if (widget.gridStyle != null)
+                  Positioned.fill(
+                    child: DashboardGrid(
+                      controller: widget.controller,
+                      scrollController: widget.scrollController,
+                      gridStyle: widget.gridStyle!,
+                      slotAspectRatio: widget.slotAspectRatio,
+                      mainAxisSpacing: widget.mainAxisSpacing,
+                      crossAxisSpacing: widget.crossAxisSpacing,
+                      padding: widget.padding,
+                      scrollDirection: widget.scrollDirection,
+                      fillViewport: widget.fillViewport,
+                    ),
+                  ),
+
+                // 2. Content
                 Positioned.fill(
-                  child: DashboardGrid(
-                    controller: widget.controller,
-                    scrollController: widget.scrollController,
-                    gridStyle: widget.gridStyle!,
-                    slotAspectRatio: widget.slotAspectRatio,
-                    mainAxisSpacing: widget.mainAxisSpacing,
-                    crossAxisSpacing: widget.crossAxisSpacing,
-                    padding: widget.padding,
-                    scrollDirection: widget.scrollDirection,
-                    fillViewport: widget.fillViewport,
-                  ),
-                ),
+                  // We use a Listener to handle raw pointer events.
+                  // This is necessary for two reasons:
+                  // 1. Desktop: To provide immediate feedback (selection) on pointer down,
+                  //    bypassing the delay introduced by GestureDetector's tap/long-press logic.
+                  // 2. Mobile: To implement a manual "Tap" detection. Since we disable
+                  //    onPanStart to allow native scrolling, we need a way to detect
+                  //    selection taps that might otherwise be consumed by child widgets.
+                  child: Listener(
+                    // DESKTOP LOGIC: Raw Pointer Events
+                    // On Desktop, we want instant reaction. We handle selection on 'Down'
+                    // and drag initiation on 'Move' (with a threshold).
+                    onPointerDown: (event) {
+                      // 1. Store the initial position to calculate distance later (for Mobile Tap detection).
+                      _pointerDownPosition = event.position;
 
-              // 2. Content
-              Positioned.fill(
-                // We use a Listener to handle raw pointer events.
-                // This is necessary for two reasons:
-                // 1. Desktop: To provide immediate feedback (selection) on pointer down,
-                //    bypassing the delay introduced by GestureDetector's tap/long-press logic.
-                // 2. Mobile: To implement a manual "Tap" detection. Since we disable
-                //    onPanStart to allow native scrolling, we need a way to detect
-                //    selection taps that might otherwise be consumed by child widgets.
-                child: Listener(
-                  // DESKTOP LOGIC: Raw Pointer Events
-                  // On Desktop, we want instant reaction. We handle selection on 'Down'
-                  // and drag initiation on 'Move' (with a threshold).
-                  onPointerDown: (event) {
-                    // 1. Store the initial position to calculate distance later (for Mobile Tap detection).
-                    _pointerDownPosition = event.position;
-
-                    // 2. On Desktop, trigger selection logic immediately.
-                    if (!_isMobile) _onPointerDown(event.position);
-                  },
-                  // On Mobile, we leave 'Move' to the GestureDetector/ScrollView to avoid conflicts.
-                  onPointerMove: _isMobile ? null : (event) => _onPointerMove(event.position),
-                  onPointerUp: (event) {
-                    if (_isMobile) {
-                      // MOBILE TAP DETECTION
-                      // Since onPanStart is null on mobile (to favor scrolling),
-                      // standard onTap might be lost if children (like buttons) capture the gesture.
-                      // We manually detect a "Tap" if the pointer went Down and Up
-                      // without moving more than a small threshold (10px).
-                      if (_pointerDownPosition != null &&
-                          (event.position - _pointerDownPosition!).distance < 10.0) {
-                        _handleMobileTap(event.position);
+                      // 2. On Desktop, trigger selection logic immediately.
+                      // If tap to drag is enabled, we trigger drag start immediately on touch down
+                      if (!_isMobile || widget.dragStartGesture == DragStartGesture.tap) {
+                        _onPointerDown(event.position);
                       }
-                    } else {
-                      // Desktop only
-                      // On Mobile, onLongPressEnd is in charge, else it's called twice (Listener + GestureDetector).
+                    },
+                    // On Mobile, we leave 'Move' to the GestureDetector/ScrollView to avoid conflicts.
+                    onPointerMove: (!_isMobile || widget.controller.isDragging.value)
+                        ? (event) => _onPointerMove(event.position)
+                        : null,
+                    onPointerUp: (event) {
+                      if (_isMobile && !widget.controller.isDragging.value) {
+                        // MOBILE TAP DETECTION
+                        // Since onPanStart is null on mobile (to favor scrolling),
+                        // standard onTap might be lost if children (like buttons) capture the gesture.
+                        // We manually detect a "Tap" if the pointer went Down and Up
+                        // without moving more than a small threshold (10px).
+                        if (_pointerDownPosition != null &&
+                            (event.position - _pointerDownPosition!).distance < 10.0) {
+                          _handleMobileTap(event.position);
+                        }
+                      } else {
+                        // Desktop only
+                        // On Mobile, onLongPressEnd is in charge, else it's called twice (Listener + GestureDetector).
+                        _onPointerUp().ignore();
+                      }
+                      _pointerDownPosition = null; // Cleanup
+                    },
+                    onPointerCancel: (event) {
                       _onPointerUp().ignore();
-                    }
-                    _pointerDownPosition = null; // Cleanup
-                  },
-
-                  onPointerCancel: (event) {
-                    _onPointerUp().ignore();
-                    _pointerDownPosition = null; // Cleanup
-                  },
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.translucent,
-                    onLongPressStart:
-                        _isMobile ? (details) => _onPointerDown(details.globalPosition) : null,
-                    onLongPressMoveUpdate:
-                        _isMobile ? (details) => _onPointerMove(details.globalPosition) : null,
-                    onLongPressEnd: _isMobile ? (details) => _onPointerUp() : null,
-                    onLongPressCancel: _isMobile ? _onPointerUp : null,
-                    child: widget.child,
+                      _pointerDownPosition = null; // Cleanup
+                    },
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.translucent,
+                      onLongPressStart:
+                          _isMobile && widget.dragStartGesture == DragStartGesture.longPress
+                              ? (details) => _onPointerDown(details.globalPosition)
+                              : null,
+                      onLongPressMoveUpdate:
+                          _isMobile && widget.dragStartGesture == DragStartGesture.longPress
+                              ? (details) => _onPointerMove(details.globalPosition)
+                              : null,
+                      onLongPressEnd:
+                          _isMobile && widget.dragStartGesture == DragStartGesture.longPress
+                              ? (details) => _onPointerUp()
+                              : null,
+                      onLongPressCancel:
+                          _isMobile && widget.dragStartGesture == DragStartGesture.longPress
+                              ? _onPointerUp
+                              : null,
+                      child: widget.child,
+                    ),
                   ),
                 ),
-              ),
-              // 3. Feedback & Trash
-              _buildFeedbackLayer(),
-              _buildTrashLayer(),
-            ],
-          );
-        },
+                // 3. Feedback & Trash
+                _buildFeedbackLayer(),
+                _buildTrashLayer(),
+              ],
+            );
+          },
+        ),
       ),
     );
   }

@@ -56,6 +56,7 @@ class Dashboard<T extends Object> extends StatefulWidget {
     this.onWillDelete,
     this.onItemsDeleted,
     this.trashHoverDelay = const Duration(milliseconds: 800),
+    this.dragStartGesture = DragStartGesture.longPress,
   });
 
   /// The controller that manages the state of the dashboard.
@@ -162,6 +163,9 @@ class Dashboard<T extends Object> extends StatefulWidget {
   /// The duration the user must hover over the trash area before it becomes armed.
   final Duration trashHoverDelay;
 
+  /// The gesture used to trigger a drag operation on mobile platforms
+  final DragStartGesture dragStartGesture;
+
   @override
   State<Dashboard<T>> createState() => _DashboardState<T>();
 }
@@ -244,6 +248,7 @@ class _DashboardState<T extends Object> extends State<Dashboard<T>> {
       placeholderWidth: widget.placeholderWidth,
       placeholderHeight: widget.placeholderHeight,
       itemGlobalKeySuffix: widget.itemGlobalKeySuffix,
+      dragStartGesture: widget.dragStartGesture,
 
       // Pass layout params directly to Overlay so it can render the background grid.
       gridStyle: widget.gridStyle,

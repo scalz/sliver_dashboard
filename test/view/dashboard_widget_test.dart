@@ -273,6 +273,64 @@ void main() {
         debugDefaultTargetPlatformOverride = originalPlatform;
       }
     });
+
+    testWidgets('DashboardDragStartListener starts and completes a drag operation', (tester) async {
+      controller.toggleEditing();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 800,
+              height: 600,
+              child: Dashboard<String>(
+                controller: controller,
+                dragStartGesture: DragStartGesture.none, // Disable body drag
+                itemBuilder: (context, item) {
+                  return Stack(
+                    children: [
+                      Center(child: Text(item.id)),
+                      Center(
+                        // Placed in the center to avoid overlapping with corner/edge resize handles
+                        child: DashboardDragStartListener(
+                          itemId: item.id,
+                          child: const Icon(Icons.drag_handle, key: ValueKey('handle')),
+                        ),
+                      ),
+                    ],
+                  );
+                },
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final handleFinder = find.byKey(const ValueKey('handle')).first;
+
+      // 1. Verify drag state is currently idle
+      expect(controller.isDragging.value, isFalse);
+
+      // 2. Start drag by pressing down on the custom drag handle in the center
+      final gesture = await tester.startGesture(tester.getCenter(handleFinder));
+      await tester.pump();
+
+      // Verify that dragging has started successfully
+      expect(controller.isDragging.value, isTrue);
+      expect(controller.activeItemId.value, 'a'); // Updated to reflect correct ID
+
+      // 3. Move pointer to translate item
+      await gesture.moveBy(const Offset(100, 100));
+      await tester.pump();
+
+      // 4. Release pointer
+      await gesture.up();
+      await tester.pump();
+
+      // Verify drag ended cleanly
+      expect(controller.isDragging.value, isFalse);
+    });
   });
 
   group('Dashboard Widget Tests (External DragTarget)', () {

@@ -5,6 +5,7 @@ export 'src/models/layout_item.dart';
 export 'src/view/a11y/dashboard_shortcuts.dart';
 export 'src/view/dashboard.dart';
 export 'src/view/dashboard_configuration.dart';
+export 'src/view/dashboard_drag_start_listener.dart';
 export 'src/view/dashboard_item_wrapper.dart';
 export 'src/view/dashboard_overlay.dart';
 export 'src/view/dashboard_typedefs.dart';

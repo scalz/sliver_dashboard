@@ -1,3 +1,29 @@
+## 0.10.0
+
+### New Features
+- **Customizable Auto-Placement**: Added support for dense, gap-filling item placement.
+  - Introduced `AutoPlacementStrategy` enum with two strategies:
+    - `appendBottom`: The classic behavior, appending new items below the existing layout.
+    - `firstFit`: A Tetris-style placement that finds the first available empty slot from the top-left (0,0) to recycle grid fragmentation.
+  - Exposed `strategy` parameter in both `addItem` and `addItems` on `DashboardController`.
+
+- **Custom Drag Handles & Gestures**: Touch gestures on mobile devices were hardcoded to long-presses. Introduced the `DragStartGesture` configuration parameter (`longPress`, `tap`, `none`), alongside the `DashboardDragStartListener` and `DashboardDelayedDragStartListener` widgets. You can now fully customize gesture delays or designate dedicated drag handle icons to manipulate dashboard items.
+
+
+### Bug Fixes
+- **Flicker-free Breakpoint Transitions**: Resolved the single-frame flash/blink when resizing across viewport breakpoints. The grid now renders with the previous column layout on the transitioning frame before snapping to the new size, preserving scroll extents and preventing layout shifts. (thx @kamil-matula)
+- **Fixed Horizontal Resizing Collisions**: Resolved an issue where resizing items on horizontally scrollable dashboards resulted in vertical collision stacking. Collision pushes and secondary overlap resolutions now dynamically follow the controller's active `compactionType` instead of being vertically hardcoded.
+- **Immoveable Static Items in Multi-Selection**: Fixed a case where static items could be dragged and relocated if they were added to a multi-selection group.
+- **Mobile Gesture Interruptions**: Resolved an issue on touch devices where system alerts, dragging off-screen, or gesture takeovers left the dashboard locked in an active dragging state.
+- **Asynchronous Scroll Safety**: Fixed a bug in `scrollToItem` where an interrupted scroll animation or a disposed `ScrollController` would cause the returned `Future` to hang indefinitely. Scroll animations are now safely encapsulated in a try-catch block to correctly propagate exceptions.
+- **Skyline Compactors Enabled**: Upgraded the default dashboard compactors to use the optimized algorithms. This reduces the computational complexity of layout reflows, significantly improving frame rates during rapid dragging and window resizing on large layouts.
+- **Non-Destructive Bounds Correction**: Fixed a case where any item with a negative abscisse (`x < 0`) was resized to span the entire column count. The engine now safely clamps the item's width to the maximum available slot space, preserving its original user-defined size.
+- **Negative Coordinates Sanitization**: Fixed an edge case where importing malformed layouts with negative Y coordinates (like `y: -1`) under `CompactType.none` (NoCompactor) bypassed validation. It now cleanly clamps negative Y coordinates to 0.
+
+- **Lints**: Maintain backward compatibility with older Flutter versions by temporarily keeping `CustomScrollView`'s `cacheExtent`. This deprecation is ignored locally for now and will be removed once Flutter version will stop to support it.
+
+**No breaking changes in this release.**
+
 ## 0.9.1
 
 ### New Feature
