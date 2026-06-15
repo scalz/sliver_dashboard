@@ -266,23 +266,29 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
         targetOffset - (viewportSize * request.alignment) + (itemSize * request.alignment);
 
     // 4. Clamp
-    final clampedOffset = alignedOffset.clamp(
-      widget.scrollController.position.minScrollExtent,
-      widget.scrollController.position.maxScrollExtent,
-    );
-
-    if (request.duration == Duration.zero) {
-      widget.scrollController.jumpTo(clampedOffset);
-    } else {
-      await widget.scrollController.animateTo(
-        clampedOffset,
-        duration: request.duration,
-        curve: request.curve,
+    try {
+      final clampedOffset = alignedOffset.clamp(
+        widget.scrollController.position.minScrollExtent,
+        widget.scrollController.position.maxScrollExtent,
       );
-    }
 
-    if (!request.completer.isCompleted) {
-      request.completer.complete();
+      if (request.duration == Duration.zero) {
+        widget.scrollController.jumpTo(clampedOffset);
+      } else {
+        await widget.scrollController.animateTo(
+          clampedOffset,
+          duration: request.duration,
+          curve: request.curve,
+        );
+      }
+
+      if (!request.completer.isCompleted) {
+        request.completer.complete();
+      }
+    } catch (e, s) {
+      if (!request.completer.isCompleted) {
+        request.completer.completeError(e, s);
+      }
     }
   }
 

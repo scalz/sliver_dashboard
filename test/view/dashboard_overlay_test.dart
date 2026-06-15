@@ -14,6 +14,17 @@ class MockLayoutChangeListener extends Mock {
   void call(List<LayoutItem> items, int slotCount);
 }
 
+class ExceptionThrowingScrollController extends ScrollController {
+  @override
+  Future<void> animateTo(
+    double offset, {
+    required Duration duration,
+    required Curve curve,
+  }) {
+    return Future.error(Exception('Scroll animation failed!'));
+  }
+}
+
 // Utility function to explicitly request focus on a widget
 Future<void> _requestFocus(WidgetTester tester, Finder itemFinder) async {
   // 1. Find the specific Semantics widget for our item.
@@ -900,6 +911,44 @@ void main() {
         closeTo(3030.0, 0.1), // closeTo to avoid rounding errors
         reason: 'The scroll offset should exactly match the calculated position of item 15',
       );
+    });
+
+    testWidgets(
+        'scrollToItem completes with error if ScrollController is disposed during animation',
+        (tester) async {
+      final scrollController = ExceptionThrowingScrollController();
+      final items = List.generate(20, (i) => LayoutItem(id: '$i', x: 0, y: i, w: 1, h: 1));
+      controller.layout.value = items;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: DashboardOverlay(
+              controller: controller,
+              scrollController: scrollController,
+              itemBuilder: (context, item) => const SizedBox(),
+              child: CustomScrollView(
+                controller: scrollController,
+                slivers: [
+                  SliverDashboard(
+                    itemBuilder: (context, item) => const SizedBox(),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+
+      // Start scroll animation
+      final scrollFuture = controller.scrollToItem(
+        '15',
+        duration: const Duration(milliseconds: 500),
+      );
+
+      expect(scrollFuture, throwsA(isA<Exception>()));
+
+      await tester.pump();
     });
   });
 }
