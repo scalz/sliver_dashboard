@@ -119,8 +119,6 @@ class _SliverDashboardState extends State<SliverDashboard> {
                 _controller.setSlotCount(targetSlots);
               }
             });
-            // Skip frame optimization: Return an empty Sliver
-            return const SliverToBoxAdapter(child: SizedBox.shrink());
           }
         }
 
