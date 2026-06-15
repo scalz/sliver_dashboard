@@ -42,6 +42,9 @@ typedef DashboardWillDeleteCallback = Future<bool> Function(List<LayoutItem> ite
 /// A callback fired when items are deleted.
 typedef DashboardItemsDeletedCallback = void Function(List<LayoutItem> items);
 
+/// A builder function for rendering custom section headers.
+typedef DashboardSectionHeaderBuilder = Widget Function(BuildContext context, LayoutItem item);
+
 /// Builder for accessibility messages related to an item ID.
 typedef A11yItemMessageBuilder = String Function(String itemId);
 

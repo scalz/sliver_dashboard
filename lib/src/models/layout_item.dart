@@ -34,6 +34,8 @@ class LayoutItem {
     this.isResizable,
     this.isStatic = false,
     this.moved = false,
+    this.isSectionBarrier = false,
+    this.sectionTitle,
   });
 
   /// Creates a [LayoutItem] from a JSON-serializable map.
@@ -56,6 +58,8 @@ class LayoutItem {
       isResizable: map['isResizable'] as bool?,
       isStatic: map['isStatic'] as bool? ?? false,
       moved: map['moved'] as bool? ?? false,
+      isSectionBarrier: map['isSectionBarrier'] as bool? ?? false,
+      sectionTitle: map['sectionTitle'] as String?,
     );
   }
 
@@ -74,8 +78,10 @@ class LayoutItem {
       'maxH': maxH.isInfinite ? null : maxH,
       'isDraggable': isDraggable,
       'isResizable': isResizable,
-      'isStatic': isStatic,
+      'isStatic': isStatic || isSectionBarrier,
       'moved': moved,
+      'isSectionBarrier': isSectionBarrier,
+      'sectionTitle': sectionTitle,
     };
   }
 
@@ -92,7 +98,9 @@ class LayoutItem {
         maxH,
         isDraggable,
         isResizable,
-        isStatic,
+        isStatic || isSectionBarrier,
+        isSectionBarrier,
+        sectionTitle,
       );
 
   /// Creates a new [LayoutItem] with updated properties.
@@ -110,6 +118,8 @@ class LayoutItem {
     bool? isResizable,
     bool? isStatic,
     bool? moved,
+    bool? isSectionBarrier,
+    String? sectionTitle,
   }) {
     return LayoutItem(
       id: id ?? this.id,
@@ -125,6 +135,8 @@ class LayoutItem {
       isResizable: isResizable ?? this.isResizable,
       isStatic: isStatic ?? this.isStatic,
       moved: moved ?? this.moved,
+      isSectionBarrier: isSectionBarrier ?? this.isSectionBarrier,
+      sectionTitle: sectionTitle ?? this.sectionTitle,
     );
   }
 
@@ -144,8 +156,10 @@ class LayoutItem {
           maxH == other.maxH &&
           isDraggable == other.isDraggable &&
           isResizable == other.isResizable &&
-          isStatic == other.isStatic &&
-          moved == other.moved;
+          isStatic == (other.isStatic || other.isSectionBarrier) &&
+          moved == other.moved &&
+          isSectionBarrier == other.isSectionBarrier &&
+          sectionTitle == other.sectionTitle;
 
   @override
   int get hashCode => Object.hash(
@@ -160,8 +174,10 @@ class LayoutItem {
         maxH,
         isDraggable,
         isResizable,
-        isStatic,
+        isStatic || isSectionBarrier,
         moved,
+        isSectionBarrier,
+        sectionTitle,
       );
 
   @override
@@ -211,4 +227,13 @@ class LayoutItem {
   /// This is used internally by the layout engine to prevent infinite loops
   /// in collision resolution.
   final bool moved;
+
+  /// Whether this item represents a static visual section barrier (header).
+  ///
+  /// If true, the item automatically behaves as an immoveable static divider
+  /// that visually splits the grid into segments.
+  final bool isSectionBarrier;
+
+  /// The text title of the section if [isSectionBarrier] is true.
+  final String? sectionTitle;
 }

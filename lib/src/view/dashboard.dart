@@ -57,6 +57,7 @@ class Dashboard<T extends Object> extends StatefulWidget {
     this.onItemsDeleted,
     this.trashHoverDelay = const Duration(milliseconds: 800),
     this.dragStartGesture = DragStartGesture.longPress,
+    this.sectionHeaderBuilder,
   });
 
   /// The controller that manages the state of the dashboard.
@@ -165,6 +166,9 @@ class Dashboard<T extends Object> extends StatefulWidget {
 
   /// The gesture used to trigger a drag operation on mobile platforms
   final DragStartGesture dragStartGesture;
+
+  /// Optional builder to customize the appearance of section headers.
+  final DashboardSectionHeaderBuilder? sectionHeaderBuilder;
 
   @override
   State<Dashboard<T>> createState() => _DashboardState<T>();
@@ -277,6 +281,7 @@ class _DashboardState<T extends Object> extends State<Dashboard<T>> {
                 padding: widget.padding ?? EdgeInsets.zero,
                 sliver: SliverDashboard(
                   itemBuilder: widget.itemBuilder,
+                  sectionHeaderBuilder: widget.sectionHeaderBuilder,
                   itemStyle: widget.itemStyle,
                   scrollDirection: widget.scrollDirection,
                   slotAspectRatio: widget.slotAspectRatio,

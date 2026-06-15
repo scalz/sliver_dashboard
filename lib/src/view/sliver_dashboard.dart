@@ -35,6 +35,7 @@ class SliverDashboard extends StatefulWidget {
   /// Creates a [SliverDashboard].
   const SliverDashboard({
     required this.itemBuilder,
+    this.sectionHeaderBuilder,
     super.key,
     this.gridStyle,
     this.itemStyle = DashboardItemStyle.defaultStyle,
@@ -50,6 +51,9 @@ class SliverDashboard extends StatefulWidget {
 
   /// A builder that creates the widgets for each dashboard item.
   final DashboardItemBuilder itemBuilder;
+
+  /// Optional builder to customize the appearance of section headers.
+  final DashboardSectionHeaderBuilder? sectionHeaderBuilder;
 
   /// Styling options for the background grid in edit mode.
   /// If null, no grid is painted.
@@ -134,6 +138,14 @@ class _SliverDashboardState extends State<SliverDashboard> {
           delegate: SliverChildBuilderDelegate(
             (context, index) {
               final item = _controller.layout.value[index];
+
+              // If the item represents a Section Barrier, we render it
+              // using the custom or default section header builder instead of
+              // passing it to the standard card itemBuilder.
+              if (item.isSectionBarrier) {
+                return widget.sectionHeaderBuilder?.call(context, item) ??
+                    _DefaultSectionHeader(item: item);
+              }
 
               // Reason: We return the DashboardItem always.
               // The item itself handles its visibility (Opacity 0.0) if it is the active item,
@@ -667,5 +679,29 @@ class RenderSliverDashboard extends RenderSliverMultiBoxAdaptor {
     } else {
       transform.translateByDouble(mainAxisDelta, crossAxisDelta, 0, 1);
     }
+  }
+}
+
+class _DefaultSectionHeader extends StatelessWidget {
+  const _DefaultSectionHeader({required this.item});
+
+  final LayoutItem item;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+        child: Text(
+          item.sectionTitle ?? 'Section',
+          style: theme.textTheme.titleMedium?.copyWith(
+            fontWeight: FontWeight.bold,
+            color: theme.colorScheme.primary,
+          ),
+        ),
+      ),
+    );
   }
 }

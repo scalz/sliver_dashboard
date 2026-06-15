@@ -108,5 +108,46 @@ void main() {
       // Should pick 8 correctly despite map order
       expect(controller.slotCount.value, 8);
     });
+
+    testWidgets('Dashboard renders Section Barriers using default or custom header builders',
+        (tester) async {
+      controller = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: [
+          const LayoutItem(
+            id: 'header1',
+            x: 0,
+            y: 0,
+            w: 4,
+            h: 1,
+            isSectionBarrier: true,
+            sectionTitle: 'Overview',
+          ),
+          const LayoutItem(id: 'item1', x: 0, y: 1, w: 1, h: 1),
+        ],
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Dashboard<String>(
+              controller: controller,
+              itemBuilder: (ctx, item) => Text('Card ${item.id}'),
+              // Custom builder to verify integration
+              sectionHeaderBuilder: (ctx, item) => Container(
+                key: const ValueKey('custom_header'),
+                child: Text('Custom ${item.sectionTitle}'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Verify custom section header is drawn correctly
+      expect(find.byKey(const ValueKey('custom_header')), findsOneWidget);
+      expect(find.text('Custom Overview'), findsOneWidget);
+      expect(find.text('Card item1'), findsOneWidget);
+    });
   });
 }
