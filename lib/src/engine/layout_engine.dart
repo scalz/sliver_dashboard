@@ -1,6 +1,7 @@
 import 'dart:collection';
 import 'dart:math';
 
+import 'package:sliver_dashboard/src/models/dashboard_policy.dart';
 import 'package:sliver_dashboard/src/models/layout_item.dart';
 import 'package:sliver_dashboard/src/models/utility.dart';
 
@@ -782,6 +783,7 @@ Layout moveElement(
   bool isUserAction = false,
   bool preventCollision = false,
   bool force = false,
+  DashboardPolicy? policy,
 }) {
   if (l.isStatic) return layout;
 
@@ -850,7 +852,11 @@ Layout moveElement(
     for (final collision in collisions) {
       if (processed.contains(collision.id)) continue;
 
-      if (collision.isStatic) {
+      // If the declarative policy forbids collision/push between currentItem and other,
+      // treat the collision as an immoveable static obstacle, forcing currentItem to jump past it.
+      final isBlockedByPolicy = policy != null && !policy.canCollide(currentItem, collision);
+
+      if (collision.isStatic || isBlockedByPolicy) {
         // Jump static
         final newY = collision.y + collision.h;
         final updatedCurrentItem = currentItem.copyWith(y: newY, moved: true);
@@ -878,7 +884,6 @@ Layout moveElement(
 
   // Prevent secondary overlaps while moving
   if (preventCollision) {
-    // return resolveCollisions(resultLayout, compactType);
     return resolveCollisions(
       resultLayout,
       compactType == CompactType.none ? CompactType.vertical : compactType,
@@ -940,6 +945,7 @@ Layout resizeItem(
   required int cols,
   bool preventCollision = false,
   CompactType compactType = CompactType.vertical,
+  DashboardPolicy? policy,
 }) {
   // Create a layout with the item at its new, desired size.
   final newLayout = layout.map((i) => i.id == itemToResize.id ? itemToResize : i).toList();
@@ -978,6 +984,7 @@ Layout resizeItem(
       preventCollision: false, // Allow push to resolve collision
       compactType: compactType,
       force: true,
+      policy: policy,
     );
 
     // After pushing, check if the resized item itself illegally overlaps a static item.
@@ -1012,6 +1019,7 @@ Layout resizeItem(
     preventCollision: false,
     compactType: compactType,
     force: true,
+    policy: policy,
   );
 }
 
@@ -1169,7 +1177,7 @@ List<LayoutItem> optimizeLayout(List<LayoutItem> layout, int columns) {
 
 /// Calculates the bounding box of a group of items.
 /// Returns a virtual [LayoutItem] that encompasses all items.
-LayoutItem calculateBoundingBox(List<LayoutItem> items) {
+LayoutItem calculateBoundingBox(List<LayoutItem> items, {String? id}) {
   if (items.isEmpty) {
     return const LayoutItem(id: 'empty_cluster', x: 0, y: 0, w: 0, h: 0);
   }
@@ -1187,7 +1195,7 @@ LayoutItem calculateBoundingBox(List<LayoutItem> items) {
   }
 
   return LayoutItem(
-    id: 'cluster_bbox',
+    id: id ?? 'cluster_bbox',
     x: minX,
     y: minY,
     w: maxX - minX,
@@ -1210,6 +1218,7 @@ Layout moveCluster(
   required int cols,
   required CompactType compactType,
   bool preventCollision = false,
+  DashboardPolicy? policy,
 }) {
   if (clusterIds.isEmpty) return layout;
 
@@ -1221,7 +1230,10 @@ Layout moveCluster(
   if (cluster.isEmpty) return layout;
 
   // 2. Calculate Bounding Box
-  final bbox = calculateBoundingBox(cluster);
+  // If the cluster represents a single item, we preserve its original ID
+  // to allow the declarative policy to perform precise ID/type lookups during dragging.
+  final bboxId = cluster.length == 1 ? cluster.first.id : 'cluster_bbox';
+  final bbox = calculateBoundingBox(cluster, id: bboxId);
 
   // 3. Move the Bounding Box against Obstacles
   // We treat the bbox as a single item being moved in a layout consisting of obstacles.
@@ -1237,6 +1249,7 @@ Layout moveCluster(
     compactType: compactType,
     preventCollision: preventCollision,
     force: true, // Force move to trigger collision resolution
+    policy: policy,
   );
 
   // 4. Extract the new Bounding Box position

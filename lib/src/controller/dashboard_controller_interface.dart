@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:sliver_dashboard/src/controller/dashboard_controller_impl.dart';
 import 'package:sliver_dashboard/src/engine/layout_engine.dart' as engine;
+import 'package:sliver_dashboard/src/models/dashboard_policy.dart';
 import 'package:sliver_dashboard/src/models/layout_item.dart';
 import 'package:sliver_dashboard/src/view/a11y/dashboard_shortcuts.dart';
 import 'package:sliver_dashboard/src/view/guidance/dashboard_guidance.dart';
@@ -110,6 +111,10 @@ abstract class DashboardController {
   /// Returns the current placeholder item.
   /// Used by the view to determine the drop position.
   LayoutItem? get currentDragPlaceholder;
+
+  /// The active interaction policy.
+  DashboardPolicy? get policy;
+  set policy(DashboardPolicy? value);
 
   // --- PUBLIC METHODS ---
 

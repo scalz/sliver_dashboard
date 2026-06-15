@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:sliver_dashboard/src/controller/dashboard_controller_interface.dart';
 import 'package:sliver_dashboard/src/engine/layout_engine.dart' as engine;
+import 'package:sliver_dashboard/src/models/dashboard_policy.dart';
 import 'package:sliver_dashboard/src/models/layout_item.dart';
 import 'package:sliver_dashboard/src/models/utility.dart';
 import 'package:sliver_dashboard/src/view/a11y/dashboard_shortcuts.dart';
@@ -52,6 +53,9 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
 
   @override
   DashboardShortcuts? shortcuts;
+
+  @override
+  DashboardPolicy? policy;
 
   // --- BEACONS (Public via Interface) ---
 
@@ -534,6 +538,8 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     final item = layout.value.firstWhere((i) => i.id == itemId);
     if (item.isStatic) return;
 
+    if (policy != null && !policy!.canDrag(item)) return;
+
     // Selection Logic at start of drag:
     // 1. If item is NOT in selection, it becomes the selection (clearing others).
     // 2. If item IS in selection, we keep the group to drag them all.
@@ -567,6 +573,11 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     // 1. Calculate Pivot's new Grid Position
     final newGridX = (contentPosition.dx / (slotWidth + crossAxisSpacing)).round();
     final newGridY = (contentPosition.dy / (slotHeight + mainAxisSpacing)).round();
+
+    if (policy != null &&
+        !policy!.canMoveTo(pivotItem, newGridX, newGridY, originalLayoutOnStart.value)) {
+      return; // Block move
+    }
 
     // 2. Calculate Delta (Grid Units) from original position
     // Note: We don't clamp the pivot yet, we'll let moveCluster handle bounds via the BBox
@@ -604,6 +615,7 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
       cols: slotCount.value,
       compactType: compactionType.value,
       preventCollision: preventCollision.value,
+      policy: policy,
     );
 
     layout.value = newLayout;
@@ -654,6 +666,8 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
 
     final item = layout.value.firstWhere((i) => i.id == itemId);
     if (item.isStatic || item.isResizable == false) return;
+
+    if (policy != null && !policy!.canResize(item)) return;
 
     isResizing.value = true;
     _pivotItemId = itemId;
@@ -743,6 +757,7 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
       cols: slotCount.value,
       preventCollision: preventCollision.value,
       compactType: compactionType.value,
+      policy: policy,
     );
 
     layout.value = newLayout;
