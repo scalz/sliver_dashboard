@@ -263,6 +263,9 @@ class _DashboardState<T extends Object> extends State<Dashboard<T>> {
             controller: _scrollController,
             physics: widget.physics,
             scrollDirection: widget.scrollDirection,
+            // Temporary kept for compatibility with Flutter versions that do
+            // not support scrollCacheExtent yet.
+            // ignore: deprecated_member_use
             cacheExtent: widget.cacheExtent,
             slivers: [
               SliverPadding(

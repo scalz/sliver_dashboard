@@ -412,25 +412,17 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
                   },
 
                   onPointerCancel: (event) {
-                    if (!_isMobile) {
-                      // Desktop only
-                      // On Mobile, onLongPressEnd is in charge, else it's called twice (Listener + GestureDetector).
-                      _onPointerUp().ignore();
-                    }
+                    _onPointerUp().ignore();
                     _pointerDownPosition = null; // Cleanup
                   },
                   child: GestureDetector(
                     behavior: HitTestBehavior.translucent,
-                    onLongPressStart: _isMobile
-                        ? (details) {
-                            // Sur mobile, le LongPress déclenche tout :
-                            // 1. Identification (HitTest + Sélection)
-                            _onPointerDown(details.globalPosition);
-                          }
-                        : null,
+                    onLongPressStart:
+                        _isMobile ? (details) => _onPointerDown(details.globalPosition) : null,
                     onLongPressMoveUpdate:
                         _isMobile ? (details) => _onPointerMove(details.globalPosition) : null,
                     onLongPressEnd: _isMobile ? (details) => _onPointerUp() : null,
+                    onLongPressCancel: _isMobile ? _onPointerUp : null,
                     child: widget.child,
                   ),
                 ),

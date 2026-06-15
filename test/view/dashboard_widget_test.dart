@@ -242,6 +242,37 @@ void main() {
         debugDefaultTargetPlatformOverride = originalPlatform;
       }
     });
+
+    testWidgets('Mobile onLongPressCancel cancels drag and resets state cleanly', (tester) async {
+      final originalPlatform = debugDefaultTargetPlatformOverride;
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      try {
+        controller.toggleEditing();
+        await tester.pumpWidget(buildTestableWidget(controller));
+        await tester.pumpAndSettle();
+
+        final draggableItemFinder = find.widgetWithText(DashboardItemWrapper, 'a');
+
+        // 1. Start long press gesture to initiate drag
+        final gesture = await tester.startGesture(tester.getCenter(draggableItemFinder));
+        await tester.pump(kLongPressTimeout + const Duration(milliseconds: 100));
+        await tester.pump();
+
+        // Verify that the item is actively being dragged
+        expect(controller.activeItemId.value, 'a');
+        expect(controller.isDragging.value, isTrue);
+
+        // 2. Simulate system gesture cancellation (triggers onLongPressCancel)
+        await gesture.cancel();
+        await tester.pump();
+
+        // 3. Verify drag state is cleared and original item is restored
+        expect(controller.isDragging.value, isFalse);
+        expect(controller.activeItemId.value, 'a');
+      } finally {
+        debugDefaultTargetPlatformOverride = originalPlatform;
+      }
+    });
   });
 
   group('Dashboard Widget Tests (External DragTarget)', () {

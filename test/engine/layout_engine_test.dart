@@ -314,6 +314,43 @@ void main() {
       expect(collides(b, c), isFalse, reason: 'Pushed items B and C should not overlap');
       expect(b.y != c.y, isTrue);
     });
+
+    test('resizeItem resolves secondary overlaps horizontally under horizontal compaction', () {
+      // Setup:
+      // A [0,0] 2x2
+      // B [2,0] 1x2 (Next to A)
+      // C [2,1] 1x2 (Next to A, below B)
+      final layout = [
+        const LayoutItem(id: 'A', x: 0, y: 0, w: 2, h: 2),
+        const LayoutItem(id: 'B', x: 2, y: 0, w: 1, h: 2),
+        const LayoutItem(id: 'C', x: 2, y: 1, w: 1, h: 2),
+      ];
+
+      // Resize A horizontally to width 3 (overlaps B and C at x=2)
+      final resizedA = layout[0].copyWith(w: 3);
+
+      final result = resizeItem(
+        layout,
+        resizedA,
+        behavior: ResizeBehavior.push,
+        cols: 10,
+        preventCollision: true,
+        compactType: CompactType.horizontal,
+      );
+
+      final b = result.firstWhere((i) => i.id == 'B');
+      final c = result.firstWhere((i) => i.id == 'C');
+
+      // Verify A's new width
+      expect(result.firstWhere((i) => i.id == 'A').w, 3);
+
+      // Under horizontal compaction, pushed items are compacted to the left (x = 0)
+      // and placed side-by-side on row y=2 because B occupies x=0.
+      expect(b.x, 0);
+      expect(c.x, 1);
+      expect(b.y, 2);
+      expect(c.y, 2);
+    });
   });
 
   group('Horizontal Compaction', () {

@@ -742,6 +742,7 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
       behavior: resizeBehavior.value,
       cols: slotCount.value,
       preventCollision: preventCollision.value,
+      compactType: compactionType.value,
     );
 
     layout.value = newLayout;

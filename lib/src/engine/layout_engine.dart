@@ -937,6 +937,7 @@ Layout resizeItem(
   required ResizeBehavior behavior,
   required int cols,
   bool preventCollision = false,
+  CompactType compactType = CompactType.vertical,
 }) {
   // Create a layout with the item at its new, desired size.
   final newLayout = layout.map((i) => i.id == itemToResize.id ? itemToResize : i).toList();
@@ -973,7 +974,7 @@ Layout resizeItem(
       itemToResize.y,
       cols: cols,
       preventCollision: false, // Allow push to resolve collision
-      compactType: CompactType.vertical,
+      compactType: compactType,
       force: true,
     );
 
@@ -994,7 +995,7 @@ Layout resizeItem(
     // -------------------------------------------------------------------------
     return compact(
       pushedLayout,
-      CompactType.vertical,
+      compactType,
       cols,
       allowOverlap: false,
     );
@@ -1007,7 +1008,7 @@ Layout resizeItem(
     itemToResize.y,
     cols: cols,
     preventCollision: false,
-    compactType: CompactType.vertical,
+    compactType: compactType,
     force: true,
   );
 }
@@ -1043,7 +1044,7 @@ List<LayoutItem> placeNewItems({
 
   // Define starting point for Y search regarding chosen strategy.
   // appendBottom starts searching from the end, while firstFit starts at (0,0)
-  var startY = (strategy == AutoPlacementStrategy.appendBottom) ? bottom(finalLayout) : 0;
+  final startY = (strategy == AutoPlacementStrategy.appendBottom) ? bottom(finalLayout) : 0;
   var currentX = 0;
   var currentY = startY;
 
@@ -1210,9 +1211,10 @@ Layout moveCluster(
 }) {
   if (clusterIds.isEmpty) return layout;
 
-  // 1. Separate Cluster and Obstacles
-  final cluster = layout.where((i) => clusterIds.contains(i.id)).toList();
-  final obstacles = layout.where((i) => !clusterIds.contains(i.id)).toList();
+  // 1. Separate Cluster (excluding static items) and Obstacles (including static items)
+  final cluster = layout.where((i) => clusterIds.contains(i.id) && !i.isStatic).toList();
+  final staticClusterItems = layout.where((i) => clusterIds.contains(i.id) && i.isStatic).toList();
+  final obstacles = layout.where((i) => !clusterIds.contains(i.id) || i.isStatic).toList();
 
   if (cluster.isEmpty) return layout;
 
@@ -1258,7 +1260,8 @@ Layout moveCluster(
   final finalLayout = resultLayoutWithBBox
       .where((i) => i.id != bbox.id) // Remove virtual bbox
       .toList()
-    ..addAll(movedCluster);
+    ..addAll(movedCluster)
+    ..addAll(staticClusterItems);
 
   return finalLayout;
 }

@@ -83,5 +83,39 @@ void main() {
       // O should be pushed to y=2.
       expect(o.y, 2);
     });
+
+    test('moveCluster does not move static items even if included in clusterIds', () {
+      // Layout:
+      // [A][A] [ ] [S]
+      // [B][B]
+      // Cluster contains dynamic A, B and static S at (3,0)
+      final layout = [
+        const LayoutItem(id: 'A', x: 0, y: 0, w: 2, h: 1),
+        const LayoutItem(id: 'B', x: 0, y: 1, w: 2, h: 1),
+        const LayoutItem(id: 'S', x: 3, y: 0, w: 1, h: 1, isStatic: true),
+      ];
+
+      final result = moveCluster(
+        layout,
+        {'A', 'B', 'S'},
+        1, 0, // Request shift right of 1 column
+        cols: 10,
+        compactType: CompactType.none,
+      );
+
+      final a = result.firstWhere((i) => i.id == 'A');
+      final b = result.firstWhere((i) => i.id == 'B');
+      final s = result.firstWhere((i) => i.id == 'S');
+
+      // The static item S must not move from (3,0)
+      expect(s.x, 3);
+      expect(s.y, 0);
+
+      // The dynamic items A and B should still move correctly by the delta (dx: 1)
+      expect(a.x, 1);
+      expect(a.y, 0);
+      expect(b.x, 1);
+      expect(b.y, 1);
+    });
   });
 }
