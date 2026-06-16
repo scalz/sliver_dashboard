@@ -120,6 +120,31 @@ void main() {
         final result = compactor.resolveCollisions(layout, cols);
         expect(result[1].y, 1);
       });
+
+      test('FastVerticalCompactor handles items with x >= slotCount correctly without overlap', () {
+        const compactor = FastVerticalCompactor();
+        // Setup a grid where slotCount (cols parameter) is 4 (cross-axis in horizontal scroll).
+        // Items are placed at column x=5, which is >= 4!
+        final layout = [
+          const LayoutItem(id: 'A', x: 5, y: 2, w: 1, h: 2),
+          const LayoutItem(id: 'B', x: 5, y: 1, w: 1, h: 1),
+        ];
+
+        final result = compactor.compact(layout, 4);
+
+        final a = result.firstWhere((i) => i.id == 'A');
+        final b = result.firstWhere((i) => i.id == 'B');
+
+        // Under vertical compaction:
+        // Items should be pulled to the top (y=0) on their same column x=5.
+        // B (h=1) is placed at x=5, y=0.
+        // A (h=2) is placed next to B at x=5, y=1.
+        // They should NOT overlap!
+        expect(b.x, 5);
+        expect(a.x, 5);
+        expect(b.y, 0);
+        expect(a.y, 1);
+      });
     });
 
     group('FastHorizontalCompactor', () {
@@ -299,6 +324,32 @@ void main() {
         ];
         final resBelow = compactor.compact(layoutBelow, 10);
         expect(resBelow.firstWhere((i) => i.id == 'D').x, 0);
+      });
+
+      test('FastHorizontalCompactor handles items with y >= slotCount correctly without overlap',
+          () {
+        const compactor = FastHorizontalCompactor();
+        // Setup a 4-column grid (rows parameter passed to compact is 4)
+        // Items are placed at y=5 and y=6, which is >= 4!
+        final layout = [
+          const LayoutItem(id: 'A', x: 2, y: 5, w: 2, h: 1),
+          const LayoutItem(id: 'B', x: 1, y: 5, w: 1, h: 1),
+        ];
+
+        final result = compactor.compact(layout, 4);
+
+        final a = result.firstWhere((i) => i.id == 'A');
+        final b = result.firstWhere((i) => i.id == 'B');
+
+        // Under horizontal compaction:
+        // Items should be pulled to the left (x=0) on their same row y=5.
+        // B (w=1) is placed at x=0, y=5.
+        // A (w=2) is placed next to B at x=1, y=5.
+        // They should NOT overlap!
+        expect(b.x, 0);
+        expect(a.x, 1);
+        expect(b.y, 5);
+        expect(a.y, 5);
       });
     });
   });

@@ -7,6 +7,9 @@
 
 - **Unified Interactive Playground**: You can now test all major capabilities (on Web, Desktop, and Mobile), including standard grid vs direct sliver composition, visual section barriers, adaptive neighbor shrinking, live JSON schema export/import editing, custom drag handles, and interactive mini-map scrubbing.
 
+### Bug Fixes
+- **Skyline Compactors Overlap Resolutions**: Fixed a layout bug in both `FastHorizontalCompactor` and `FastVerticalCompactor` where widgets exceeding standard slot boundaries along the infinite scroll axis were incorrectly forced to index `0` and overlapped. The compaction engines now dynamically calculate their internal Skyline tide tracking arrays based on the actual physical bounds of the layout, fully supporting infinite rows and columns.
+
 ## 0.10.0
 
 ### New Features

@@ -16,11 +16,14 @@ Perfect for analytics dashboards, IoT control panels, project management tools, 
 
 - 🚀 **High Performance:** Built on Flutter's `Sliver` protocol with **smart caching**. It only renders visible items and prevents unnecessary rebuilds of children during drag/resize operations.
 - 🧩 **Sliver Composition:** Integrate the dashboard's grid seamlessly with other slivers like `SliverAppBar` and `SliverList` within a single `CustomScrollView`.
-- 🎨 **Fully Customizable:** Control the number of columns, aspect ratio, spacing, grid and handles style. Items can be draggable, resizable, and static.
+- 🎨 **Fully Customizable:** Control the number of columns, aspect ratio, spacing, grid and handles style. Items can be draggable, resizable, and static. Support for dedicated **Drag Handles** (`DashboardDragStartListener`) and configurable mobile drag start gestures (long-press, tap, or handle-only).
+- 🛡️ **Declarative Interaction Policies (`DashboardPolicy`):** Inject granular business rules (e.g., "charts cannot push system KPIs", "block dragging on Row 0") on-the-fly without having to write custom compaction delegates.
+- 📌 **Segmented Grids (Section Barriers):** Divide your grid into organized visual sections using static section barriers with custom header builders while maintaining strict collision boundaries.
 - ↔️ **Horizontal & Vertical Layouts:** Supports both vertical (default) and horizontal scrolling directions.
 - 💥 **Smart Collision Detection:** Choose your desired behavior:
     - **Push:** Items push each other out of the way to avoid overlap.
     - **Push or Shrink:** Items can be shrinked or pushed when resizing a neighbour item.
+    - **Auto-Shrink on Drag:** Move large widgets over smaller items, and the engine automatically contracts neighboring elements to clear room.
 - 🧲 **Compaction:** Choose your desired behavior:
     - **None:** Free positioning. Items are not compacted.
     - **Vertical:** Items are compacted to top. 
@@ -48,7 +51,7 @@ Perfect for analytics dashboards, IoT control panels, project management tools, 
 - [API Showcase](#api-showcase)
   - [Controlling Edit Mode](#controlling-edit-mode)
   - [Adding and Removing Items](#adding-and-removing-items)
-  - Segmented Grids & Section Barriers
+  - [Segmented Grids & Section Barriers](#segmented-grids--section-barriers)
   - [Programmatic Scrolling](#programmatic-scrolling)
   - [Scroll direction](#scroll-direction)
   - [Allowing free positioning](#allowing-free-positioning)
@@ -67,7 +70,7 @@ Perfect for analytics dashboards, IoT control panels, project management tools, 
   - [Multi Selection and Cluster Drag](#multi-selection-and-cluster-drag)
   - [Layout Optimizer](#layout-optimizer)
   - [Custom Compaction Strategy](#custom-compaction-strategy)
-  - Interaction & Collision Policies (Custom Rules)
+  - [Interaction & Collision Policies Custom Rules](#interaction--collision-policies-custom-rules)
   - [Utilities](#utilities)
 - [Contributing](#contributing)
 - [Roadmap](#roadmap)

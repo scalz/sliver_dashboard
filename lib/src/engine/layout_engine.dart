@@ -245,8 +245,21 @@ class FastVerticalCompactor extends CompactorDelegate {
     int cols, {
     bool allowOverlap = false,
   }) {
+    if (layout.isEmpty) return [];
+
+    // Calculate the actual column count needed for the tide array based on
+    // the layout's right-most item. This supports infinite horizontal columns when compacting
+    // vertically in a horizontally-scrolling grid.
+    var maxCol = cols;
+    for (final item in layout) {
+      if (item.x + item.w > maxCol) {
+        maxCol = item.x + item.w;
+      }
+    }
+    final maxColWithBuffer = maxCol + 10;
+    final tide = List<int>.filled(maxColWithBuffer, 0);
+
     // 1. Clone and Sort
-    // We need a mutable list to sort, but items remain immutable until we replace them.
     final sorted = List<LayoutItem>.from(layout)
       ..sort((a, b) {
         // Sort by Y, then X
@@ -258,10 +271,6 @@ class FastVerticalCompactor extends CompactorDelegate {
         return 0;
       });
 
-    // 2. Initialize Tide (Skyline)
-    // tide[x] = the lowest free Y coordinate in column x
-    final tide = List<int>.filled(cols, 0);
-
     final out = <LayoutItem>[];
 
     // Separate statics for collision check optimization
@@ -272,7 +281,7 @@ class FastVerticalCompactor extends CompactorDelegate {
     for (final item in sorted) {
       // If item is static, it stays put, but updates the tide.
       if (item.isStatic) {
-        _updateTide(tide, item, cols);
+        _updateTide(tide, item, maxColWithBuffer);
         out.add(item);
         staticOffset++; // Advance static cursor
         continue;
@@ -282,7 +291,7 @@ class FastVerticalCompactor extends CompactorDelegate {
 
       // 1. Find the highest point in the tide for the item's width
       var y = 0;
-      final xEnd = min(item.x + item.w, cols);
+      final xEnd = min(item.x + item.w, maxColWithBuffer);
 
       for (var x = item.x; x < xEnd; x++) {
         if (tide[x] > y) {
@@ -319,15 +328,15 @@ class FastVerticalCompactor extends CompactorDelegate {
       out.add(newItem);
 
       // 4. Update Tide
-      _updateTide(tide, newItem, cols);
+      _updateTide(tide, newItem, maxColWithBuffer);
     }
 
     return out;
   }
 
-  void _updateTide(List<int> tide, LayoutItem item, int cols) {
+  void _updateTide(List<int> tide, LayoutItem item, int maxCol) {
     final bottom = item.y + item.h;
-    final xEnd = min(item.x + item.w, cols);
+    final xEnd = min(item.x + item.w, maxCol);
     for (var x = item.x; x < xEnd; x++) {
       // In Rising Tide, the tide always goes UP (or stays same).
       // We set the tide to the bottom of this item.
@@ -348,9 +357,6 @@ class FastVerticalCompactor extends CompactorDelegate {
 
   @override
   List<LayoutItem> resolveCollisions(List<LayoutItem> layout, int cols) {
-    // For drag operations, we can keep the default implementation
-    // or implement a "Fast Push" if needed.
-    // For now, let's reuse the default one as it's robust for user interaction.
     return const VerticalCompactor().resolveCollisions(layout, cols);
   }
 }
@@ -365,9 +371,16 @@ class FastHorizontalCompactor extends CompactorDelegate {
   List<LayoutItem> compact(
     List<LayoutItem> layout,
     int rows, {
-    // 'cols' param actually means 'crossAxisCount', so here it is rows
     bool allowOverlap = false,
   }) {
+    if (layout.isEmpty) return [];
+
+    // Calculate the actual row count needed for the tide array based on
+    // the layout's bottom-most item. This supports infinite vertical rows when compacting
+    // horizontally in a vertically-scrolling grid.
+    final maxRow = max(bottom(layout), rows) + 10;
+    final tide = List<int>.filled(maxRow, 0);
+
     // 1. Clone and Sort
     final sorted = List<LayoutItem>.from(layout)
       ..sort((a, b) {
@@ -381,17 +394,13 @@ class FastHorizontalCompactor extends CompactorDelegate {
         return 0;
       });
 
-    // 2. Initialize Tide (Skyline)
-    // tide[y] = the lowest free X coordinate in row y
-    final tide = List<int>.filled(rows, 0);
-
     final out = <LayoutItem>[];
     final statics = sorted.where((i) => i.isStatic).toList();
     var staticOffset = 0;
 
     for (final item in sorted) {
       if (item.isStatic) {
-        _updateTide(tide, item, rows);
+        _updateTide(tide, item, maxRow);
         out.add(item);
         staticOffset++;
         continue;
@@ -401,8 +410,7 @@ class FastHorizontalCompactor extends CompactorDelegate {
 
       // 1. Find the furthest X in the tide for the item's height (rows spanned)
       var x = 0;
-      // We check rows from item.y to item.y + item.h
-      final yEnd = min(item.y + item.h, rows);
+      final yEnd = min(item.y + item.h, maxRow);
 
       for (var y = item.y; y < yEnd; y++) {
         if (tide[y] > x) {
@@ -433,15 +441,15 @@ class FastHorizontalCompactor extends CompactorDelegate {
       out.add(newItem);
 
       // 4. Update Tide
-      _updateTide(tide, newItem, rows);
+      _updateTide(tide, newItem, maxRow);
     }
 
     return out;
   }
 
-  void _updateTide(List<int> tide, LayoutItem item, int rows) {
+  void _updateTide(List<int> tide, LayoutItem item, int maxRow) {
     final right = item.x + item.w;
-    final yEnd = min(item.y + item.h, rows);
+    final yEnd = min(item.y + item.h, maxRow);
 
     for (var y = item.y; y < yEnd; y++) {
       // The tide always goes RIGHT (increases X).
