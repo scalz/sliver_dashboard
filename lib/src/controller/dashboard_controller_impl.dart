@@ -421,6 +421,11 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     scrollDirection.value = direction;
   }
 
+  @override
+  void setAllowAutoShrink({required bool allow}) {
+    allowAutoShrink.value = allow;
+  }
+
   /// Adds or moves a temporary placeholder item in the layout.
   ///
   /// This is used during a drag-over operation from an external source.
