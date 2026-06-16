@@ -23,6 +23,10 @@ class MyTestPolicy extends DashboardPolicy {
   }
 }
 
+class DefaultTestPolicy extends DashboardPolicy {
+  const DefaultTestPolicy();
+}
+
 void main() {
   group('DashboardPolicy Integration', () {
     late DashboardControllerImpl controller;
@@ -96,6 +100,16 @@ void main() {
       expect(kpi.x, 2);
       expect(kpi.y, 2);
       expect(chart.y, greaterThanOrEqualTo(3)); // Chart pushed past
+    });
+
+    test('DashboardPolicy default implementations return true', () {
+      const policy = DefaultTestPolicy();
+      const item = LayoutItem(id: 'test', x: 0, y: 0, w: 1, h: 1);
+
+      expect(policy.canDrag(item), isTrue);
+      expect(policy.canResize(item), isTrue);
+      expect(policy.canMoveTo(item, 0, 0, []), isTrue);
+      expect(policy.canCollide(item, item), isTrue);
     });
   });
 }

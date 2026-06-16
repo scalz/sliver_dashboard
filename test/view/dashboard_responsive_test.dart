@@ -149,5 +149,50 @@ void main() {
       expect(find.text('Custom Overview'), findsOneWidget);
       expect(find.text('Card item1'), findsOneWidget);
     });
+
+    testWidgets('Dashboard renders default section headers when custom header builder is null',
+        (tester) async {
+      controller = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: [
+          const LayoutItem(
+            id: 'header1',
+            x: 0,
+            y: 0,
+            w: 4,
+            h: 1,
+            isSectionBarrier: true,
+            sectionTitle: 'Default Overview',
+          ),
+          const LayoutItem(
+            id: 'header_no_title',
+            x: 0,
+            y: 1,
+            w: 4,
+            h: 1,
+            isSectionBarrier: true, // sectionTitle is left null to cover fallback branch
+          ),
+          const LayoutItem(id: 'item1', x: 0, y: 2, w: 1, h: 1),
+        ],
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Dashboard<String>(
+              controller: controller,
+              itemBuilder: (ctx, item) => Text('Card ${item.id}'),
+              // sectionHeaderBuilder is left null to force default rendering
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Verify both default headers are rendered correctly with their fallback texts
+      expect(find.text('Default Overview'), findsOneWidget);
+      expect(find.text('Section'), findsOneWidget); // Verifies "item.sectionTitle ?? 'Section'"
+      expect(find.text('Card item1'), findsOneWidget);
+    });
   });
 }

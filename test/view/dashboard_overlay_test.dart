@@ -950,5 +950,169 @@ void main() {
 
       await tester.pump();
     });
+
+    test('DashboardOverlayController default constructor and methods', () {
+      const controller = DashboardOverlayController();
+      expect(() => controller.startDragging('1', Offset.zero), returnsNormally);
+    });
+
+    testWidgets(
+        'DashboardOverlay updates scroll subscription when controller changes in didUpdateWidget',
+        (tester) async {
+      final controller1 = DashboardController(initialSlotCount: 4);
+      final controller2 = DashboardController(initialSlotCount: 4);
+      final scrollController = ScrollController();
+
+      // 1. Build with controller1
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Dashboard(
+              controller: controller1,
+              scrollController: scrollController,
+              itemBuilder: (context, item) => const SizedBox(),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // 2. Rebuild with controller2 to trigger didUpdateWidget
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Dashboard(
+              controller: controller2,
+              scrollController: scrollController,
+              itemBuilder: (context, item) => const SizedBox(),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      // Clean up
+      controller1.dispose();
+      controller2.dispose();
+      scrollController.dispose();
+    });
+
+    testWidgets('scrollToItem completes gracefully if RenderSliverDashboard is not found',
+        (tester) async {
+      final scrollController = ScrollController();
+      controller.layout.value = [
+        const LayoutItem(id: '1', x: 0, y: 0, w: 1, h: 1),
+      ];
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: DashboardOverlay(
+              controller: controller,
+              scrollController: scrollController,
+              itemBuilder: (context, item) => const SizedBox(),
+              // child does NOT contain SliverDashboard to force null RenderSliver
+              child: CustomScrollView(
+                controller: scrollController,
+                slivers: const [
+                  SliverToBoxAdapter(child: SizedBox()),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+
+      // Request scroll, should return early and complete normally
+      final scrollFuture =
+          controller.scrollToItem('1', duration: const Duration(milliseconds: 100));
+
+      expect(scrollFuture, completes);
+      await tester.pump();
+
+      scrollController.dispose();
+    });
+
+    testWidgets(
+        'scrollToItem completes gracefully if item is removed before scroll animation handles',
+        (tester) async {
+      final scrollController = ScrollController();
+      controller.layout.value = [
+        const LayoutItem(id: '1', x: 0, y: 0, w: 1, h: 1),
+      ];
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: DashboardOverlay(
+              controller: controller,
+              scrollController: scrollController,
+              itemBuilder: (context, item) => const SizedBox(),
+              child: CustomScrollView(
+                controller: scrollController,
+                slivers: [
+                  SliverDashboard(
+                    itemBuilder: (context, item) => const SizedBox(),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+
+      // 1. Request scroll to '1'
+      final scrollFuture =
+          controller.scrollToItem('1', duration: const Duration(milliseconds: 100));
+
+      // 2. Immediately remove the item before the asynchronous stream executes
+      controller.removeItem('1');
+
+      // 3. Process the event loop
+      expect(scrollFuture, completes);
+      await tester.pump();
+
+      scrollController.dispose();
+    });
+
+    testWidgets('scrollToItem jumps instantly when duration is Duration.zero', (tester) async {
+      final scrollController = ScrollController();
+      final items = List.generate(20, (i) => LayoutItem(id: '$i', x: 0, y: i, w: 1, h: 1));
+      controller.layout.value = items;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: DashboardOverlay(
+              controller: controller,
+              scrollController: scrollController,
+              itemBuilder: (context, item) => const SizedBox(),
+              child: CustomScrollView(
+                controller: scrollController,
+                slivers: [
+                  SliverDashboard(
+                    itemBuilder: (context, item) => const SizedBox(),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Request instant jump (duration: Duration.zero)
+      final scrollFuture = controller.scrollToItem(
+        '15',
+        duration: Duration.zero,
+      );
+
+      expect(scrollFuture, completes);
+      await tester.pump();
+
+      // Verify that the scroll position updated instantly
+      expect(scrollController.offset, greaterThan(0));
+      scrollController.dispose();
+    });
   });
 }

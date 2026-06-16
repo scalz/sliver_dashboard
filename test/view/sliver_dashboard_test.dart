@@ -53,4 +53,82 @@ void main() {
     // Just verify no crash and that we are still in a valid state
     expect(find.byType(SliverDashboard), findsOneWidget);
   });
+
+  testWidgets('SliverDashboard updates render object properties and triggers layout cleanly',
+      (tester) async {
+    final controller = DashboardController(
+      initialSlotCount: 4,
+      initialLayout: [
+        const LayoutItem(id: '1', x: 0, y: 0, w: 1, h: 1),
+      ],
+    );
+
+    // 1. Build initial SliverDashboard
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: DashboardControllerProvider(
+            controller: controller,
+            child: CustomScrollView(
+              slivers: [
+                SliverDashboard(
+                  itemBuilder: (context, item) => const SizedBox(),
+                  slotAspectRatio: 1,
+                  mainAxisSpacing: 8,
+                  crossAxisSpacing: 8,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // Find the RenderSliverDashboard
+    final renderSliver =
+        tester.renderObject<RenderSliverDashboard>(find.byType(SliverDashboardLayout));
+
+    // Cover isEditing getter
+    expect(renderSliver.isEditing, isFalse);
+
+    // 2. Rebuild with DIFFERENT properties to trigger updateRenderObject and all setters
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: DashboardControllerProvider(
+            controller: controller,
+            child: CustomScrollView(
+              slivers: [
+                SliverDashboard(
+                  itemBuilder: (context, item) => const SizedBox(),
+                  slotAspectRatio: 2,
+                  mainAxisSpacing: 10,
+                  crossAxisSpacing: 10,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    // Verify that all render object properties updated
+    expect(renderSliver.slotAspectRatio, 2.0);
+    expect(renderSliver.mainAxisSpacing, 10.0);
+    expect(renderSliver.crossAxisSpacing, 10.0);
+
+    // 3. Directly set onPerformLayout and empty items to cover empty performLayout branch
+    var layoutCalledOnEmpty = false;
+    renderSliver
+      ..onPerformLayout = (duration) {
+        layoutCalledOnEmpty = true;
+      }
+      ..items = []
+      ..layout(renderSliver.constraints, parentUsesSize: true);
+
+    expect(layoutCalledOnEmpty, isTrue);
+    controller.dispose();
+  });
 }

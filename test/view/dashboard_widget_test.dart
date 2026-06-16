@@ -331,6 +331,66 @@ void main() {
       // Verify drag ended cleanly
       expect(controller.isDragging.value, isFalse);
     });
+
+    testWidgets(
+        'DashboardDelayedDragStartListener starts and completes a drag operation after long press',
+        (tester) async {
+      controller.toggleEditing();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 800,
+              height: 600,
+              child: Dashboard<String>(
+                controller: controller,
+                dragStartGesture: DragStartGesture.none, // Force handle drag
+                itemBuilder: (context, item) {
+                  return Stack(
+                    children: [
+                      Center(child: Text(item.id)),
+                      Center(
+                        child: DashboardDelayedDragStartListener(
+                          itemId: item.id,
+                          child: const Icon(Icons.drag_handle, key: ValueKey('delayed_handle')),
+                        ),
+                      ),
+                    ],
+                  );
+                },
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final handleFinder = find.byKey(const ValueKey('delayed_handle')).first;
+
+      expect(controller.isDragging.value, isFalse);
+
+      // 1. Touch down and hold to simulate a long press on the delayed handle
+      final gesture = await tester.startGesture(tester.getCenter(handleFinder));
+      // Wait for long press recognition threshold
+      await tester.pump(kLongPressTimeout + const Duration(milliseconds: 100));
+      await tester.pump();
+
+      // Verify that dragging has started successfully after the delay
+      expect(controller.isDragging.value, isTrue);
+      expect(controller.activeItemId.value, 'a');
+
+      // 2. Translate pointer
+      await gesture.moveBy(const Offset(100, 100));
+      await tester.pump();
+
+      // 3. Release pointer
+      await gesture.up();
+      await tester.pump();
+
+      // Verify drag ended cleanly
+      expect(controller.isDragging.value, isFalse);
+    });
   });
 
   group('Dashboard Widget Tests (External DragTarget)', () {
