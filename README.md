@@ -48,6 +48,7 @@ Perfect for analytics dashboards, IoT control panels, project management tools, 
 - [API Showcase](#api-showcase)
   - [Controlling Edit Mode](#controlling-edit-mode)
   - [Adding and Removing Items](#adding-and-removing-items)
+  - Segmented Grids & Section Barriers
   - [Programmatic Scrolling](#programmatic-scrolling)
   - [Scroll direction](#scroll-direction)
   - [Allowing free positioning](#allowing-free-positioning)
@@ -66,6 +67,7 @@ Perfect for analytics dashboards, IoT control panels, project management tools, 
   - [Multi Selection and Cluster Drag](#multi-selection-and-cluster-drag)
   - [Layout Optimizer](#layout-optimizer)
   - [Custom Compaction Strategy](#custom-compaction-strategy)
+  - Interaction & Collision Policies (Custom Rules)
   - [Utilities](#utilities)
 - [Contributing](#contributing)
 - [Roadmap](#roadmap)
@@ -235,6 +237,70 @@ void addNewItem() {
 void deleteItem(String id) {
   controller.removeItem(id);
 }
+```
+
+### Segmented Grids & Section Barriers
+
+You can organize your widgets into distinct, visually separated groups (e.g. "Overview", "Analytics") within a single `DashboardController` . Simply add a static section barrier item spanning the full width of the grid :
+
+```dart
+final controller = DashboardController(
+  initialSlotCount: 8,
+  initialLayout: [
+    // 1. Define a Section Barrier spanning full width (8 columns)
+    const LayoutItem(
+      id: 'section_1',
+      x: 0,
+      y: 0,
+      w: 8,
+      h: 1,
+      isSectionBarrier: true,
+      sectionTitle: '📌 System Performance',
+    ),
+    // Dynamic items inside Section 1
+    const LayoutItem(id: '9', x: 0, y: 1, w: 2, h: 2),
+
+    // 2. Define a second Section Barrier
+    const LayoutItem(
+      id: 'section_2',
+      x: 0,
+      y: 3,
+      w: 8,
+      h: 1,
+      isSectionBarrier: true,
+      sectionTitle: '📊 User Analytics',
+    ),
+    const LayoutItem(id: '15', x: 0, y: 4, w: 2, h: 2),
+  ],
+);
+```
+
+### Custom Section Headers
+
+By default, the package renders a clean text header using your active Theme's primary color . You can fully customize this using the sectionHeaderBuilder callback
+
+```dart
+Dashboard(
+  controller: controller,
+  // Custom section header builder
+  sectionHeaderBuilder: (context, item) {
+    return Container(
+      color: Colors.blue.shade50,
+      padding: const EdgeInsets.all(12),
+      child: Row(
+        children: [
+          const Icon(Icons.bookmark, color: Colors.blue),
+          const SizedBox(width: 8),
+          Text(
+            item.sectionTitle ?? '',
+            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+          ),
+        ],
+      ),
+    );
+  },
+  itemBuilder: (context, item) => MyCard(item),
+)
 ```
 
 ### Programmatic Scrolling
@@ -431,10 +497,10 @@ Container(
 
 ### Custom Drag Handles & Mobile Gestures
 
-By default, dragging on mobile is initiated by a long-press on any part of the card [INDEX]. You can fully customize this behavior using the `dragStartGesture` parameter [INDEX] or restrict dragging to a **dedicated handle** (like an icon) using `DashboardDragStartListener` [INDEX].
+By default, dragging on mobile is initiated by a long-press on any part of the card . You can fully customize this behavior using the `dragStartGesture` parameter  or restrict dragging to a **dedicated handle** (like an icon) using `DashboardDragStartListener` .
 
 #### 1. Tap-to-drag on Mobile
-If you want items to be draggable immediately on touch/down (without any long-press delay) [INDEX]:
+If you want items to be draggable immediately on touch/down (without any long-press delay) :
 ```dart
 Dashboard(
   controller: controller,
@@ -444,9 +510,9 @@ Dashboard(
 ```
 
 #### 2. Restricting Drag to a Custom Handle (Icon)
-To make your grid items draggable *only* when dragging a specific handle (icon) [INDEX]:
-1. Set `dragStartGesture: DragStartGesture.none` on your `Dashboard` to disable dragging on the card's body [INDEX].
-2. Wrap your handle widget in a `DashboardDragStartListener` [INDEX].
+To make your grid items draggable *only* when dragging a specific handle (icon) :
+1. Set `dragStartGesture: DragStartGesture.none` on your `Dashboard` to disable dragging on the card's body .
+2. Wrap your handle widget in a `DashboardDragStartListener` .
 
 ```dart
 Dashboard(
@@ -578,6 +644,16 @@ DashboardOverlay(
   // ...
 )
 ```
+
+### Adaptive Neighbor Shrinking (Auto-Shrink on Drag)
+
+When dragging a large widget over smaller items, the default behavior pushes everything downwards, which can cause significant layout shifts. You can enable **Auto-Shrink on Drag** to dynamically contract neighboring items' heights down to their `minH` limits to clear room first :
+
+```dart
+// Enable auto-shrink dynamically via the controller
+controller.setAllowAutoShrink(allow: true)
+```
+Note: If neighbors hit their minH limit and still cannot fit, the engine gracefully falls back to pushing them downwards, keeping your layout.
 
 ### Import / Export (Persistence)
 
@@ -825,6 +901,38 @@ class MyCustomCompactor extends CompactorDelegate {
 controller.setCompactor(MyCustomCompactor());
 ```
 
+### Interaction & Collision Policies (Custom Rules)
+
+To enforce granular business rules (e.g. "KPI widgets cannot push Chart widgets", "Notes cannot be dragged to Row 0", or "disable resizing on certain conditions") without writing a custom compaction delegate, you can inject a custom `DashboardPolicy`:
+
+```dart
+class MyDashboardPolicy extends DashboardPolicy {
+  @override
+  bool canDrag(LayoutItem item) => item.id != 'locked-item';
+
+  @override
+  bool canResize(LayoutItem item) => item.w < 6;
+
+  @override
+  bool canMoveTo(LayoutItem item, int targetX, int targetY, List<LayoutItem> currentLayout) {
+    // Block moving any item into Row 0 (reserved system area)
+    return targetY > 0;
+  }
+
+  @override
+  bool canCollide(LayoutItem itemA, LayoutItem itemB) {
+    // Block charts from pushing system KPIs
+    if (itemA.id.startsWith('chart') && itemB.id.startsWith('kpi')) {
+      return false;
+    }
+    return true;
+  }
+}
+
+// Inject the policy into your controller
+controller.policy = MyDashboardPolicy();
+```
+
 ### Utilities
 
 The controller provides useful getters to help you interact with the layout programmatically.
@@ -962,5 +1070,5 @@ Pull requests should pass all checks before they can be merged into the `main` b
 - ✅ **Layout Optimizer:** Visual Bin Packing.
 - ✅ **Mini-map:** Display and navigate via a minimap.
 - ✅ **Multi-Selection:** Multi item selection and dragging.
-- 🔲 **Sticky Headers:** Special item to create "barrier" for defining sections in layout.
+- ✅ **Sticky Headers:** Special item to create "barrier" for defining sections in layout.
 - 🔲 **Nested dashboard:** Special "folder" item where you can drag&drop items from main dashboard to a "folder" dashboard, and vice-versa.

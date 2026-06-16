@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
@@ -15,14 +16,45 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Sliver Dashboard Example',
+      title: 'Sliver Dashboard Playground',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: Colors.indigo,
+          brightness: Brightness.dark,
+        ),
         useMaterial3: true,
       ),
       home: const DashboardPage(),
     );
+  }
+}
+
+/// A strict enterprise policy to isolate layout regions and block specific collisions.
+class CustomDashboardPolicy extends DashboardPolicy {
+  const CustomDashboardPolicy({required this.blockSectionCollision});
+
+  final bool blockSectionCollision;
+
+  @override
+  bool canCollide(LayoutItem itemA, LayoutItem itemB) {
+    // If enabled, prevent any dynamic item from pushing/colliding with
+    // section barriers. The section headers act as immoveable visual dividers.
+    if (blockSectionCollision && itemB.isSectionBarrier) {
+      return false;
+    }
+    return true;
+  }
+
+  @override
+  bool canMoveTo(
+    LayoutItem item,
+    int targetX,
+    int targetY,
+    List<LayoutItem> currentLayout,
+  ) {
+    // Optional: block moving items above y=0 if it's the reserved top section
+    return true;
   }
 }
 
@@ -35,37 +67,36 @@ class DashboardPage extends StatefulWidget {
 
 class _DashboardPageState extends State<DashboardPage> {
   // Initial slot count for the controller.
-  // The Dashboard widget will update this automatically based on breakpoints.
   var slotCount = 8;
 
   // Create and manage your DashboardController.
   late final DashboardController controller;
 
-  final scrollController = ScrollController();
+  final standardScrollController = ScrollController();
+  final sliverScrollController = ScrollController();
+  final jsonController = TextEditingController();
 
-  final editMode = ValueNotifier(false);
+  final isEditing = ValueNotifier(false);
+  final showMinimap = ValueNotifier(true);
+  final useSliverDemo = ValueNotifier(false);
+  final useDragHandlesOnly = ValueNotifier(false);
+  final blockSectionCollision = ValueNotifier(true);
+  final autoShrink = ValueNotifier(false);
   final compactionType = ValueNotifier<CompactType>(CompactType.vertical);
-  final showMap = ValueNotifier(false);
-  var scrollDirection = Axis.vertical;
-  var resizeBehavior = ResizeBehavior.push;
+  final resizeBehavior = ValueNotifier<ResizeBehavior>(ResizeBehavior.push);
+  final placementStrategy = ValueNotifier<AutoPlacementStrategy>(
+    AutoPlacementStrategy.firstFit,
+  );
+
   final cardColors = <String, Color>{};
   final random = Random();
-
-  bool get isMobile {
-    if (kIsWeb) {
-      return defaultTargetPlatform == TargetPlatform.android ||
-          defaultTargetPlatform == TargetPlatform.iOS;
-    }
-    return defaultTargetPlatform == TargetPlatform.android ||
-        defaultTargetPlatform == TargetPlatform.iOS;
-  }
 
   Color getColorForItem(String id) {
     return cardColors.putIfAbsent(id, () {
       return Color.fromRGBO(
-        random.nextInt(256),
-        random.nextInt(256),
-        random.nextInt(256),
+        random.nextInt(120) + 50,
+        random.nextInt(120) + 50,
+        random.nextInt(120) + 120,
         1,
       );
     });
@@ -74,61 +105,61 @@ class _DashboardPageState extends State<DashboardPage> {
   @override
   void initState() {
     super.initState();
-    // Create and manage your DashboardController.
     controller = DashboardController(
       initialSlotCount: slotCount,
       onLayoutChanged: (items, bkSlotCount) {
-        debugPrint(
-          'Layout changed! Saving ${items.length} items to persistence for bkSlotCount=$bkSlotCount...',
-        );
-        // In a real app, you would save the layout to a DB or SharedPreferences.
-        // You can get a JSON-ready list of maps using:
-        // final json = controller.exportLayout();
-        // myStorage.save(json);
-      },
-      onInteractionStart: (item) {
-        // Do something, eg. haptic feedback..
-        debugPrint('Interaction started on ${item.id}');
+        _syncJsonField();
       },
       initialLayout: [
-        // Row 1
+        // Section 1 Barrier
         const LayoutItem(
-          id: '9',
+          id: 'sec_sys',
           x: 0,
           y: 0,
+          w: 8,
+          h: 1,
+          isSectionBarrier: true,
+          sectionTitle: '📌 System Diagnostics (Section 1)',
+        ),
+        const LayoutItem(
+          id: 'sys_cpu',
+          x: 0,
+          y: 1,
           w: 2,
           h: 2,
-          isDraggable: true,
-          isResizable: true,
-          isStatic: false,
+          minW: 1,
+          minH: 1,
         ),
-        const LayoutItem(id: '12', x: 2, y: 4, w: 2, h: 2),
-        const LayoutItem(id: '7', x: 4, y: 0, w: 2, h: 2),
-        const LayoutItem(id: '1', x: 6, y: 0, w: 2, h: 1),
+        const LayoutItem(id: 'sys_mem', x: 2, y: 1, w: 2, h: 2),
 
-        // Row 2
-        const LayoutItem(id: '13', x: 6, y: 1, w: 2, h: 1),
-
-        // Row 3
-        const LayoutItem(id: '15', x: 0, y: 2, w: 2, h: 2),
-        const LayoutItem(id: '0', x: 2, y: 2, w: 2, h: 1),
-        const LayoutItem(id: '2', x: 4, y: 2, w: 2, h: 3),
-        const LayoutItem(id: '14', x: 6, y: 2, w: 2, h: 2),
-
-        // Row 4
-        const LayoutItem(id: '6', x: 2, y: 3, w: 2, h: 1),
-
-        // Row 5
-        const LayoutItem(id: '24', x: 0, y: 4, w: 2, h: 2),
-        const LayoutItem(id: '18', x: 2, y: 4, w: 2, h: 2),
-        const LayoutItem(id: '21', x: 6, y: 4, w: 2, h: 2),
-
-        // Row 6 (Static and others at the bottom)
-        const LayoutItem(id: '19', x: 4, y: 5, w: 2, h: 2, isStatic: true),
-        const LayoutItem(id: '20', x: 6, y: 6, w: 2, h: 2),
-        const LayoutItem(id: '3', x: 4, y: 7, w: 2, h: 1),
+        // Section 2 Barrier
+        const LayoutItem(
+          id: 'sec_usr',
+          x: 0,
+          y: 3,
+          w: 8,
+          h: 1,
+          isSectionBarrier: true,
+          sectionTitle: '📊 Custom Widgets & Analytics (Section 2)',
+        ),
+        const LayoutItem(
+          id: 'chart_sales',
+          x: 0,
+          y: 4,
+          w: 4,
+          h: 2,
+          isResizable: true,
+        ),
+        const LayoutItem(id: 'chart_geo', x: 4, y: 4, w: 2, h: 2),
+        const LayoutItem(id: 'table_logs', x: 6, y: 4, w: 2, h: 3),
       ],
     );
+
+    // Sync initial configuration
+    controller.setEditMode(isEditing.value);
+    controller.setAllowAutoShrink(allow: autoShrink.value);
+    _updatePolicy();
+    _syncJsonField();
 
     controller.shortcuts = DashboardShortcuts(
       moveUp: {const SingleActivator(LogicalKeyboardKey.keyW)},
@@ -139,449 +170,319 @@ class _DashboardPageState extends State<DashboardPage> {
       drop: DashboardShortcuts.defaultShortcuts.drop,
       cancel: DashboardShortcuts.defaultShortcuts.cancel,
     );
+
+    blockSectionCollision.addListener(_updatePolicy);
+  }
+
+  void _updatePolicy() {
+    controller.policy = CustomDashboardPolicy(
+      blockSectionCollision: blockSectionCollision.value,
+    );
+  }
+
+  void _syncJsonField() {
+    final list = controller.exportLayout();
+    jsonController.text = const JsonEncoder.withIndent('  ').convert(list);
+  }
+
+  void _importJson() {
+    try {
+      final decoded = jsonDecode(jsonController.text);
+      if (decoded is List) {
+        controller.importLayout(decoded);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Layout imported successfully!'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Invalid JSON: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  void _addNewItem() {
+    final w = random.nextInt(2) + 1;
+    final h = random.nextInt(2) + 1;
+    final newItem = LayoutItem(
+      id: 'widget_${DateTime.now().millisecondsSinceEpoch % 10000}',
+      x: -1,
+      y: -1,
+      w: w,
+      h: h,
+    );
+    controller.addItem(newItem, strategy: placementStrategy.value);
+  }
+
+  void _addStressTestItems(int count) {
+    final list = <LayoutItem>[];
+    final timestamp = DateTime.now().millisecondsSinceEpoch;
+    for (var i = 0; i < count; i++) {
+      list.add(
+        LayoutItem(
+          id: 'stress_${timestamp}_$i',
+          x: -1,
+          y: -1,
+          w: random.nextInt(2) + 1,
+          h: random.nextInt(2) + 1,
+        ),
+      );
+    }
+    controller.addItems(list, strategy: placementStrategy.value);
+  }
+
+  /// Unified deletion dialog helper supporting both singular and plural grammar.
+  Future<bool> _confirmDeletion(List<LayoutItem> items) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete ?'),
+        content: Text(
+          items.length == 1
+              ? 'Do you want to remove item ${items.first.id}?'
+              : 'Do you want to remove items ${items.map((e) => e.id).join(', ')}?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('No'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Yes'),
+          ),
+        ],
+      ),
+    );
+    return confirm ?? false;
+  }
+
+  /// Triggered when clicking the manual 'x' close button on a single card.
+  Future<void> _confirmAndDelete(LayoutItem item) async {
+    final confirm = await _confirmDeletion([item]);
+    if (confirm) {
+      controller.removeItem(item.id);
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Item ${item.id} deleted')));
+      }
+    }
   }
 
   @override
   void dispose() {
-    editMode.dispose();
-    showMap.value = false;
+    blockSectionCollision.removeListener(_updatePolicy);
+    isEditing.dispose();
+    showMinimap.dispose();
+    useSliverDemo.dispose();
+    useDragHandlesOnly.dispose();
+    blockSectionCollision.dispose();
+    autoShrink.dispose();
     compactionType.dispose();
+    resizeBehavior.dispose();
+    placementStrategy.dispose();
+    jsonController.dispose();
     controller.dispose();
+    standardScrollController.dispose();
+    sliverScrollController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
+    final isDesktop = MediaQuery.of(context).size.width >= 950;
+
+    final configPanel = _ConfigPanel(
+      controller: controller,
+      jsonController: jsonController,
+      isEditing: isEditing,
+      showMinimap: showMinimap,
+      useSliverDemo: useSliverDemo,
+      useDragHandlesOnly: useDragHandlesOnly,
+      blockSectionCollision: blockSectionCollision,
+      autoShrink: autoShrink,
+      compactionType: compactionType,
+      resizeBehavior: resizeBehavior,
+      placementStrategy: placementStrategy,
+      onImportJson: _importJson,
+      onStressTest: _addStressTestItems,
+    );
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Sliver Dashboard Example'),
+        title: const Text('Sliver Dashboard Playground'),
+        elevation: 2,
         actions: [
-          ValueListenableBuilder(
-            valueListenable: showMap,
-            builder: (context, value, _) {
-              return IconButton(
-                tooltip: 'Show Map',
-                icon: Icon(
-                  Icons.map,
-                  color: value ? theme.colorScheme.primary : null,
-                ),
-                onPressed: () => showMap.value = !showMap.value,
-              );
-            },
-          ),
-          IconButton(
-            tooltip: 'Optimize Layout',
-            icon: const Icon(Icons.auto_awesome),
-            onPressed: () => controller.optimizeLayout(),
-          ),
-          // Add a button to toggle edit mode.
-          ValueListenableBuilder(
-            valueListenable: editMode,
-            builder: (context, value, _) {
-              return IconButton(
-                tooltip: 'Toggle Edit Mode',
-                icon: Icon(value ? Icons.check : Icons.edit),
-                onPressed: () {
-                  editMode.value = !editMode.value;
-                  controller.setEditMode(editMode.value);
-                },
-              );
-            },
-          ),
+          if (!isDesktop)
+            Builder(
+              builder: (context) {
+                return IconButton(
+                  icon: const Icon(Icons.tune),
+                  tooltip: 'Open Config Panel',
+                  onPressed: () => Scaffold.of(context).openEndDrawer(),
+                );
+              },
+            ),
         ],
       ),
-      body: Column(
+      endDrawer: isDesktop ? null : Drawer(child: SafeArea(child: configPanel)),
+      body: Row(
         children: [
-          const SizedBox(height: 8),
-          Wrap(
-            direction: Axis.horizontal,
-            alignment: WrapAlignment.center,
-            runSpacing: 0,
-            spacing: 8,
-            children: [
-              ValueListenableBuilder(
-                valueListenable: compactionType,
-                builder: (context, _, _) {
-                  return SegmentedButton<CompactType>(
-                    selected: {compactionType.value},
-                    onSelectionChanged: (value) {
-                      compactionType.value = value.first;
-                      controller.setCompactionType(value.first);
-                    },
-                    segments: [
-                      const ButtonSegment(
-                        label: Text('None'),
-                        value: CompactType.none,
-                      ),
-                      ButtonSegment(
-                        label: Text('Compact ${CompactType.vertical.name}'),
-                        value: CompactType.vertical,
-                      ),
-                      ButtonSegment(
-                        label: Text('Compact ${CompactType.horizontal.name}'),
-                        value: CompactType.horizontal,
-                      ),
-                    ],
-                  );
-                },
-              ),
-              SegmentedButton<Axis>(
-                selected: {scrollDirection},
-                onSelectionChanged: (value) => setState(() {
-                  scrollDirection = value.firstOrNull == Axis.horizontal
-                      ? Axis.horizontal
-                      : Axis.vertical;
-                }),
-                segments: [
-                  ButtonSegment(
-                    label: Text('Scroll ${Axis.vertical.name}'),
-                    value: Axis.vertical,
-                  ),
-                  ButtonSegment(
-                    label: Text('Scroll ${Axis.horizontal.name}'),
-                    value: Axis.horizontal,
-                  ),
-                ],
-              ),
-              SegmentedButton<ResizeBehavior>(
-                selected: {resizeBehavior},
-                onSelectionChanged: (value) => setState(() {
-                  resizeBehavior = value.firstOrNull == ResizeBehavior.shrink
-                      ? ResizeBehavior.shrink
-                      : ResizeBehavior.push;
-                }),
-                segments: const [
-                  ButtonSegment(
-                    label: Text('Resize Push'),
-                    value: ResizeBehavior.push,
-                  ),
-                  ButtonSegment(
-                    label: Text('Resize Shrink'),
-                    value: ResizeBehavior.shrink,
-                  ),
-                ],
-              ),
-            ],
-          ),
-          const Divider(),
-          RichText(
-            text: TextSpan(
-              style: theme.textTheme.bodyMedium,
-              children: [
-                if (!isMobile)
-                  const TextSpan(
-                    text: 'Keyboard navigation: ',
-                    style: TextStyle(fontWeight: FontWeight.w500),
-                  ),
-                if (!isMobile)
-                  const TextSpan(
-                    text: 'Tab, Space to start/stop moving, Arrows.\n',
-                    style: TextStyle(fontWeight: FontWeight.normal),
-                  ),
-                const TextSpan(
-                  text: 'Multi-select: ',
-                  style: TextStyle(fontWeight: FontWeight.w500),
-                ),
-                TextSpan(
-                  text: !isMobile
-                      ? 'Select and move multiple items at once using Shift + Click (Single tap on mobile).'
-                      : 'Single tap to select and move multiple items at once.',
-                  style: const TextStyle(fontWeight: FontWeight.normal),
-                ),
-              ],
-            ),
-          ),
-          const Divider(),
-          // Add some external draggables to demonstrate dropping new items.
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 8),
-            child: Wrap(
-              spacing: 10,
-              runSpacing: 10,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [
-                Text('Drag to add:'),
-                Draggable<String>(
-                  data: 'New Chart',
-                  feedback: SizedBox(
-                    width: 100,
-                    height: 50,
-                    child: Card(
-                      elevation: 8,
-                      child: Center(child: Icon(Icons.bar_chart)),
-                    ),
-                  ),
-                  child: Chip(
-                    label: Text('Chart'),
-                    avatar: Icon(Icons.bar_chart),
-                  ),
-                ),
-                Draggable<String>(
-                  data: 'New Table',
-                  feedback: SizedBox(
-                    width: 100,
-                    height: 50,
-                    child: Card(
-                      elevation: 8,
-                      child: Center(child: Icon(Icons.table_rows)),
-                    ),
-                  ),
-                  child: Chip(
-                    label: Text('Table'),
-                    avatar: Icon(Icons.table_rows),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const Divider(),
           Expanded(
-            // Build the Dashboard widget.
-            child: Stack(
-              children: [
-                Dashboard<String>(
-                  controller: controller,
-                  trashHoverDelay: const Duration(seconds: 1),
-                  scrollDirection: scrollDirection,
-                  scrollController: scrollController,
-                  // ResizeBehavior.push or ResizeBehavior.shrink
-                  resizeBehavior: resizeBehavior,
-                  showScrollbar: true,
-                  slotAspectRatio: 1.0,
-                  // Responsive breakpoints:
-                  breakpoints: {
-                    0: 4, // Mobile: 4 cols
-                    600: 8, // Tablet: 8 cols
-                    1200: 12, // Desktop: 12 cols
-                  },
-                  // The size of the touch target
-                  resizeHandleSide: 20, // default 20.0
-                  padding: EdgeInsets.symmetric(horizontal: 8),
-                  mainAxisSpacing: 8.0, // default 8.0
-                  crossAxisSpacing: 8.0, // default 8.0
-                  // how many non visible pixels to preload on top and bottom
-                  cacheExtent: 500,
-                  guidance: DashboardGuidance
-                      .byDefault, // default null for no guidance
-                  // guidance: const DashboardGuidance(
-                  //   move: InteractionGuidance(
-                  //     SystemMouseCursors.grab,
-                  //     'Click and drag to move item',
-                  //   ),
-                  // ),
-                  gridStyle: GridStyle(
-                    fillColor: Colors.black.withValues(alpha: 0.5),
-                    handleColor: Colors.red.withValues(alpha: 0.5),
-                    lineColor: Colors.black26.withValues(alpha: 0.5),
-                    lineWidth: 1,
-                  ),
-                  // Custom Feedback Builder
-                  itemFeedbackBuilder: (context, item, child) {
-                    return Opacity(
-                      opacity: 0.7,
-                      child: Material(
-                        elevation: 8,
-                        shadowColor: Colors.black,
-                        borderRadius: BorderRadius.circular(12),
-                        color: Colors.transparent,
-                        child: child,
-                      ),
-                    );
-                  },
-                  // Handle drops from external sources.
-                  onDrop: (data, layoutItem) {
-                    debugPrint('Dropped data: $data');
-                    return DateTime.now().millisecondsSinceEpoch.toString();
-                  },
-                  // The itemBuilder builds the visual representation of each item.
-                  itemBuilder: (context, item) {
-                    return MyCard(
-                      key: ValueKey(item.id),
-                      item: item,
-                      color: getColorForItem(item.id),
-                      onDeleteItem: () => controller.removeItem(item.id),
-                      isEditing: controller.isEditing.value,
-                    );
-                  },
-                  // trashLayout: TrashLayout.bottomCenter,
-                  trashLayout: TrashLayout(
-                    visible: TrashLayout.bottomCenter.visible.copyWith(
-                      bottom: 0,
-                    ),
-                    hidden: TrashLayout.bottomCenter.hidden,
-                  ),
-                  // Optional: Customize the trash area.
-                  trashBuilder: (context, isHovered, isActive, activeItemId) {
-                    return Align(
-                      alignment: Alignment.bottomCenter,
-                      child: Container(
-                        height: 60,
-                        width: 200,
-                        margin: const EdgeInsets.all(20.0),
-                        decoration: BoxDecoration(
-                          color: isActive
-                              ? Colors.red
-                              : (isHovered ? Colors.orange : Colors.redAccent),
-                          borderRadius: BorderRadius.circular(30),
-                          boxShadow: const [
-                            BoxShadow(blurRadius: 10, color: Colors.black26),
-                          ],
-                          border: isHovered
-                              ? Border.all(color: Colors.white, width: 2)
-                              : null,
-                        ),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(
-                              isActive ? Icons.delete_forever : Icons.delete,
-                              color: Colors.white,
-                              size: isActive ? 30 : 24,
-                            ),
-                            const SizedBox(width: 8),
-                            Text(
-                              isActive ? 'Release to Delete' : 'Drop to Delete',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.bold,
-                                fontSize: isActive ? 18 : 16,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    );
-                  },
-                  // Validate the Trash deletion
-                  onWillDelete: (items) async {
-                    return await showDialog<bool>(
-                          context: context,
-                          builder: (ctx) => AlertDialog(
-                            title: const Text("Delete ?"),
-                            content: Text(
-                              "Do you want remove items ${items.map((e) => e.id).join(',')} ?",
-                            ),
-                            actions: [
-                              TextButton(
-                                onPressed: () => Navigator.pop(ctx, false),
-                                child: const Text("No"),
-                              ),
-                              TextButton(
-                                onPressed: () => Navigator.pop(ctx, true),
-                                child: const Text("Yes"),
-                              ),
-                            ],
-                          ),
-                        ) ??
-                        false;
-                  },
-                  // Optional: Called when an item is deleted
-                  onItemsDeleted: (items) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text(
-                          'Items ${items.map((e) => e.id).join(',')} deleted',
-                        ),
-                      ),
-                    );
-                  },
-                ),
-                Positioned(
-                  left: 20,
-                  bottom: 20,
-                  child: ValueListenableBuilder(
-                    valueListenable: showMap,
-                    builder: (context, value, _) {
-                      if (!value) return const SizedBox.shrink();
-
-                      return Material(
-                        elevation: 4,
-                        borderRadius: BorderRadius.circular(8),
-                        clipBehavior: Clip.antiAlias,
-                        child: Container(
-                          // Vertical : Fixed width (120), flexible height (max 200)
-                          // Horizontal : Fixed height (120), flexible width (max 200 or more)
-                          width: scrollDirection == Axis.vertical ? 120 : null,
-                          height: scrollDirection == Axis.vertical ? null : 120,
-                          constraints: BoxConstraints(
-                            maxHeight: scrollDirection == Axis.vertical
-                                ? 200
-                                : 120,
-                            maxWidth: scrollDirection == Axis.vertical
-                                ? 120
-                                : 200,
-                          ),
-                          decoration: BoxDecoration(
-                            border: Border.all(color: Colors.grey.shade300),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: DashboardMinimap(
-                            controller: controller,
-                            scrollController: scrollController,
-                            // Important : use fixed width only if vertical
-                            // Else let the widget's LayoutBuilder calculate its constraints
-                            width: scrollDirection == Axis.vertical
-                                ? 120
-                                : null,
-                            padding: EdgeInsets.zero,
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-                ),
-              ],
+            child: ValueListenableBuilder(
+              valueListenable: useSliverDemo,
+              builder: (context, sliverMode, _) {
+                if (sliverMode) {
+                  return _buildSliverDemoView();
+                } else {
+                  return _buildStandardDemoView();
+                }
+              },
             ),
           ),
+          if (isDesktop)
+            Container(
+              width: 320,
+              decoration: BoxDecoration(
+                border: Border(
+                  left: BorderSide(color: Colors.grey.shade800, width: 1),
+                ),
+              ),
+              child: Material(color: Colors.grey.shade900, child: configPanel),
+            ),
         ],
       ),
-      // Add a FloatingActionButton to add new items programmatically.
       floatingActionButton: FloatingActionButton(
         onPressed: _addNewItem,
-        tooltip: 'Add New Item',
+        tooltip: 'Add Auto-Placed Item (-1,-1)',
         child: const Icon(Icons.add),
       ),
     );
   }
 
-  void _addNewItem() {
-    final random = Random();
-    final newItem = LayoutItem(
-      // Use a unique ID for each item.
-      id: DateTime.now().millisecondsSinceEpoch.toString(),
-      // The engine will find the best spot, so initial x/y can be 0.
-      x: 0,
-      y: 0,
-      w: random.nextInt(2) + 1, // Random width (1 or 2)
-      h: random.nextInt(2) + 1, // Random height (1 or 2)
+  Widget _buildStandardDemoView() {
+    return ValueListenableBuilder2(
+      useDragHandlesOnly,
+      showMinimap,
+      builder: (context, handlesOnly, minimap, _) {
+        return Stack(
+          children: [
+            Dashboard<String>(
+              controller: controller,
+              scrollController: standardScrollController,
+              scrollDirection: controller.scrollDirection.value,
+              slotAspectRatio: 1.0,
+              mainAxisSpacing: 8.0,
+              crossAxisSpacing: 8.0,
+              padding: const EdgeInsets.all(8.0),
+              dragStartGesture: handlesOnly
+                  ? DragStartGesture.none
+                  : DragStartGesture.longPress,
+              breakpoints: {0: 4, 600: 6, 900: 8},
+              itemBuilder: _buildCard,
+              onWillDelete: _confirmDeletion,
+              gridStyle: GridStyle(
+                fillColor: Colors.white.withValues(alpha: 0.04),
+                handleColor: Colors.indigo.shade400,
+                lineColor: Colors.white.withValues(alpha: 0.08),
+                lineWidth: 1,
+              ),
+              trashLayout: const TrashLayout(
+                visible: TrashPosition(bottom: 20, left: 100, right: 100),
+                hidden: TrashPosition(bottom: -100, left: 100, right: 100),
+              ),
+              trashBuilder: _buildTrashBin,
+            ),
+            if (minimap) _buildMinimapOverlay(),
+          ],
+        );
+      },
     );
-    controller.addItem(newItem);
   }
-}
 
-/// A custom widget to display inside a dashboard item.
-class MyCard extends StatelessWidget {
-  const MyCard({
-    required this.item,
-    required this.color,
-    required this.onDeleteItem,
-    required this.isEditing,
-    super.key,
-  });
+  Widget _buildSliverDemoView() {
+    return ValueListenableBuilder2(
+      useDragHandlesOnly,
+      showMinimap,
+      builder: (context, handlesOnly, minimap, _) {
+        return Stack(
+          children: [
+            DashboardOverlay<String>(
+              controller: controller,
+              scrollController: sliverScrollController,
+              dragStartGesture: handlesOnly
+                  ? DragStartGesture.none
+                  : DragStartGesture.longPress,
+              gridStyle: GridStyle(
+                fillColor: Colors.white.withValues(alpha: 0.04),
+                handleColor: Colors.indigo.shade400,
+                lineColor: Colors.white.withValues(alpha: 0.08),
+                lineWidth: 1,
+              ),
+              padding: const EdgeInsets.all(8.0),
+              fillViewport: true,
+              itemBuilder: (ctx, item) => _buildCard(ctx, item),
+              onWillDelete: _confirmDeletion,
+              trashLayout: const TrashLayout(
+                visible: TrashPosition(bottom: 20, left: 100, right: 100),
+                hidden: TrashPosition(bottom: -100, left: 100, right: 100),
+              ),
+              trashBuilder: _buildTrashBin,
+              child: CustomScrollView(
+                controller: sliverScrollController,
+                slivers: [
+                  SliverAppBar(
+                    pinned: true,
+                    expandedHeight: 120,
+                    backgroundColor: Colors.indigo.shade900,
+                    flexibleSpace: const FlexibleSpaceBar(
+                      title: Text('Sliver direct composition'),
+                      centerTitle: false,
+                    ),
+                  ),
+                  SliverPadding(
+                    padding: const EdgeInsets.all(8.0),
+                    sliver: SliverDashboard(itemBuilder: _buildCard),
+                  ),
+                  SliverList(
+                    delegate: SliverChildBuilderDelegate(
+                      (context, index) => ListTile(
+                        leading: CircleAvatar(child: Text('$index')),
+                        title: Text('Subsequent List Item $index'),
+                        subtitle: const Text(
+                          'Rendered natively alongside the grid sliver',
+                        ),
+                      ),
+                      childCount: 15,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (minimap) _buildMinimapOverlay(),
+          ],
+        );
+      },
+    );
+  }
 
-  final LayoutItem item;
-  final Color color;
-  final VoidCallback onDeleteItem;
-  final bool isEditing;
+  Widget _buildCard(BuildContext context, LayoutItem item) {
+    final editing = isEditing.value;
+    final handlesOnly = useDragHandlesOnly.value;
 
-  @override
-  Widget build(BuildContext context) {
     return Card(
-      elevation: 2,
-      color: color,
+      key: ValueKey(item.id),
+      elevation: 3,
+      color: getColorForItem(item.id),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      clipBehavior: Clip.antiAlias,
       child: Stack(
         children: [
           Center(
@@ -589,37 +490,429 @@ class MyCard extends StatelessWidget {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 Text(
-                  'Item ${item.id}',
-                  style: Theme.of(context).textTheme.titleMedium,
+                  item.id.startsWith('stress')
+                      ? 'Item ${item.id.substring(7)}'
+                      : item.id,
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
                   overflow: TextOverflow.ellipsis,
                 ),
-                Text('(${item.w}x${item.h})'),
-                if (item.isStatic)
-                  const Chip(label: Text('Static'), avatar: Icon(Icons.lock)),
+                Text(
+                  '(${item.w}x${item.h})',
+                  style: const TextStyle(fontSize: 12, color: Colors.white70),
+                ),
               ],
             ),
           ),
-          if (isEditing && !item.isStatic)
+          if (editing && handlesOnly)
+            Positioned(
+              left: 4,
+              top: 4,
+              child: DashboardDragStartListener(
+                itemId: item.id,
+                child: Container(
+                  padding: const EdgeInsets.all(4),
+                  decoration: BoxDecoration(
+                    color: Colors.black26,
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: const Icon(
+                    Icons.drag_handle,
+                    size: 16,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+            ),
+          if (editing)
             Positioned(
               top: 4,
               right: 4,
-              child: Tooltip(
-                message: 'Delete Item',
-                child: GestureDetector(
-                  onTap: onDeleteItem,
-                  child: Container(
-                    padding: const EdgeInsets.all(4),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: 0.5),
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(Icons.close, size: 16, color: Colors.red),
+              child: GestureDetector(
+                onTap: () => _confirmAndDelete(item),
+                child: Container(
+                  padding: const EdgeInsets.all(4),
+                  decoration: const BoxDecoration(
+                    color: Colors.black38,
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.close,
+                    size: 14,
+                    color: Colors.redAccent,
                   ),
                 ),
               ),
             ),
         ],
       ),
+    );
+  }
+
+  Widget _buildTrashBin(
+    BuildContext context,
+    bool hovered,
+    bool active,
+    String? activeItemId,
+  ) {
+    return Align(
+      alignment: Alignment.bottomCenter,
+      child: Container(
+        height: 60,
+        margin: const EdgeInsets.all(20.0),
+        decoration: BoxDecoration(
+          color: active
+              ? Colors.red
+              : (hovered ? Colors.orange : Colors.red.shade900),
+          borderRadius: BorderRadius.circular(30),
+          boxShadow: const [BoxShadow(blurRadius: 10, color: Colors.black54)],
+          border: hovered ? Border.all(color: Colors.white, width: 2) : null,
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              active ? Icons.delete_forever : Icons.delete,
+              color: Colors.white,
+            ),
+            const SizedBox(width: 10),
+            Text(
+              active ? 'Release to Delete!' : 'Drop here to Delete',
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMinimapOverlay() {
+    return ValueListenableBuilder<bool>(
+      valueListenable: useSliverDemo,
+      builder: (context, sliverMode, _) {
+        final activeScrollController = sliverMode
+            ? sliverScrollController
+            : standardScrollController;
+
+        return Positioned(
+          left: 16,
+          bottom: 16,
+          child: Material(
+            elevation: 6,
+            borderRadius: BorderRadius.circular(8),
+            clipBehavior: Clip.antiAlias,
+            child: Container(
+              width: 120,
+              decoration: BoxDecoration(
+                border: Border.all(color: Colors.grey.shade800),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: DashboardMinimap(
+                controller: controller,
+                scrollController: activeScrollController,
+                width: 120,
+                style: const MinimapStyle(
+                  backgroundColor: Colors.black54,
+                  itemColor: Colors.indigo,
+                  staticItemColor: Colors.grey,
+                  viewportColor: Color(0x332196F3),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class ValueListenableBuilder2<A, B> extends StatelessWidget {
+  const ValueListenableBuilder2(
+    this.first,
+    this.second, {
+    required this.builder,
+    super.key,
+  });
+
+  final ValueListenable<A> first;
+  final ValueListenable<B> second;
+  final Widget Function(BuildContext context, A a, B b, Widget? child) builder;
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<A>(
+      valueListenable: first,
+      builder: (context, a, _) {
+        return ValueListenableBuilder<B>(
+          valueListenable: second,
+          builder: (context, b, _) {
+            return builder(context, a, b, null);
+          },
+        );
+      },
+    );
+  }
+}
+
+class _ConfigPanel extends StatelessWidget {
+  const _ConfigPanel({
+    required this.controller,
+    required this.jsonController,
+    required this.isEditing,
+    required this.showMinimap,
+    required this.useSliverDemo,
+    required this.useDragHandlesOnly,
+    required this.blockSectionCollision,
+    required this.autoShrink, // Ajouté
+    required this.compactionType,
+    required this.resizeBehavior,
+    required this.placementStrategy,
+    required this.onImportJson,
+    required this.onStressTest,
+  });
+
+  final DashboardController controller;
+  final TextEditingController jsonController;
+  final ValueNotifier<bool> isEditing;
+  final ValueNotifier<bool> showMinimap;
+  final ValueNotifier<bool> useSliverDemo;
+  final ValueNotifier<bool> useDragHandlesOnly;
+  final ValueNotifier<bool> blockSectionCollision;
+  final ValueNotifier<bool> autoShrink; // Ajouté
+  final ValueNotifier<CompactType> compactionType;
+  final ValueNotifier<ResizeBehavior> resizeBehavior;
+  final ValueNotifier<AutoPlacementStrategy> placementStrategy;
+  final VoidCallback onImportJson;
+  final void Function(int) onStressTest;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'CONFIGURATION PANEL',
+            style: theme.textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.bold,
+              color: Colors.indigo.shade300,
+            ),
+          ),
+          const Divider(),
+
+          // Section 1: Visual Mode
+          _SectionTitle('Visual Modes & Structures'),
+          _SwitchTile(
+            title: 'Edit Mode (Draggable/Resizable)',
+            notifier: isEditing,
+            onChanged: (val) => controller.setEditMode(val),
+          ),
+          _SwitchTile(
+            title: 'Use Custom Drag Handles only',
+            notifier: useDragHandlesOnly,
+          ),
+          _SwitchTile(
+            title: 'Native Sliver Direct Composition',
+            notifier: useSliverDemo,
+          ),
+          _SwitchTile(
+            title: 'Render Interactive Mini-Map',
+            notifier: showMinimap,
+          ),
+
+          const SizedBox(height: 16),
+          // Section 2: Layout Rules
+          _SectionTitle('Collision & Layout Rules'),
+          _SwitchTile(
+            title: 'Block Section Header Collisions',
+            notifier: blockSectionCollision,
+          ),
+          _SwitchTile(
+            title: 'Auto-Shrink neighbors on Drag',
+            notifier: autoShrink,
+            onChanged: (val) => controller.setAllowAutoShrink(allow: val),
+          ),
+
+          const SizedBox(height: 10),
+          const Text(
+            'Compaction Type',
+            style: TextStyle(fontSize: 12, color: Colors.grey),
+          ),
+          ValueListenableBuilder(
+            valueListenable: compactionType,
+            builder: (context, value, _) {
+              return DropdownButton<CompactType>(
+                isExpanded: true,
+                value: value,
+                items: CompactType.values
+                    .map(
+                      (v) => DropdownMenuItem(
+                        value: v,
+                        child: Text(v.name.toUpperCase()),
+                      ),
+                    )
+                    .toList(),
+                onChanged: (v) {
+                  if (v != null) {
+                    compactionType.value = v;
+                    controller.setCompactionType(v);
+                  }
+                },
+              );
+            },
+          ),
+
+          const SizedBox(height: 10),
+          const Text(
+            'Resize Behavior',
+            style: TextStyle(fontSize: 12, color: Colors.grey),
+          ),
+          DropdownButton<ResizeBehavior>(
+            isExpanded: true,
+            value: resizeBehavior.value,
+            items: ResizeBehavior.values
+                .map(
+                  (v) => DropdownMenuItem(
+                    value: v,
+                    child: Text(v.name.toUpperCase()),
+                  ),
+                )
+                .toList(),
+            onChanged: (v) {
+              if (v != null) {
+                resizeBehavior.value = v;
+                controller.setResizeBehavior(v);
+              }
+            },
+          ),
+
+          const SizedBox(height: 10),
+          const Text(
+            'Auto-placement Strategy',
+            style: TextStyle(fontSize: 12, color: Colors.grey),
+          ),
+          ValueListenableBuilder(
+            valueListenable: placementStrategy,
+            builder: (context, value, _) {
+              return DropdownButton<AutoPlacementStrategy>(
+                isExpanded: true,
+                value: value,
+                items: AutoPlacementStrategy.values
+                    .map(
+                      (v) => DropdownMenuItem(
+                        value: v,
+                        child: Text(v.name.toUpperCase()),
+                      ),
+                    )
+                    .toList(),
+                onChanged: (v) {
+                  if (v != null) {
+                    placementStrategy.value = v;
+                  }
+                },
+              );
+            },
+          ),
+
+          const SizedBox(height: 16),
+          _SectionTitle('Stress Tests & Bulk actions'),
+          Wrap(
+            spacing: 8,
+            children: [
+              ElevatedButton(
+                onPressed: () => onStressTest(20),
+                child: const Text('+20 Items'),
+              ),
+              ElevatedButton(
+                onPressed: () => onStressTest(100),
+                child: const Text('+100 Items'),
+              ),
+              OutlinedButton(
+                onPressed: () => controller.layout.value = [],
+                child: const Text('Clear Grid'),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 16),
+          _SectionTitle('JSON Schema Import/Export'),
+          TextField(
+            controller: jsonController,
+            maxLines: 6,
+            style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
+            decoration: const InputDecoration(
+              border: OutlineInputBorder(),
+              labelText: 'JSON Layout',
+            ),
+          ),
+          const SizedBox(height: 8),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: onImportJson,
+              icon: const Icon(Icons.download),
+              label: const Text('Import Layout from JSON'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SectionTitle extends StatelessWidget {
+  const _SectionTitle(this.title);
+  final String title;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8.0),
+      child: Text(
+        title,
+        style: const TextStyle(
+          fontWeight: FontWeight.bold,
+          fontSize: 13,
+          color: Colors.white70,
+        ),
+      ),
+    );
+  }
+}
+
+class _SwitchTile extends StatelessWidget {
+  const _SwitchTile({
+    required this.title,
+    required this.notifier,
+    this.onChanged,
+  });
+
+  final String title;
+  final ValueNotifier<bool> notifier;
+  final ValueChanged<bool>? onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<bool>(
+      valueListenable: notifier,
+      builder: (context, value, _) {
+        return SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: Text(title, style: const TextStyle(fontSize: 12)),
+          value: value,
+          onChanged: (val) {
+            notifier.value = val;
+            onChanged?.call(val);
+          },
+        );
+      },
     );
   }
 }

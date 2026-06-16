@@ -1,3 +1,12 @@
+## PLANNED 1.0.0
+
+### New Features
+- **DashboardPolicy API**: Introduced a declarative interaction policy interface (`DashboardPolicy`). You can now intercept, validate, and block drag/resize starts, coordinate moves, or granular item-to-item collisions (e.g. blocking charts from pushing KPIs) on-the-fly without having to write a full custom compaction delegate.
+- **Visual Section Barriers & Segmented Grids**: Added support for dividing a single dashboard grid into distinct, organized sections. `LayoutItem` now supports the `isSectionBarrier` flag and `sectionTitle` property. When enabled, the item behaves as an immoveable horizontal divider and renders a section header using either a default style or a fully customizable `sectionHeaderBuilder` callback on `Dashboard` / `SliverDashboard`.
+- **Auto-Shrink on Drag**: Introduced adaptive neighbor shrinkage during drag operations. When moving items, enabling `allowAutoShrink` via `setAllowAutoShrink(allow: true)` on the controller allows the engine to dynamically contract neighboring items' heights down to their `minH` limits to make room for the moving item, minimizing vertical layout shifts and offering smoother, more cohesive grid reflows.
+
+- **Unified Interactive Playground**: You can now test all major capabilities (on Web, Desktop, and Mobile), including standard grid vs direct sliver composition, visual section barriers, adaptive neighbor shrinking, live JSON schema export/import editing, custom drag handles, and interactive mini-map scrubbing.
+
 ## 0.10.0
 
 ### New Features
