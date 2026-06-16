@@ -1,4 +1,4 @@
-## PLANNED 1.0.0
+## 1.0.0
 
 ### New Features
 - **DashboardPolicy API**: Introduced a declarative interaction policy interface (`DashboardPolicy`). You can now intercept, validate, and block drag/resize starts, coordinate moves, or granular item-to-item collisions (e.g. blocking charts from pushing KPIs) on-the-fly without having to write a full custom compaction delegate.
