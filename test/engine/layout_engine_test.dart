@@ -1007,11 +1007,13 @@ void main() {
 
       expect(
         () => correctBounds(layout, 4),
-        throwsA(isA<AssertionError>().having(
-          (e) => e.message,
-          'message',
-          contains('constraint (minW: 10) exceeds grid columns (4)!'),
-        )),
+        throwsA(
+          isA<AssertionError>().having(
+            (e) => e.message,
+            'message',
+            contains('constraint (minW: 10) exceeds grid columns (4)!'),
+          ),
+        ),
       );
     });
 
