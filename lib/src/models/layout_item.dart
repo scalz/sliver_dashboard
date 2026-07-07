@@ -156,7 +156,7 @@ class LayoutItem {
           maxH == other.maxH &&
           isDraggable == other.isDraggable &&
           isResizable == other.isResizable &&
-          isStatic == (other.isStatic || other.isSectionBarrier) &&
+          (isStatic || isSectionBarrier) == (other.isStatic || other.isSectionBarrier) &&
           moved == other.moved &&
           isSectionBarrier == other.isSectionBarrier &&
           sectionTitle == other.sectionTitle;

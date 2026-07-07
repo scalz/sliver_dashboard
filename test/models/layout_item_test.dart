@@ -4,6 +4,38 @@ import 'package:sliver_dashboard/src/models/layout_item.dart';
 import 'package:sliver_dashboard/src/view/dashboard_configuration.dart';
 
 void main() {
+  group('LayoutItem Equality Laws', () {
+    test('LayoutItem equality is symmetric and consistent with hashCode', () {
+      const a = LayoutItem(
+        id: 'widget_1',
+        x: 0,
+        y: 0,
+        w: 2,
+        h: 2,
+        isSectionBarrier: true,
+        sectionTitle: 'Title',
+      );
+      const b = LayoutItem(
+        id: 'widget_1',
+        x: 0,
+        y: 0,
+        w: 2,
+        h: 2,
+        isSectionBarrier: true,
+        sectionTitle: 'Title',
+      );
+      const c = LayoutItem(id: 'widget_1', x: 0, y: 0, w: 2, h: 2, isStatic: true);
+
+      // 1. Symmetric Law Verification on equal items
+      expect(a == b, isTrue);
+      expect(b == a, isTrue);
+      expect(a.hashCode, equals(b.hashCode));
+
+      // 2. Symmetric Law Verification on unequal items
+      expect(a == c, isFalse);
+      expect(c == a, isFalse);
+    });
+  });
   group('LayoutItem Serialization', () {
     test('toMap converts correctly', () {
       const item = LayoutItem(

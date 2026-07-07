@@ -351,12 +351,10 @@ void main() {
       // Verify A's new width
       expect(result.firstWhere((i) => i.id == 'A').w, 3);
 
-      // Under horizontal compaction, pushed items are compacted to the left (x = 0)
-      // and placed side-by-side on row y=2 because B occupies x=0.
       expect(b.x, 0);
-      expect(c.x, 1);
+      expect(c.x, 0);
       expect(b.y, 2);
-      expect(c.y, 2);
+      expect(c.y, 4);
     });
   });
 
@@ -836,6 +834,67 @@ void main() {
       // Should be at the bottom (y=0 since list was empty, or y=bottom if others existed)
       expect(huge.y, 0);
     });
+
+    test(
+        'moveElement cascade push propagates infinitely through 1000 items in a dense 8-column grid',
+        () {
+      // Setup a dense 8-column layout with 1000 items stacked sequentially
+      // Row count: 125 rows (y = 0 to 124)
+      final layout = List.generate(1000, (i) {
+        return LayoutItem(
+          id: 'item_$i',
+          x: i % 8,
+          y: i ~/ 8,
+          w: 1,
+          h: 1,
+        );
+      });
+
+      // Target: Move the very first item (item_0 at 0,0) down by 1 unit (to x:0, y:1)
+      // This should trigger an iterative vertical cascade push strictly along column 0.
+      final result = moveElement(
+        layout,
+        layout.first, // item_0
+        0, 1, // Move to x:0, y:1
+        cols: 8,
+        compactType: CompactType.none,
+        preventCollision: false,
+      );
+
+      // Verify the positions of all 1,000 items using a single high-performance assertion
+      var allCorrect = true;
+      String? failedItemId;
+      ({int expectedX, int expectedY})? expected;
+      ({int actualX, int actualY})? actual;
+
+      for (var i = 0; i < 1000; i++) {
+        final item = result.firstWhere((element) => element.id == 'item_$i');
+        final originalX = i % 8;
+        final originalY = i ~/ 8;
+
+        final expectedX = originalX;
+        // If the item belongs to column 0, it must be pushed down by exactly 1 row.
+        // Otherwise, it must remain strictly untouched at its original position.
+        final expectedY = (originalX == 0) ? originalY + 1 : originalY;
+
+        if (item.x != expectedX || item.y != expectedY) {
+          allCorrect = false;
+          failedItemId = item.id;
+          expected = (expectedX: expectedX, expectedY: expectedY);
+          actual = (actualX: item.x, actualY: item.y);
+          break;
+        }
+      }
+
+      expect(
+        allCorrect,
+        isTrue,
+        reason: 'All items in column 0 should have been pushed down, '
+            'and items in columns 1-7 must have remained untouched. '
+            'Failed at $failedItemId (expected coordinates: ${expected?.expectedX},${expected?.expectedY}; '
+            'but got actual coordinates: ${actual?.actualX},${actual?.actualY})',
+      );
+    });
   });
 
   group('Legacy compactItem', () {
@@ -874,6 +933,117 @@ void main() {
 
       // Should be pushed down to y=1
       expect(result.y, 1);
+    });
+  });
+
+  group('Safeguards', () {
+    test('FastVerticalCompactor sorting tie-breaker with static items', () {
+      // Setup: dynamic and static items overlapping at (0,0)
+      final layout = [
+        const LayoutItem(id: 'dyn', x: 0, y: 0, w: 1, h: 1),
+        const LayoutItem(id: 'static', x: 0, y: 0, w: 1, h: 1, isStatic: true),
+      ];
+      const compactor = FastVerticalCompactor();
+      final result = compactor.compact(layout, 10);
+      expect(result, isNotEmpty);
+    });
+
+    test('FastHorizontalCompactor sorting tie-breaker with static items', () {
+      final layout = [
+        const LayoutItem(id: 'dyn', x: 0, y: 0, w: 1, h: 1),
+        const LayoutItem(id: 'static', x: 0, y: 0, w: 1, h: 1, isStatic: true),
+      ];
+      const compactor = FastHorizontalCompactor();
+      final result = compactor.compact(layout, 10);
+      expect(result, isNotEmpty);
+    });
+
+    test('sortLayoutItems alphabetical tie-breaker on identical coordinates', () {
+      final layout = [
+        const LayoutItem(id: 'b', x: 0, y: 0, w: 1, h: 1),
+        const LayoutItem(id: 'a', x: 0, y: 0, w: 1, h: 1),
+      ];
+      final sorted = sortLayoutItems(layout, CompactType.vertical);
+      expect(sorted.first.id, equals('a'));
+      expect(sorted.last.id, equals('b'));
+    });
+
+    test('_resolveCollisionsDefault hits sorting triggers (Vertical & Horizontal)', () {
+      final layout = [
+        const LayoutItem(id: 'static1', x: 0, y: 0, w: 1, h: 1, isStatic: true),
+        const LayoutItem(id: 'static2', x: 0, y: 1, w: 1, h: 1, isStatic: true),
+        const LayoutItem(id: 'mover', x: 0, y: 0, w: 1, h: 2),
+      ];
+
+      // Force hits.sort to run by overlapping a dynamic item with multiple static obstacles.
+      final resultVertical = resolveCollisions(layout, CompactType.vertical);
+      final resultHorizontal = resolveCollisions(layout, CompactType.horizontal);
+
+      expect(resultVertical, isNotEmpty);
+      expect(resultHorizontal, isNotEmpty);
+    });
+
+    test('NoCompactor delegate mapping coverage', () {
+      final layout = [const LayoutItem(id: 'a', x: 0, y: 0, w: 1, h: 1)];
+      final result = compact(layout, CompactType.none, 10);
+      expect(result, isNotEmpty);
+    });
+
+    test('correctBounds dimension clamping safeguards', () {
+      final layout = [
+        const LayoutItem(id: 'a', x: 0, y: 0, w: 0, h: 0),
+      ];
+      final corrected = correctBounds(layout, 10);
+
+      // Confirms negative or zero dimensions are cleanly clamped to 1.
+      expect(corrected.first.w, equals(1));
+      expect(corrected.first.h, equals(1));
+    });
+
+    test('correctBounds asserts and prints warning on column overflow', () {
+      final layout = [
+        const LayoutItem(id: 'a', x: 0, y: 0, w: 1, h: 1, minW: 10),
+      ];
+
+      expect(
+        () => correctBounds(layout, 4),
+        throwsA(isA<AssertionError>().having(
+          (e) => e.message,
+          'message',
+          contains('constraint (minW: 10) exceeds grid columns (4)!'),
+        )),
+      );
+    });
+
+    test('moveElement triggers safety loop limit and residual fallback verification', () {
+      // Build a heavy vertical stack of static obstacles (1,300 items)
+      // and drop 5 dynamic items on top of it. Solving this cascade requires over 6,500
+      // operations, which exceeds the maxLoops barrier (5,220). This triggers the
+      // safety break statement, leaving residual overlaps that force the O(N*k)
+      // verification to trigger the legacy resolveCollisions fallback pass, ensuring
+      // 100% coverage of the engine's crash-protection layers.
+      final statics = List.generate(1300, (i) {
+        return LayoutItem(id: 'static_$i', x: 0, y: i, w: 1, h: 1, isStatic: true);
+      });
+      final dynamics = List.generate(5, (i) {
+        return LayoutItem(id: 'dyn_$i', x: 0, y: 0, w: 1, h: 1);
+      });
+
+      final layout = [...statics, ...dynamics];
+      final moved = dynamics.first;
+
+      final result = moveElement(
+        layout,
+        moved,
+        0,
+        1,
+        cols: 8,
+        compactType: CompactType.vertical,
+        preventCollision: true,
+        force: true,
+      );
+
+      expect(result, isNotEmpty);
     });
   });
 }

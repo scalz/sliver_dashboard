@@ -32,6 +32,7 @@ class DashboardItemStyle {
   const DashboardItemStyle({
     this.focusDecoration,
     this.focusColor,
+    this.activeColor,
     this.borderRadius,
   });
 
@@ -43,12 +44,17 @@ class DashboardItemStyle {
   /// Ignored if [focusDecoration] is provided.
   final Color? focusColor;
 
+  /// A convenience color for the focus border when the item is being actively dragged.
+  /// If null, defaults to [Colors.deepOrange].
+  final Color? activeColor;
+
   /// Border radius for the focus highlight.
   final BorderRadius? borderRadius;
 
   /// Default style
   static const DashboardItemStyle defaultStyle = DashboardItemStyle(
     focusColor: Colors.blueAccent,
+    activeColor: Colors.deepOrange,
     borderRadius: BorderRadius.all(Radius.circular(8)),
   );
 
@@ -56,11 +62,13 @@ class DashboardItemStyle {
   DashboardItemStyle copyWith({
     BoxDecoration? focusDecoration,
     Color? focusColor,
+    Color? activeColor,
     BorderRadius? borderRadius,
   }) {
     return DashboardItemStyle(
       focusDecoration: focusDecoration ?? this.focusDecoration,
       focusColor: focusColor ?? this.focusColor,
+      activeColor: activeColor ?? this.activeColor,
       borderRadius: borderRadius ?? this.borderRadius,
     );
   }

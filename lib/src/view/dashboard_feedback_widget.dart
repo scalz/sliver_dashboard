@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:sliver_dashboard/src/controller/dashboard_controller_impl.dart';
 import 'package:sliver_dashboard/src/controller/dashboard_controller_interface.dart';
 import 'package:sliver_dashboard/src/models/layout_item.dart';
+import 'package:sliver_dashboard/src/view/dashboard_configuration.dart' show DashboardItemStyle;
 import 'package:sliver_dashboard/src/view/dashboard_item_widget.dart';
 import 'package:sliver_dashboard/src/view/dashboard_typedefs.dart';
 import 'package:state_beacon/state_beacon.dart';
@@ -23,6 +24,7 @@ class DashboardFeedbackItem extends StatelessWidget {
     this.itemGlobalKeySuffix = '',
     this.feedbackBuilder,
     this.sliverBounds,
+    this.itemStyle = DashboardItemStyle.defaultStyle,
     super.key,
   });
 
@@ -65,6 +67,9 @@ class DashboardFeedbackItem extends StatelessWidget {
   /// The bounds of the sliver to clip the feedback item.
   final Rect? sliverBounds;
 
+  /// The visual style of the item focus and active borders.
+  final DashboardItemStyle itemStyle;
+
   @override
   Widget build(BuildContext context) {
     // Watch the drag offset specifically here.
@@ -100,6 +105,7 @@ class DashboardFeedbackItem extends StatelessWidget {
       item: item,
       isEditing: isEditing,
       isFeedback: true,
+      itemStyle: itemStyle,
       builder: builder,
     );
 

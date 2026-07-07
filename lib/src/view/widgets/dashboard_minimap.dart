@@ -157,20 +157,42 @@ class DashboardMinimap extends StatelessWidget {
                 isVertical ? drawnHeight : drawnWidth,
                 isVertical,
               ),
-              child: CustomPaint(
-                size: Size(drawnWidth, drawnHeight),
-                painter: _MinimapPainter(
-                  layout: layout,
-                  scrollController: scrollController,
-                  style: style,
-                  padding: padding,
-                  scale: scale,
-                  unitWidth: unitWidth,
-                  unitHeight: unitHeight,
-                  spacingRatioMain: spacingRatioMain,
-                  spacingRatioCross: spacingRatioCross,
-                  scrollDirection: scrollDirection,
-                  minimapContentMainAxis: isVertical ? drawnHeight : drawnWidth,
+              child: SizedBox(
+                width: drawnWidth,
+                height: drawnHeight,
+                child: Stack(
+                  children: [
+                    // Item layer: repaints ONLY when the layout instance
+                    // changes. Isolated behind a RepaintBoundary so scroll
+                    // ticks never re-rasterize 1,000 item rects.
+                    RepaintBoundary(
+                      child: CustomPaint(
+                        size: Size(drawnWidth, drawnHeight),
+                        painter: _MinimapItemsPainter(
+                          layout: layout,
+                          style: style,
+                          scale: scale,
+                          unitWidth: unitWidth,
+                          unitHeight: unitHeight,
+                          spacingRatioMain: spacingRatioMain,
+                          spacingRatioCross: spacingRatioCross,
+                          isVertical: isVertical,
+                        ),
+                      ),
+                    ),
+                    // Viewport layer: repaints on every scroll tick via the
+                    // `repaint` listenable (fixes the stale indicator bug —
+                    // the old shouldRepaint ignored scroll entirely).
+                    CustomPaint(
+                      size: Size(drawnWidth, drawnHeight),
+                      painter: _MinimapViewportPainter(
+                        scrollController: scrollController,
+                        style: style,
+                        isVertical: isVertical,
+                        minimapContentMainAxis: isVertical ? drawnHeight : drawnWidth,
+                      ),
+                    ),
+                  ],
                 ),
               ),
             );
@@ -208,120 +230,127 @@ class DashboardMinimap extends StatelessWidget {
   }
 }
 
-class _MinimapPainter extends CustomPainter {
-  _MinimapPainter({
+class _MinimapItemsPainter extends CustomPainter {
+  _MinimapItemsPainter({
     required this.layout,
-    required this.scrollController,
     required this.style,
-    required this.padding,
     required this.scale,
     required this.unitWidth,
     required this.unitHeight,
     required this.spacingRatioMain,
     required this.spacingRatioCross,
-    required this.scrollDirection,
-    required this.minimapContentMainAxis,
+    required this.isVertical,
   });
 
   final List<LayoutItem> layout;
-  final ScrollController scrollController;
   final MinimapStyle style;
-  final EdgeInsets padding;
   final double scale;
   final double unitWidth;
   final double unitHeight;
   final double spacingRatioMain;
   final double spacingRatioCross;
-  final Axis scrollDirection;
-  final double minimapContentMainAxis;
+  final bool isVertical;
 
   @override
   void paint(Canvas canvas, Size size) {
-    final bgPaint = Paint()..color = style.backgroundColor;
-    final isVertical = scrollDirection == Axis.vertical;
+    canvas.drawRect(Offset.zero & size, Paint()..color = style.backgroundColor);
 
-    canvas.drawRect(Offset.zero & size, bgPaint);
-
-    final itemPaint = Paint()..color = style.itemColor;
-    final staticItemPaint = Paint()..color = style.staticItemColor;
+    // Batch all item rounded-rects into two paths: two drawPath commands
+    // instead of one drawRRect per item (1,000 canvas commands at N=1000),
+    // which dominates minimap paint time on the web renderers.
+    final dynamicPath = Path();
+    final staticPath = Path();
+    final radius = Radius.circular(style.itemBorderRadius);
 
     for (final item in layout) {
-      // Apply spacing to coordinates
-      // Position = (Index * UnitSize) + (Index * SpacingSize)
-      // Size = (Size * UnitSize) + ((Size - 1) * SpacingSize)
-
-      double x;
-      double y;
-      double w;
-      double h;
+      final double x;
+      final double y;
+      final double w;
+      final double h;
 
       if (isVertical) {
-        // Vertical: X is Cross, Y is Main
         x = (item.x * unitWidth + item.x * spacingRatioCross) * scale;
         y = (item.y * unitHeight + item.y * spacingRatioMain) * scale;
-
-        // Width includes internal spacings if item spans multiple slots
         w = (item.w * unitWidth + (max(0, item.w - 1) * spacingRatioCross)) * scale;
         h = (item.h * unitHeight + (max(0, item.h - 1) * spacingRatioMain)) * scale;
       } else {
-        // Horizontal: X is Main, Y is Cross
         x = (item.x * unitWidth + item.x * spacingRatioMain) * scale;
         y = (item.y * unitHeight + item.y * spacingRatioCross) * scale;
-
         w = (item.w * unitWidth + (max(0, item.w - 1) * spacingRatioMain)) * scale;
         h = (item.h * unitHeight + (max(0, item.h - 1) * spacingRatioCross)) * scale;
       }
 
-      final rect = RRect.fromRectAndRadius(
-        Rect.fromLTWH(x, y, w, h),
-        Radius.circular(style.itemBorderRadius),
-      );
-
-      canvas.drawRRect(
-        rect,
-        item.isStatic ? staticItemPaint : itemPaint,
-      );
+      final rrect = RRect.fromRectAndRadius(Rect.fromLTWH(x, y, w, h), radius);
+      (item.isStatic ? staticPath : dynamicPath).addRRect(rrect);
     }
 
-    if (scrollController.hasClients && scrollController.position.haveDimensions) {
-      final position = scrollController.position;
-      final viewportSize = position.viewportDimension;
-      final maxScroll = position.maxScrollExtent;
-      final currentScroll = position.pixels;
-      final totalContentSize = maxScroll + viewportSize;
-
-      if (totalContentSize > 0) {
-        final ratio = minimapContentMainAxis / totalContentSize;
-        final viewportStart = currentScroll * ratio;
-        final viewportLength = viewportSize * ratio;
-        final clampedStart = viewportStart.clamp(0.0, minimapContentMainAxis);
-
-        final Rect viewportRect;
-        if (isVertical) {
-          viewportRect = Rect.fromLTWH(0, clampedStart, size.width, viewportLength);
-        } else {
-          viewportRect = Rect.fromLTWH(clampedStart, 0, viewportLength, size.height);
-        }
-
-        canvas.drawRect(viewportRect, Paint()..color = style.viewportColor);
-
-        final borderPaint = Paint()
-          ..color = style.viewportBorderColor
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = style.viewportBorderWidth;
-        canvas.drawRect(viewportRect, borderPaint);
-      }
-    }
+    canvas
+      ..drawPath(dynamicPath, Paint()..color = style.itemColor)
+      ..drawPath(staticPath, Paint()..color = style.staticItemColor);
   }
 
   @override
-  bool shouldRepaint(covariant _MinimapPainter oldDelegate) {
-    return oldDelegate.layout != layout ||
+  bool shouldRepaint(covariant _MinimapItemsPainter oldDelegate) {
+    return !identical(oldDelegate.layout, layout) ||
         oldDelegate.style != style ||
-        oldDelegate.scrollController != scrollController ||
         oldDelegate.scale != scale ||
-        oldDelegate.scrollDirection != scrollDirection ||
+        oldDelegate.unitWidth != unitWidth ||
+        oldDelegate.unitHeight != unitHeight ||
         oldDelegate.spacingRatioMain != spacingRatioMain ||
-        oldDelegate.spacingRatioCross != spacingRatioCross;
+        oldDelegate.spacingRatioCross != spacingRatioCross ||
+        oldDelegate.isVertical != isVertical;
+  }
+}
+
+class _MinimapViewportPainter extends CustomPainter {
+  _MinimapViewportPainter({
+    required this.scrollController,
+    required this.style,
+    required this.isVertical,
+    required this.minimapContentMainAxis,
+    // Repaint automatically on every scroll notification without rebuilding
+    // or re-rasterizing the item layer.
+  }) : super(repaint: scrollController);
+
+  final ScrollController scrollController;
+  final MinimapStyle style;
+  final bool isVertical;
+  final double minimapContentMainAxis;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (!scrollController.hasClients || !scrollController.position.haveDimensions) return;
+
+    final position = scrollController.position;
+    final viewportSize = position.viewportDimension;
+    final totalContentSize = position.maxScrollExtent + viewportSize;
+    if (totalContentSize <= 0) return;
+
+    final ratio = minimapContentMainAxis / totalContentSize;
+    final viewportStart = position.pixels * ratio;
+    final viewportLength = viewportSize * ratio;
+    final clampedStart = viewportStart.clamp(0.0, minimapContentMainAxis);
+
+    final viewportRect = isVertical
+        ? Rect.fromLTWH(0, clampedStart, size.width, viewportLength)
+        : Rect.fromLTWH(clampedStart, 0, viewportLength, size.height);
+
+    canvas
+      ..drawRect(viewportRect, Paint()..color = style.viewportColor)
+      ..drawRect(
+        viewportRect,
+        Paint()
+          ..color = style.viewportBorderColor
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = style.viewportBorderWidth,
+      );
+  }
+
+  @override
+  bool shouldRepaint(covariant _MinimapViewportPainter oldDelegate) {
+    return oldDelegate.scrollController != scrollController ||
+        oldDelegate.style != style ||
+        oldDelegate.isVertical != isVertical ||
+        oldDelegate.minimapContentMainAxis != minimapContentMainAxis;
   }
 }

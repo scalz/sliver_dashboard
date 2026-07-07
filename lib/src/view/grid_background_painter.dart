@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:flutter/material.dart';
 import 'package:sliver_dashboard/src/controller/layout_metrics.dart';
 import 'package:sliver_dashboard/src/models/layout_item.dart';
@@ -157,51 +159,100 @@ class GridBackgroundPainter extends CustomPainter {
         isVertical ? Size(contentWidth, largeExtent) : Size(largeExtent, contentHeight);
 
     if (isVertical) {
-      _paintVerticalGrid(canvas, drawBounds, linePaint);
+      _paintVerticalGrid(canvas, drawBounds, linePaint, visualStart, size.height);
     } else {
-      _paintHorizontalGrid(canvas, drawBounds, linePaint);
+      _paintHorizontalGrid(canvas, drawBounds, linePaint, visualStart, size.width);
     }
 
     canvas.restore();
   }
 
-  void _paintVerticalGrid(Canvas canvas, Size size, Paint paint) {
-    // Draw vertical lines (Columns)
+  void _paintVerticalGrid(
+    Canvas canvas,
+    Size size,
+    Paint paint,
+    double visualStart,
+    double viewportHeight,
+  ) {
+    // Limit drawing range of vertical grid columns on the cross-axis.
     for (var i = 1; i < metrics.slotCount; i++) {
       final x = i * metrics.slotWidth +
           (i - 1) * metrics.crossAxisSpacing +
           (metrics.crossAxisSpacing / 2);
-      canvas.drawLine(Offset(x, 0), Offset(x, size.height), paint);
+      canvas.drawLine(
+        Offset(x, 0),
+        Offset(x, fillViewport ? viewportHeight - visualStart : sliverHeight),
+        paint,
+      );
     }
 
-    // Draw horizontal lines (Rows)
-    final slotHeightWithSpacing = metrics.slotHeight + metrics.mainAxisSpacing;
-    if (slotHeightWithSpacing <= 0) return;
+    // Prevent painting infinite off-screen horizontal rows. Calculate the exact intersection
+    // of the scrollOffset, visual viewport boundaries, and content height, cutting down repaints
+    // to only the visible lines (usually 10-20 lines instead of 150+).
+    final spacing = metrics.slotHeight + metrics.mainAxisSpacing;
+    if (spacing <= 0) return;
 
-    // Start drawing from the first slot boundary.
     final firstLineY = metrics.slotHeight + (metrics.mainAxisSpacing / 2);
+    final minY = max(0, -visualStart);
+    final maxY = min(
+      fillViewport ? viewportHeight - visualStart : sliverHeight,
+      -visualStart + viewportHeight,
+    );
 
-    for (var y = firstLineY; y < size.height; y += slotHeightWithSpacing) {
+    if (minY >= maxY) return;
+
+    final double startY;
+    if (minY <= firstLineY) {
+      startY = firstLineY;
+    } else {
+      startY = firstLineY + ((minY - firstLineY) / spacing).ceil() * spacing;
+    }
+
+    for (var y = startY; y < maxY; y += spacing) {
       canvas.drawLine(Offset(0, y), Offset(size.width, y), paint);
     }
   }
 
-  void _paintHorizontalGrid(Canvas canvas, Size size, Paint paint) {
-    // Draw horizontal lines (Rows/Cross-axis columns)
+  void _paintHorizontalGrid(
+    Canvas canvas,
+    Size size,
+    Paint paint,
+    double visualStart,
+    double viewportWidth,
+  ) {
+    // Limit drawing range of horizontal grid rows on the cross-axis.
     for (var i = 1; i < metrics.slotCount; i++) {
       final y = i * metrics.slotHeight +
           (i - 1) * metrics.mainAxisSpacing +
           (metrics.mainAxisSpacing / 2);
-      canvas.drawLine(Offset(0, y), Offset(size.width, y), paint);
+      canvas.drawLine(
+        Offset(0, y),
+        Offset(fillViewport ? viewportWidth - visualStart : sliverHeight, y),
+        paint,
+      );
     }
 
-    // Draw vertical lines (Main-axis columns)
-    final slotWidthWithSpacing = metrics.slotWidth + metrics.crossAxisSpacing;
-    if (slotWidthWithSpacing <= 0) return;
+    // Clip vertical columns to the visible viewport boundaries on the horizontal main-axis.
+    final spacing = metrics.slotWidth + metrics.crossAxisSpacing;
+    if (spacing <= 0) return;
 
     final firstLineX = metrics.slotWidth + (metrics.crossAxisSpacing / 2);
+    final minX = max(0, -visualStart);
+    final maxX = min(
+      fillViewport ? viewportWidth - visualStart : sliverHeight,
+      -visualStart + viewportWidth,
+    );
 
-    for (var x = firstLineX; x < size.width; x += slotWidthWithSpacing) {
+    if (minX >= maxX) return;
+
+    final double startX;
+    if (minX <= firstLineX) {
+      startX = firstLineX;
+    } else {
+      startX = firstLineX + ((minX - firstLineX) / spacing).ceil() * spacing;
+    }
+
+    for (var x = startX; x < maxX; x += spacing) {
       canvas.drawLine(Offset(x, 0), Offset(x, size.height), paint);
     }
   }

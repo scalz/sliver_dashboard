@@ -32,7 +32,6 @@ void main() {
                     scrollController: scrollController,
                     width: 100,
                   ),
-                  // Add content to make it scrollable
                   Container(height: 1000, color: Colors.red),
                 ],
               ),
@@ -41,20 +40,18 @@ void main() {
         ),
       );
 
-      // Find the CustomPaint specifically inside DashboardMinimap
       final minimapFinder = find.byType(DashboardMinimap);
       final painterFinder = find.descendant(
         of: minimapFinder,
         matching: find.byType(CustomPaint),
       );
 
-      expect(painterFinder, findsOneWidget);
+      // Verify that both layered painters (Items + Viewport) are mounted.
+      expect(painterFinder, findsNWidgets(2));
 
-      // Verify size is finite (no infinity error)
-      final size = tester.getSize(painterFinder);
+      // Verify the size of the overall minimap is correct
+      final size = tester.getSize(painterFinder.first);
       expect(size.width, 100.0);
-
-      // Check the boolean property .isFinite
       expect(size.height.isFinite, isTrue, reason: 'Height should be finite');
       expect(size.height, greaterThan(0));
     });
@@ -72,24 +69,22 @@ void main() {
         ),
       );
 
-      // Specific finder
       final minimapFinder = find.byType(DashboardMinimap);
       final painterFinder = find.descendant(
         of: minimapFinder,
         matching: find.byType(CustomPaint),
       );
 
-      final paintBefore = tester.widget(painterFinder) as CustomPaint;
+      // Check the background items painter (first CustomPaint)
+      final paintBefore = tester.widget(painterFinder.first) as CustomPaint;
       final painterBefore = paintBefore.painter;
 
-      // Change layout
       controller.addItem(const LayoutItem(id: '3', x: 0, y: 10, w: 1, h: 1));
       await tester.pump();
 
-      final paintAfter = tester.widget(painterFinder) as CustomPaint;
+      final paintAfter = tester.widget(painterFinder.first) as CustomPaint;
       final painterAfter = paintAfter.painter;
 
-      // Verify painter instance changed (triggering repaint)
       expect(painterAfter, isNot(equals(painterBefore)));
     });
 
@@ -114,24 +109,22 @@ void main() {
         ),
       );
 
-      // Specific finder
       final minimapFinder = find.byType(DashboardMinimap);
       final painterFinder = find.descendant(
         of: minimapFinder,
         matching: find.byType(CustomPaint),
       );
 
-      final paintBefore = tester.widget(painterFinder) as CustomPaint;
+      // Check the foreground viewport painter (second CustomPaint)
+      final paintBefore = tester.widget(painterFinder.last) as CustomPaint;
       final painterBefore = paintBefore.painter;
 
-      // Scroll
       scrollController.jumpTo(100);
       await tester.pump();
 
-      final paintAfter = tester.widget(painterFinder) as CustomPaint;
+      final paintAfter = tester.widget(painterFinder.last) as CustomPaint;
       final painterAfter = paintAfter.painter;
 
-      // Verify painter properties updated
       expect(painterAfter, isNot(equals(painterBefore)));
     });
 
@@ -159,20 +152,17 @@ void main() {
         ),
       );
 
-      // Check widget is correctly displayed
       expect(find.byType(DashboardMinimap), findsOneWidget);
 
-      // Check size is calculated
       final painterFinder = find.descendant(
         of: find.byType(DashboardMinimap),
         matching: find.byType(CustomPaint),
       );
-      final size = tester.getSize(painterFinder);
+      final size = tester.getSize(painterFinder.first);
       expect(size.height, greaterThan(0));
     });
 
     testWidgets('interaction (tap & drag) updates scroll position', (tester) async {
-      // Setup vertical (default)
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
@@ -200,29 +190,19 @@ void main() {
 
       expect(scrollController.offset, 0.0);
 
-      // 1. Test TAP (onTapUp) on center of minimap
       await tester.tap(find.byType(DashboardMinimap));
       await tester.pump();
 
-      // Scroll should be on middle
-      // (_handleInteraction logic is called)
       expect(scrollController.offset, greaterThan(0.0));
       final offsetAfterTap = scrollController.offset;
 
-      // 2. Test DRAG (onPanUpdate)
-      // Drag to top (scroll up)
       await tester.drag(find.byType(DashboardMinimap), const Offset(0, -50));
       await tester.pump();
 
-      // Scroll should decrease
       expect(scrollController.offset, lessThan(offsetAfterTap));
     });
 
     testWidgets('renders without error even if scroll view has no dimensions yet', (tester) async {
-      // This test simulates a case where the controller is attached but has no dimensions yet
-      // (difficult to reproduce exactly with standard widgets, but we verify at least
-      // that the widget builds without exception with a blank controller).
-
       final emptyController = ScrollController();
 
       await tester.pumpWidget(
@@ -230,19 +210,17 @@ void main() {
           home: Scaffold(
             body: DashboardMinimap(
               controller: controller,
-              scrollController: emptyController, // Not attached to a ScrollView
+              scrollController: emptyController,
               width: 100,
             ),
           ),
         ),
       );
 
-      // If the code didn't have the `hasClients` check, it would crash here.
       expect(find.byType(DashboardMinimap), findsOneWidget);
     });
 
     testWidgets('calculates layout with spacing correctly', (tester) async {
-      // Configure significant spacing
       const spacing = 50.0;
 
       await tester.pumpWidget(
@@ -256,7 +234,6 @@ void main() {
                     controller: controller,
                     scrollController: scrollController,
                     width: 100,
-                    // Inject spacing
                     mainAxisSpacing: spacing,
                     crossAxisSpacing: spacing,
                   ),
@@ -268,29 +245,18 @@ void main() {
         ),
       );
 
-      // Verify CustomPaint exists
       final painterFinder = find.descendant(
         of: find.byType(DashboardMinimap),
         matching: find.byType(CustomPaint),
       );
-      expect(painterFinder, findsOneWidget);
+      expect(painterFinder, findsNWidgets(2));
 
-      // Verify the painter received properties (via widget inspection)
-      final customPaint = tester.widget<CustomPaint>(painterFinder);
+      final customPaint = tester.widget<CustomPaint>(painterFinder.first);
       final painter = customPaint.painter;
-
-      // Note: We cannot cast to _MinimapPainter because it is private,
-      // but the fact that pumpWidget did not throw a calculation exception
-      // (division by zero or null check on dimensions) is already a validation.
-      // Furthermore, if spacing was ignored, the calculated size would be different,
-      // but it is hard to verify without exposing the private class.
-
-      // We just verify that rendering occurs.
       expect(painter, isNotNull);
     });
 
     testWidgets('calculates layout with spacing correctly in Horizontal mode', (tester) async {
-      // Setup horizontal controller
       (controller as DashboardControllerImpl).setScrollDirection(Axis.horizontal);
 
       await tester.pumpWidget(
@@ -305,11 +271,9 @@ void main() {
                     controller: controller,
                     scrollController: scrollController,
                     width: 100,
-                    // Inject spacing to trigger the calculation logic
                     mainAxisSpacing: 10,
                     crossAxisSpacing: 10,
                   ),
-                  // Add content to ensure scrollable area and dimensions
                   Container(width: 1000, height: 500, color: Colors.red),
                 ],
               ),
@@ -318,15 +282,13 @@ void main() {
         ),
       );
 
-      // Verify CustomPaint exists
       final painterFinder = find.descendant(
         of: find.byType(DashboardMinimap),
         matching: find.byType(CustomPaint),
       );
-      expect(painterFinder, findsOneWidget);
+      expect(painterFinder, findsNWidgets(2));
 
-      // Verify the painter received properties
-      final customPaint = tester.widget<CustomPaint>(painterFinder);
+      final customPaint = tester.widget<CustomPaint>(painterFinder.first);
       final painter = customPaint.painter;
       expect(painter, isNotNull);
     });
@@ -370,7 +332,7 @@ void main() {
         of: find.byType(DashboardMinimap),
         matching: find.byType(CustomPaint),
       );
-      expect(painterFinder, findsOneWidget);
+      expect(painterFinder, findsNWidgets(2));
     });
   });
 }

@@ -621,8 +621,19 @@ Dashboard(
     lineColor: Colors.black12, // Color of resize handles
     lineWidth: 1,
     fillColor: Colors.black12, // Highlight color for active item slot
+    handleColor: Colors.indigo.shade400, // Color for handles
   ),
-    // Define the aspect ratio of a single slot (1x1)
+  itemStyle: DashboardItemStyle(
+    focusColor: Colors.indigoAccent, // Border color when focused/selected
+    activeColor: Colors.deepOrange,   // Border color when actively dragged
+    borderRadius: BorderRadius.circular(12), // Match your card's border radius
+    // Or provide a fully custom BoxDecoration:
+    // focusDecoration: BoxDecoration(
+    //   border: Border.all(color: Colors.green, width: 4),
+    //   borderRadius: BorderRadius.circular(12),
+    // ),
+  ),
+  // Define the aspect ratio of a single slot (1x1)
   slotAspectRatio: 1.0,
   // Spacing between items
   mainAxisSpacing: 10,
@@ -681,6 +692,16 @@ You can automatically adapt the number of columns (`slotCount`) based on the ava
 **Smart Layout Memory:** The controller remembers the specific arrangement of items for each column count. If a user organizes their dashboard on Desktop (8 cols), switches to Mobile (4 cols), and comes back to Desktop, their original Desktop arrangement is restored.
 
 ```dart
+// 1. Create your controller and register the layout changed callback
+final controller = DashboardController(
+  initialSlotCount: 8,
+  initialLayout: [ ... ],
+  onLayoutChanged: (items, slotCount) {
+    // Save layout specifically for this screen size (persistence)
+    final key = 'layout_$slotCount';
+    myStorage.save(key, items);
+  },
+);
 Dashboard(
   controller: controller,
   // Define breakpoints:
@@ -691,12 +712,6 @@ Dashboard(
     0: 4,
     600: 8,
     1200: 12
-  },
-  // The callback provides the slotCount (breakpoint)
-  onLayoutChanged: (items, slotCount) {
-    // Save layout specifically for this screen size
-    final key = 'layout_$slotCount';
-    myStorage.save(key, items);
   },
 )
 ```
@@ -1047,6 +1062,10 @@ flutter test --coverage
   2. If you have `lcov` installed, you can generate a human-readable coverage report:
 ```bash
 genhtml coverage/lcov.info -o coverage/html
+```
+or depending on your setup
+```bash
+perl "%GENHTML%" -o coverage\html coverage\lcov.info
 ```
 This will generate an HTML report that you can open in your browser to check the code coverage and ensure the tests are passing.
 

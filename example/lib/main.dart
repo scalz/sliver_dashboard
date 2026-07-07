@@ -76,6 +76,7 @@ class _DashboardPageState extends State<DashboardPage> {
   final sliverScrollController = ScrollController();
   final jsonController = TextEditingController();
 
+  final showGenerateButton = ValueNotifier<bool>(false);
   final isEditing = ValueNotifier(false);
   final showMinimap = ValueNotifier(true);
   final useSliverDemo = ValueNotifier(false);
@@ -182,7 +183,33 @@ class _DashboardPageState extends State<DashboardPage> {
 
   void _syncJsonField() {
     final list = controller.exportLayout();
+    if (list.length > 30) {
+      jsonController.text =
+          '// Auto-serialization paused for layouts with > 25 items.\n'
+          '// Total items: ${list.length}\n'
+          '//\n'
+          '// Rendering 15,000+ lines of raw text in a TextField slows down perf.\n'
+          '// Click "GENERATE JSON" below to export the schema manually at any time.';
+      showGenerateButton.value = true;
+      return;
+    }
     jsonController.text = const JsonEncoder.withIndent('  ').convert(list);
+    showGenerateButton.value = false;
+  }
+
+  /// Forces the generation of the JSON schema regardless of the layout size.
+  void _forceGenerateJson() {
+    final list = controller.exportLayout();
+    jsonController.text = const JsonEncoder.withIndent('  ').convert(list);
+    showMinimap.value = false;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          'JSON Schema generated successfully for ${list.length} items!',
+        ),
+        backgroundColor: Colors.indigo,
+      ),
+    );
   }
 
   void _importJson() {
@@ -279,6 +306,7 @@ class _DashboardPageState extends State<DashboardPage> {
   @override
   void dispose() {
     blockSectionCollision.removeListener(_updatePolicy);
+    showGenerateButton.dispose();
     isEditing.dispose();
     showMinimap.dispose();
     useSliverDemo.dispose();
@@ -311,6 +339,8 @@ class _DashboardPageState extends State<DashboardPage> {
       compactionType: compactionType,
       resizeBehavior: resizeBehavior,
       placementStrategy: placementStrategy,
+      showGenerateButton: showGenerateButton,
+      onForceGenerate: _forceGenerateJson,
       onImportJson: _importJson,
       onStressTest: _addStressTestItems,
     );
@@ -393,6 +423,20 @@ class _DashboardPageState extends State<DashboardPage> {
                 handleColor: Colors.indigo.shade400,
                 lineColor: Colors.white.withValues(alpha: 0.08),
                 lineWidth: 1,
+              ),
+              itemStyle: DashboardItemStyle(
+                focusColor:
+                    Colors.indigoAccent, // Border color when focused/selected
+                activeColor:
+                    Colors.deepOrange, // Border color when actively dragged
+                borderRadius: BorderRadius.circular(
+                  12,
+                ), // Match your card's border radius
+                // Or provide a fully custom BoxDecoration:
+                // focusDecoration: BoxDecoration(
+                //   border: Border.all(color: Colors.green, width: 4),
+                //   borderRadius: BorderRadius.circular(12),
+                // ),
               ),
               trashLayout: const TrashLayout(
                 visible: TrashPosition(bottom: 20, left: 100, right: 100),
@@ -667,10 +711,12 @@ class _ConfigPanel extends StatelessWidget {
     required this.useSliverDemo,
     required this.useDragHandlesOnly,
     required this.blockSectionCollision,
-    required this.autoShrink, // Ajouté
+    required this.autoShrink,
     required this.compactionType,
     required this.resizeBehavior,
     required this.placementStrategy,
+    required this.showGenerateButton,
+    required this.onForceGenerate,
     required this.onImportJson,
     required this.onStressTest,
   });
@@ -682,10 +728,12 @@ class _ConfigPanel extends StatelessWidget {
   final ValueNotifier<bool> useSliverDemo;
   final ValueNotifier<bool> useDragHandlesOnly;
   final ValueNotifier<bool> blockSectionCollision;
-  final ValueNotifier<bool> autoShrink; // Ajouté
+  final ValueNotifier<bool> autoShrink;
   final ValueNotifier<CompactType> compactionType;
   final ValueNotifier<ResizeBehavior> resizeBehavior;
   final ValueNotifier<AutoPlacementStrategy> placementStrategy;
+  final ValueNotifier<bool> showGenerateButton;
+  final VoidCallback onForceGenerate;
   final VoidCallback onImportJson;
   final void Function(int) onStressTest;
 
@@ -843,6 +891,28 @@ class _ConfigPanel extends StatelessWidget {
 
           const SizedBox(height: 16),
           _SectionTitle('JSON Schema Import/Export'),
+          ValueListenableBuilder<bool>(
+            valueListenable: showGenerateButton,
+            builder: (context, show, _) {
+              if (!show) return const SizedBox.shrink();
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 8.0),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    onPressed: onForceGenerate,
+                    icon: const Icon(Icons.bolt),
+                    label: const Text('Generate JSON Schema'),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: theme.colorScheme.primary,
+                      foregroundColor: theme.colorScheme.onPrimary,
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+          const SizedBox(height: 8),
           TextField(
             controller: jsonController,
             maxLines: 6,

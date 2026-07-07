@@ -1,4 +1,5 @@
 import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -94,6 +95,42 @@ class SliverDashboard extends StatefulWidget {
 class _SliverDashboardState extends State<SliverDashboard> {
   late DashboardController _controller;
 
+  // Cache variables to avoid GC churn and string allocations
+  List<LayoutItem>? _lastLayout;
+  Map<Key, int>? _cachedKeyToIndex;
+
+  /// Retrieves or rebuilds the Key-to-Index map only when the ID sequence changes.
+  Map<Key, int> _getOrUpdateKeyToIndex(List<LayoutItem> currentLayout) {
+    final last = _lastLayout;
+    final cached = _cachedKeyToIndex;
+
+    if (cached != null && last != null) {
+      if (identical(last, currentLayout)) return cached;
+
+      if (last.length == currentLayout.length) {
+        var sameOrder = true;
+        for (var i = 0; i < currentLayout.length; i++) {
+          final a = last[i].id;
+          final b = currentLayout[i].id;
+          if (!identical(a, b) && a != b) {
+            sameOrder = false;
+            break;
+          }
+        }
+        if (sameOrder) {
+          _lastLayout = currentLayout;
+          return cached;
+        }
+      }
+    }
+
+    _lastLayout = currentLayout;
+    return _cachedKeyToIndex = {
+      for (var i = 0; i < currentLayout.length; i++)
+        ValueKey('${currentLayout[i].id}${widget.itemGlobalKeySuffix}'): i,
+    };
+  }
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -105,8 +142,11 @@ class _SliverDashboardState extends State<SliverDashboard> {
   Widget build(BuildContext context) {
     // Watch layout changes
     _controller.layout.watch(context);
-    _controller.activeItemId.watch(context); // Watch active ID here
     final isEditing = _controller.isEditing.watch(context);
+    _controller.isDragging.watch(context);
+
+    final layout = _controller.layout.value;
+    final keyToIndex = _getOrUpdateKeyToIndex(layout);
 
     // Use SliverLayoutBuilder instead of LayoutBuilder to return a RenderSliver
     return SliverLayoutBuilder(
@@ -162,17 +202,7 @@ class _SliverDashboardState extends State<SliverDashboard> {
             },
             childCount: _controller.layout.value.length,
             // Allows Flutter to track a reordered item and preserve its State (and thus our cache).
-            findChildIndexCallback: (key) {
-              if (key is ValueKey<String>) {
-                final layout = _controller.layout.value;
-                for (var i = 0; i < layout.length; i++) {
-                  if (ValueKey('${layout[i].id}${widget.itemGlobalKeySuffix}') == key) {
-                    return i;
-                  }
-                }
-              }
-              return null;
-            },
+            findChildIndexCallback: (key) => keyToIndex[key],
           ),
         );
       },
@@ -293,7 +323,9 @@ class RenderSliverDashboard extends RenderSliverMultiBoxAdaptor {
   /// The list of layout items to display.
   List<LayoutItem> get items => _items;
   set items(List<LayoutItem> value) {
-    //if (_items == value) return;
+    // Identity guard: the controller emits a new list instance only when the
+    // layout actually changed; identical instances mean identical geometry.
+    if (identical(_items, value)) return;
     _items = value;
     markNeedsLayout();
   }
@@ -361,6 +393,12 @@ class RenderSliverDashboard extends RenderSliverMultiBoxAdaptor {
   /// Callback for testing/profiling layout performance.
   LayoutProfileCallback? onPerformLayout;
 
+  // Reused geometry scratch buffer: [left, top, width, height] per item.
+  // Replaces the per-layout-pass List<Rect>.filled(N) allocation (~60k
+  // short-lived Rect objects per second during autoscroll drags at N=1000),
+  // eliminating dart2js minor-GC pressure in the drag hot path.
+  Float64List _geom = Float64List(0);
+
   @override
   void setupParentData(RenderObject child) {
     if (child.parentData is! SliverDashboardParentData) {
@@ -416,10 +454,16 @@ class RenderSliverDashboard extends RenderSliverMultiBoxAdaptor {
     }
 
     // 3. Pre-calculate item geometries and total scroll extent
-    final itemRects = List<Rect>.filled(_items.length, Rect.zero);
+    final itemCount = _items.length;
+    // Prevent GC churn during scrolling. The Float64List is reused across
+    // layout passes, avoiding allocating dynamic `List<Rect>` or `Rect` objects.
+    if (_geom.length < itemCount * 4) {
+      _geom = Float64List(itemCount * 4);
+    }
+    final geom = _geom;
     var maxScrollExtent = 0.0;
 
-    for (var i = 0; i < _items.length; i++) {
+    for (var i = 0; i < itemCount; i++) {
       final item = _items[i];
       final double x;
       final double y;
@@ -442,7 +486,11 @@ class RenderSliverDashboard extends RenderSliverMultiBoxAdaptor {
         if (right > maxScrollExtent) maxScrollExtent = right;
       }
 
-      itemRects[i] = Rect.fromLTWH(x, y, w > 0 ? w : 0, h > 0 ? h : 0);
+      final base = i * 4;
+      geom[base] = x;
+      geom[base + 1] = y;
+      geom[base + 2] = w > 0 ? w : 0;
+      geom[base + 3] = h > 0 ? h : 0;
     }
 
     if (_isEditing) {
@@ -457,11 +505,10 @@ class RenderSliverDashboard extends RenderSliverMultiBoxAdaptor {
     var minVisibleIndex = _items.length;
     var maxVisibleIndex = -1;
 
-    for (var i = 0; i < _items.length; i++) {
-      final rect = itemRects[i];
-      final itemStart = isVertical ? rect.top : rect.left;
-      final itemEnd = isVertical ? rect.bottom : rect.right;
-
+    for (var i = 0; i < itemCount; i++) {
+      final base = i * 4;
+      final itemStart = isVertical ? geom[base + 1] : geom[base];
+      final itemEnd = itemStart + (isVertical ? geom[base + 3] : geom[base + 2]);
       if (itemEnd >= targetStart && itemStart <= targetEnd) {
         if (i < minVisibleIndex) minVisibleIndex = i;
         if (i > maxVisibleIndex) maxVisibleIndex = i;
@@ -499,13 +546,12 @@ class RenderSliverDashboard extends RenderSliverMultiBoxAdaptor {
     // Case A: No children exist yet (fresh start or after full GC).
     if (firstChild == null) {
       if (minVisibleIndex <= maxVisibleIndex) {
-        final rect = itemRects[minVisibleIndex];
-        final initialOffset = isVertical ? rect.top : rect.left;
-
+        final base = minVisibleIndex * 4;
+        final initialOffset = isVertical ? geom[base + 1] : geom[base];
         if (addInitialChild(index: minVisibleIndex, layoutOffset: initialOffset)) {
           final childParentData = firstChild?.parentData;
           if (childParentData is SliverDashboardParentData) {
-            childParentData.paintOffset = Offset(rect.left, rect.top);
+            childParentData.paintOffset = Offset(geom[base], geom[base + 1]);
           }
         }
       }
@@ -516,16 +562,17 @@ class RenderSliverDashboard extends RenderSliverMultiBoxAdaptor {
     var leadingChild = firstChild;
     while (leadingChild != null && indexOf(leadingChild) > minVisibleIndex) {
       final index = indexOf(leadingChild) - 1;
-      final rect = itemRects[index];
-      final childConstraints = BoxConstraints.tightFor(width: rect.width, height: rect.height);
+      final base = index * 4;
+      final childConstraints =
+          BoxConstraints.tightFor(width: geom[base + 2], height: geom[base + 3]);
 
       final newChild = insertAndLayoutLeadingChild(childConstraints, parentUsesSize: true);
       final childParentData = newChild?.parentData;
       if (newChild == null || childParentData is! SliverDashboardParentData) break;
 
       childParentData
-        ..layoutOffset = isVertical ? rect.top : rect.left
-        ..paintOffset = Offset(rect.left, rect.top);
+        ..layoutOffset = isVertical ? geom[base + 1] : geom[base]
+        ..paintOffset = Offset(geom[base], geom[base + 1]);
 
       leadingChild = newChild;
     }
@@ -534,18 +581,17 @@ class RenderSliverDashboard extends RenderSliverMultiBoxAdaptor {
     // This single loop handles both filling gaps in the middle and extending to the end.
     var child = firstChild;
     while (child != null) {
-      final index = indexOf(child);
-
       // 1. Layout current child
-      final rect = itemRects[index];
+      final index = indexOf(child);
+      final base = index * 4;
       final childParentData = child.parentData;
       if (childParentData is SliverDashboardParentData) {
         childParentData
-          ..layoutOffset = isVertical ? rect.top : rect.left
-          ..paintOffset = Offset(rect.left, rect.top);
+          ..layoutOffset = isVertical ? geom[base + 1] : geom[base]
+          ..paintOffset = Offset(geom[base], geom[base + 1]);
       }
       child.layout(
-        BoxConstraints.tightFor(width: rect.width, height: rect.height),
+        BoxConstraints.tightFor(width: geom[base + 2], height: geom[base + 3]),
         parentUsesSize: true,
       );
 
@@ -561,10 +607,11 @@ class RenderSliverDashboard extends RenderSliverMultiBoxAdaptor {
         var previousChild = child;
 
         while (insertIndex < nextIndex) {
-          final insertRect = itemRects[insertIndex];
-          final insertConstraints =
-              BoxConstraints.tightFor(width: insertRect.width, height: insertRect.height);
-
+          final insertBase = insertIndex * 4;
+          final insertConstraints = BoxConstraints.tightFor(
+            width: geom[insertBase + 2],
+            height: geom[insertBase + 3],
+          );
           final newChild =
               insertAndLayoutChild(insertConstraints, after: previousChild, parentUsesSize: true);
 
@@ -573,8 +620,8 @@ class RenderSliverDashboard extends RenderSliverMultiBoxAdaptor {
           final newParentData = newChild.parentData;
           if (newParentData is SliverDashboardParentData) {
             newParentData
-              ..layoutOffset = isVertical ? insertRect.top : insertRect.left
-              ..paintOffset = Offset(insertRect.left, insertRect.top);
+              ..layoutOffset = isVertical ? geom[insertBase + 1] : geom[insertBase]
+              ..paintOffset = Offset(geom[insertBase], geom[insertBase + 1]);
           }
 
           previousChild = newChild;

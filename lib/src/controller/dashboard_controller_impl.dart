@@ -81,7 +81,7 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
   late final compactionType = B.writable<engine.CompactType>(engine.CompactType.vertical);
 
   // Internal delegate reference
-  engine.CompactorDelegate _compactor = const engine.VerticalCompactor();
+  engine.CompactorDelegate _compactor = const engine.FastVerticalCompactor();
 
   @override
   late final resizeHandleSide = B.writable<double>(20);
@@ -146,6 +146,20 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
   late final originalLayoutOnStart = B.writable<List<LayoutItem>>([]);
 
   Stream<ScrollRequest> get scrollToItemRequest => _scrollToItemController.stream;
+
+  int? _lastBBoxX;
+  int? _lastBBoxY;
+
+  int? _lastResizeW;
+  int? _lastResizeH;
+  int? _lastResizeX;
+  int? _lastResizeY;
+
+  // Per-drag cached invariants (computed once in onDragStart)
+  LayoutItem? _dragPivotOriginal;
+  List<LayoutItem> _dragClusterItems = const [];
+  LayoutItem? _dragOriginalBBox;
+  LayoutItem? _lastMovedPivot;
 
   // --- PUBLIC METHODS IMPLEMENTATION ---
 
@@ -560,8 +574,20 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     _pivotItemId = itemId;
     isResizing.value = false;
 
+    // reset lock
+    _lastBBoxX = null;
+    _lastBBoxY = null;
+
     // Snapshot layout for anti-drift
     originalLayoutOnStart.value = layout.value;
+
+    // Cache the per-drag invariants once (see field docs).
+    final snapshot = originalLayoutOnStart.value;
+    final ids = selectedItemIds.value;
+    _dragPivotOriginal = snapshot.firstWhere((i) => i.id == itemId);
+    _dragClusterItems = snapshot.where((i) => ids.contains(i.id)).toList();
+    _dragOriginalBBox = engine.calculateBoundingBox(_dragClusterItems);
+    _lastMovedPivot = _dragPivotOriginal;
   }
 
   /// Call continuously while a drag gesture is updated.
@@ -576,7 +602,9 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     // Safety check: ensure we are dragging the pivot
     if (_pivotItemId != itemId) return;
 
-    final pivotItem = originalLayoutOnStart.value.firstWhere((i) => i.id == itemId);
+    final pivotItem = _dragPivotOriginal;
+    final originalBBox = _dragOriginalBBox;
+    if (pivotItem == null || originalBBox == null) return;
 
     // 1. Calculate Pivot's new Grid Position
     final newGridX = (contentPosition.dx / (slotWidth + crossAxisSpacing)).round();
@@ -588,24 +616,14 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     }
 
     // 2. Calculate Delta (Grid Units) from original position
-    // Note: We don't clamp the pivot yet, we'll let moveCluster handle bounds via the BBox
     final dx = newGridX - pivotItem.x;
     final dy = newGridY - pivotItem.y;
 
-    // 3. Calculate Target Bounding Box Position
-    // We need the original BBox of the cluster
-    final clusterIds = selectedItemIds.value;
-    final clusterItems =
-        originalLayoutOnStart.value.where((i) => clusterIds.contains(i.id)).toList();
-
-    final originalBBox = engine.calculateBoundingBox(clusterItems);
-
-    // Target BBox Position = Original BBox + Delta
+    // 3. Target Bounding Box Position (cluster bbox cached at drag start)
     var targetBBoxX = originalBBox.x + dx;
     var targetBBoxY = originalBBox.y + dy;
 
-    // 4. Clamping (Optional but recommended for visual sanity)
-    // We clamp the BBox so it doesn't go out of grid bounds
+    // 4. Clamping
     if (scrollDirection.value == Axis.vertical) {
       targetBBoxX = targetBBoxX.clamp(0, slotCount.value - originalBBox.w);
       targetBBoxY = max(0, targetBBoxY);
@@ -614,10 +632,30 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
       targetBBoxY = targetBBoxY.clamp(0, slotCount.value - originalBBox.h);
     }
 
+    // Boundary Bypass.
+    // If the logical grid coordinates of the moving bounding box have not
+    // changed, the background grid is mathematically identical: only update
+    // the lightweight overlay dragOffset. The pivot's logical position is
+    // cached from the last moveCluster result instead of an O(N) firstWhere.
+    if (_lastBBoxX == targetBBoxX && _lastBBoxY == targetBBoxY) {
+      final movedPivot = _lastMovedPivot ?? pivotItem;
+      final logicalItemPixelX = movedPivot.x * (slotWidth + crossAxisSpacing);
+      final logicalItemPixelY = movedPivot.y * (slotHeight + mainAxisSpacing);
+
+      dragOffset.value = Offset(
+        contentPosition.dx - logicalItemPixelX,
+        contentPosition.dy - logicalItemPixelY,
+      );
+      return;
+    }
+
+    _lastBBoxX = targetBBoxX;
+    _lastBBoxY = targetBBoxY;
+
     // 5. Move Cluster
     final newLayout = engine.moveCluster(
       originalLayoutOnStart.value,
-      clusterIds,
+      selectedItemIds.value,
       targetBBoxX,
       targetBBoxY,
       cols: slotCount.value,
@@ -630,18 +668,16 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     layout.value = newLayout;
 
     // 6. Visual Offset (Smooth Drag)
-    // We calculate offset based on the Pivot Item's logical position in the NEW layout
-    // to account for collision resolutions (pushes) performed by the engine.
-
     final movedPivot = newLayout.firstWhere((i) => i.id == itemId);
+    _lastMovedPivot = movedPivot;
 
     final logicalItemPixelX = movedPivot.x * (slotWidth + crossAxisSpacing);
     final logicalItemPixelY = movedPivot.y * (slotHeight + mainAxisSpacing);
 
-    final visualOffsetX = contentPosition.dx - logicalItemPixelX;
-    final visualOffsetY = contentPosition.dy - logicalItemPixelY;
-
-    dragOffset.value = Offset(visualOffsetX, visualOffsetY);
+    dragOffset.value = Offset(
+      contentPosition.dx - logicalItemPixelX,
+      contentPosition.dy - logicalItemPixelY,
+    );
   }
 
   /// Call when a drag gesture ends.
@@ -660,6 +696,11 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
 
     layout.value = finalLayout;
     onLayoutChanged?.call(layout.value, slotCount.value);
+
+    _dragPivotOriginal = null;
+    _dragClusterItems = const [];
+    _dragOriginalBBox = null;
+    _lastMovedPivot = null;
 
     _isDraggingState.value = false;
     _pivotItemId = null;
@@ -681,6 +722,13 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     isResizing.value = true;
     _pivotItemId = itemId;
     _isDraggingState.value = false;
+
+    // reset lock
+    _lastResizeW = null;
+    _lastResizeH = null;
+    _lastResizeX = null;
+    _lastResizeY = null;
+
     originalLayoutOnStart.value = layout.value;
   }
 
@@ -757,6 +805,21 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
       }
     }
 
+    // Boundary Bypass for resizing.
+    // If the target dimensions and positions have not crossed a grid threshold,
+    // bypass the entire layout reconstruction.
+    if (_lastResizeW == newW &&
+        _lastResizeH == newH &&
+        _lastResizeX == newX &&
+        _lastResizeY == newY) {
+      return;
+    }
+
+    _lastResizeW = newW;
+    _lastResizeH = newH;
+    _lastResizeX = newX;
+    _lastResizeY = newY;
+
     final resizedItem = originalItem.copyWith(w: newW, h: newH, x: newX, y: newY);
 
     final newLayout = engine.resizeItem(
@@ -784,6 +847,11 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     layout.value = finalLayout;
 
     onLayoutChanged?.call(layout.value, slotCount.value);
+
+    _dragPivotOriginal = null;
+    _dragClusterItems = const [];
+    _dragOriginalBBox = null;
+    _lastMovedPivot = null;
 
     isResizing.value = false;
     _pivotItemId = null;
@@ -851,6 +919,11 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
       layout.value = List.from(originalLayoutOnStart.value);
     }
 
+    _dragPivotOriginal = null;
+    _dragClusterItems = const [];
+    _dragOriginalBBox = null;
+    _lastMovedPivot = null;
+
     _isDraggingState.value = false;
     isResizing.value = false;
     _pivotItemId = null;
@@ -891,6 +964,13 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
   }) async {
     if (!layout.value.any((i) => i.id == itemId)) {
       debugPrint('SliverDashboard: Cannot scroll to item $itemId (not found)');
+      return;
+    }
+
+    if (!_scrollToItemController.hasListener) {
+      // No DashboardOverlay is attached (detached controller scenario):
+      // completing immediately avoids a Future that never resolves.
+      debugPrint('SliverDashboard: Cannot scroll to item $itemId (no overlay attached)');
       return;
     }
 

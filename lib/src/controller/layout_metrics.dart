@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 /// This class encapsulates the logic for determining slot sizes based on
 /// constraints, spacing, and aspect ratios, as well as converting pixel
 /// coordinates to grid coordinates.
+@immutable
 class SlotMetrics {
   /// Creates a [SlotMetrics] instance with pre-calculated values.
   const SlotMetrics({
@@ -104,4 +105,28 @@ class SlotMetrics {
       return (x: x, y: y);
     }
   }
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is SlotMetrics &&
+          runtimeType == other.runtimeType &&
+          slotWidth == other.slotWidth &&
+          slotHeight == other.slotHeight &&
+          mainAxisSpacing == other.mainAxisSpacing &&
+          crossAxisSpacing == other.crossAxisSpacing &&
+          padding == other.padding &&
+          scrollDirection == other.scrollDirection &&
+          slotCount == other.slotCount;
+
+  @override
+  int get hashCode => Object.hash(
+        slotWidth,
+        slotHeight,
+        mainAxisSpacing,
+        crossAxisSpacing,
+        padding,
+        scrollDirection,
+        slotCount,
+      );
 }

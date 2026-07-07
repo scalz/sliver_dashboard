@@ -50,6 +50,31 @@ void main() {
         expect(metrics.slotHeight, 50.0);
         expect(metrics.slotWidth, 50.0);
       });
+
+      test('SlotMetrics hashCode consistency with value equality', () {
+        const metrics1 = SlotMetrics(
+          slotWidth: 100,
+          slotHeight: 100,
+          mainAxisSpacing: 10,
+          crossAxisSpacing: 10,
+          padding: EdgeInsets.zero,
+          scrollDirection: Axis.vertical,
+          slotCount: 4,
+        );
+        const metrics2 = SlotMetrics(
+          slotWidth: 100,
+          slotHeight: 100,
+          mainAxisSpacing: 10,
+          crossAxisSpacing: 10,
+          padding: EdgeInsets.zero,
+          scrollDirection: Axis.vertical,
+          slotCount: 4,
+        );
+
+        // Asserts that SlotMetrics.hashCode is symmetric and consistent
+        // with value equality, preventing redundant background grid painting.
+        expect(metrics1.hashCode, equals(metrics2.hashCode));
+      });
     });
 
     group('pixelToGrid conversion', () {

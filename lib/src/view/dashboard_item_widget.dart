@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
+import 'package:sliver_dashboard/src/controller/dashboard_controller_interface.dart'
+    show DashboardController;
 import 'package:sliver_dashboard/src/controller/dashboard_controller_provider.dart';
 import 'package:sliver_dashboard/src/controller/utility.dart';
 import 'package:sliver_dashboard/src/models/layout_item.dart';
@@ -54,13 +56,109 @@ class DashboardItem extends StatefulWidget {
   State<DashboardItem> createState() => _DashboardItemState();
 }
 
-class _DashboardItemState extends State<DashboardItem> {
+class _DashboardItemState extends State<DashboardItem>
+    with AutomaticKeepAliveClientMixin<DashboardItem> {
   // Cache lazy initialization
   Widget? _cachedWidget;
   late int _lastSignature;
   late bool _lastIsEditing;
 
   bool _isFocused = false;
+
+  late final Map<Type, Action<Intent>> _actions = <Type, Action<Intent>>{
+    DashboardGrabItemIntent: CallbackAction<DashboardGrabItemIntent>(
+      onInvoke: (_) {
+        if (!widget.isEditing || widget.item.isStatic) return null;
+        final controller = DashboardControllerProvider.of(context);
+        final guidance = controller.guidance ?? DashboardGuidance.byDefault;
+        controller.internal.onDragStart(widget.item.id);
+        _announce(guidance.a11yGrab(widget.item.id));
+        return null;
+      },
+    ),
+    DashboardDropItemIntent: CallbackAction<DashboardDropItemIntent>(
+      onInvoke: (_) {
+        final controller = DashboardControllerProvider.of(context);
+        if (_isActive(controller)) {
+          final guidance = controller.guidance ?? DashboardGuidance.byDefault;
+          controller.internal.onDragEnd(widget.item.id);
+          _announce(guidance.a11yDrop(widget.item.x, widget.item.y));
+        }
+        return null;
+      },
+    ),
+    DashboardMoveItemIntent: CallbackAction<DashboardMoveItemIntent>(
+      onInvoke: (intent) {
+        final controller = DashboardControllerProvider.of(context);
+        if (_isActive(controller)) {
+          final guidance = controller.guidance ?? DashboardGuidance.byDefault;
+          controller.moveActiveItemBy(intent.dx, intent.dy);
+          _announce(guidance.a11yMove(widget.item.x + intent.dx, widget.item.y + intent.dy));
+        }
+        return null;
+      },
+    ),
+    DashboardCancelInteractionIntent: CallbackAction<DashboardCancelInteractionIntent>(
+      onInvoke: (_) {
+        final controller = DashboardControllerProvider.of(context);
+        if (_isActive(controller)) {
+          final guidance = controller.guidance ?? DashboardGuidance.byDefault;
+          controller.cancelInteraction();
+          _announce(guidance.a11yCancel);
+        }
+        return null;
+      },
+    ),
+  };
+
+  DashboardShortcuts? _shortcutsConfigCacheKey;
+  late Map<ShortcutActivator, Intent> _activeShortcuts;
+  late Map<ShortcutActivator, Intent> _idleShortcuts;
+
+  bool _isActive(DashboardController controller) =>
+      controller.isDragging.peek() && controller.selectedItemIds.peek().contains(widget.item.id);
+
+  Map<ShortcutActivator, Intent> _shortcutsFor(
+    DashboardShortcuts config, {
+    required bool isActive,
+  }) {
+    if (!identical(_shortcutsConfigCacheKey, config)) {
+      _shortcutsConfigCacheKey = config;
+      _activeShortcuts = <ShortcutActivator, Intent>{
+        for (final key in config.drop) key: const DashboardDropItemIntent(),
+        for (final key in config.cancel) key: const DashboardCancelInteractionIntent(),
+        for (final key in config.moveUp) key: const DashboardMoveItemIntent(0, -1),
+        for (final key in config.moveDown) key: const DashboardMoveItemIntent(0, 1),
+        for (final key in config.moveLeft) key: const DashboardMoveItemIntent(-1, 0),
+        for (final key in config.moveRight) key: const DashboardMoveItemIntent(1, 0),
+      };
+      _idleShortcuts = <ShortcutActivator, Intent>{
+        for (final key in config.grab) key: const DashboardGrabItemIntent(),
+      };
+    }
+    return isActive ? _activeShortcuts : _idleShortcuts;
+  }
+
+  // The collision cascade in LayoutEngine.moveElement can shift
+  // hundreds of items' `y` on every drag frame (see moveElement). Since
+  // RenderSliverDashboard.performLayout recomputes its visible index range
+  // from those positions every frame, items can flicker in and out of the
+  // visible+cache window purely due to the cascade, even though their Key
+  // and index never change during a single drag. Without keepAlive, each
+  // flicker tears the widget down and rebuilds it from scratch
+  // (Element.inflateWidget), which is what dominates the CPU profile during
+  // a top-of-grid drag. Keeping items alive only while a drag is active
+  // avoids this thrash without disabling virtualization the rest of the time.
+  bool _keepAlive = false;
+
+  @override
+  bool get wantKeepAlive => _keepAlive;
+
+  void _updateKeepAlive(bool value) {
+    if (_keepAlive == value) return;
+    _keepAlive = value;
+    updateKeepAlive(); // Notify Flutter to retain this widget in the keep-alive bucket
+  }
 
   @override
   void initState() {
@@ -99,6 +197,7 @@ class _DashboardItemState extends State<DashboardItem> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     // Lazy initialization: build the cache only when needed.
     // This solves the "dependOnInheritedWidget" error because 'context'
     // is fully initialized at this point.
@@ -125,90 +224,24 @@ class _DashboardItemState extends State<DashboardItem> {
     // Active means "Part of the group being dragged"
     final isActive = isDragging && isSelected;
 
+    _updateKeepAlive(isDragging);
+
     final semanticLabel = 'Item ${widget.item.id}, Row ${widget.item.y}, Column ${widget.item.x}';
 
     // Focus order ensures Tab navigation follows the grid (Row-major)
     final focusOrder = (widget.item.y * 10000 + widget.item.x).toDouble();
     final style = widget.itemStyle;
 
-    // 3. Define Actions
-    final actions = <Type, Action<Intent>>{
-      DashboardGrabItemIntent: CallbackAction<DashboardGrabItemIntent>(
-        onInvoke: (_) {
-          if (!widget.isEditing || widget.item.isStatic) return null;
-          controller.internal.onDragStart(widget.item.id);
-          _announce(guidance.a11yGrab(widget.item.id));
-          return null;
-        },
-      ),
-      DashboardDropItemIntent: CallbackAction<DashboardDropItemIntent>(
-        onInvoke: (_) {
-          if (isActive) {
-            controller.internal.onDragEnd(widget.item.id);
-            _announce(guidance.a11yDrop(widget.item.x, widget.item.y));
-          }
-          return null;
-        },
-      ),
-      DashboardMoveItemIntent: CallbackAction<DashboardMoveItemIntent>(
-        onInvoke: (intent) {
-          if (isActive) {
-            controller.moveActiveItemBy(intent.dx, intent.dy);
-            final newX = widget.item.x + intent.dx;
-            final newY = widget.item.y + intent.dy;
-            _announce(guidance.a11yMove(newX, newY));
-          }
-          return null;
-        },
-      ),
-      DashboardCancelInteractionIntent: CallbackAction<DashboardCancelInteractionIntent>(
-        onInvoke: (_) {
-          if (isActive) {
-            controller.cancelInteraction();
-            _announce(guidance.a11yCancel);
-          }
-          return null;
-        },
-      ),
-    };
+    final shortcuts = _shortcutsFor(shortcutsConfig, isActive: isActive);
 
-    // 4. Define Shortcuts (Dynamic based on state)
-    final shortcuts = <ShortcutActivator, Intent>{};
-    if (isActive) {
-      // Mode "Grabbed" -> Listen for Drop, Cancel, Move
-      for (final key in shortcutsConfig.drop) {
-        shortcuts[key] = const DashboardDropItemIntent();
-      }
-      for (final key in shortcutsConfig.cancel) {
-        shortcuts[key] = const DashboardCancelInteractionIntent();
-      }
-      for (final key in shortcutsConfig.moveUp) {
-        shortcuts[key] = const DashboardMoveItemIntent(0, -1);
-      }
-      for (final key in shortcutsConfig.moveDown) {
-        shortcuts[key] = const DashboardMoveItemIntent(0, 1);
-      }
-      for (final key in shortcutsConfig.moveLeft) {
-        shortcuts[key] = const DashboardMoveItemIntent(-1, 0);
-      }
-      for (final key in shortcutsConfig.moveRight) {
-        shortcuts[key] = const DashboardMoveItemIntent(1, 0);
-      }
-    } else {
-      // Mode "Idle" -> Listen for Grab
-      for (final key in shortcutsConfig.grab) {
-        shortcuts[key] = const DashboardGrabItemIntent();
-      }
-    }
-
-    // 5. Build the Interaction Shell
+    // Build the Interaction Shell
     // This part is rebuilt every time focus changes or active state changes.
     // Since FocusableActionDetector is a StatefulWidget internally, it preserves
     // the FocusNode as long as it stays in the tree, solving the focus loss issue.
     return FocusTraversalOrder(
       order: NumericFocusOrder(focusOrder),
       child: FocusableActionDetector(
-        actions: actions,
+        actions: _actions,
         shortcuts: widget.isEditing ? shortcuts : {},
         enabled: widget.isEditing && !widget.item.isStatic && !widget.isFeedback,
         onFocusChange: (hasFocus) {
@@ -241,7 +274,7 @@ class _DashboardItemState extends State<DashboardItem> {
                       BoxDecoration(
                         border: Border.all(
                           color: isActive
-                              ? Colors.deepOrange
+                              ? (style.activeColor ?? Colors.deepOrange)
                               : (style.focusColor ?? Theme.of(context).primaryColor),
                           width: (isActive || _isFocused) ? 4 : 3,
                         ),

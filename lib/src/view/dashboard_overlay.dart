@@ -85,6 +85,7 @@ class DashboardOverlay<T extends Object> extends StatefulWidget {
     required this.itemBuilder,
     super.key,
     this.gridStyle,
+    this.itemStyle = DashboardItemStyle.defaultStyle,
     this.slotAspectRatio = 1.0,
     this.mainAxisSpacing = 8.0,
     this.crossAxisSpacing = 8.0,
@@ -128,6 +129,9 @@ class DashboardOverlay<T extends Object> extends StatefulWidget {
   /// Styling options for the background grid in edit mode.
   /// If null, no grid is painted unless [backgroundBuilder] is provided.
   final GridStyle? gridStyle;
+
+  /// The visual style of the focus/selection borders.
+  final DashboardItemStyle itemStyle;
 
   /// The aspect ratio of each grid slot.
   final double slotAspectRatio;
@@ -249,6 +253,9 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
   bool _shouldClearSelectionOnUp = false;
 
   bool _isProcessingPointerUp = false;
+  final _throttleStopwatch = Stopwatch()..start();
+  Offset? _pendingThrottledPosition;
+  Timer? _throttleFlushScheduled;
 
   bool get _isMobile =>
       defaultTargetPlatform == TargetPlatform.android ||
@@ -361,6 +368,7 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
     _isHoveringTrash.dispose();
     _isTrashActive.dispose();
     _trashTimer?.cancel();
+    _throttleFlushScheduled?.cancel();
     super.dispose();
   }
 
@@ -630,6 +638,7 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
               isEditing: isEditing,
               sliverStartPos: currentSliverStart,
               sliverBounds: sliverBounds,
+              itemStyle: widget.itemStyle,
             );
           }).toList(),
         );
@@ -824,6 +833,31 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
   void _onPointerMove(Offset position) {
     if (_activeItemId == null) return;
 
+    // Stopwatch Throttling.
+    // To prevent event queue flooding from high-polling mice, we throttle updates on Web.
+    // Using a Stopwatch avoids allocating garbage (DateTime.now() objects) while remaining
+    // completely independent of Flutter's frame rendering cycles, avoiding visual lockups
+    // when sub-slot moves are bypassed.
+    if (kIsWeb) {
+      if (_throttleStopwatch.elapsedMilliseconds < 16) {
+        // Keep the freshest position and flush it after the throttle window,
+        // otherwise the item settles one event behind the cursor when the
+        // burst ends exactly inside the window.
+        _pendingThrottledPosition = position;
+        _throttleFlushScheduled ??= Timer(const Duration(milliseconds: 17), () {
+          _throttleFlushScheduled = null;
+          final pending = _pendingThrottledPosition;
+          _pendingThrottledPosition = null;
+          if (pending != null && _activeItemId != null && mounted) {
+            _onPointerMove(pending);
+          }
+        });
+        return;
+      }
+      _throttleStopwatch.reset();
+      _pendingThrottledPosition = null;
+    }
+
     // If it starts tp move, this is not a "clic", so we won't unselect group at the end.
     if ((position - _operationStartPosition).distance > 2.0) {
       // Tolerance threshold
@@ -1014,6 +1048,9 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
     _isHoveringTrash.value = false;
     _isTrashActive.value = false;
     _trashTimer?.cancel();
+    _throttleFlushScheduled?.cancel();
+    _throttleFlushScheduled = null;
+    _pendingThrottledPosition = null;
     widget.controller.internal.setDragOffset(Offset.zero);
   }
 

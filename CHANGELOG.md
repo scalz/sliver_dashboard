@@ -1,3 +1,28 @@
+## 1.1.0
+
+**No breaking changes in this release.**
+
+### New Features
+- **DashboardItemStyle.activeColor**: Added `activeColor` to customize the border outline color when an item is actively being dragged.
+
+### Performance Optimizations
+- **Monotonic Cascade Solver**: Optimized the collision resolution pipeline in `moveElement` using a monotonic cascade paired with O(N*k) row-indexed queries, replacing the unconditional O(N^2) verification pass on every frame.
+- **Fast Skyline Compaction**: Promoted the default controller compaction initialization from the legacy compactor to the O(N log N) Skyline-based `FastVerticalCompactor`.
+- **Sliver Index Stability**: Resolved parent tree rebuilds during cluster dragging by sorting layouts alphabetically by ID to guarantee sliver child index stability.
+- **Drag Invariant Caching**: Cached drag invariants (pivot, cluster, bounding box) in the controller to prevent redundant allocations during active pointer moves.
+- **Key-Map Optimization**: Replaced list key-mapping in `_getOrUpdateKeyToIndex` with an allocation-free string-identity sequence check during active drags.
+- **Allocation-Free Layout Pass**: Implemented a reusable `Float64List` scratch buffer in `performLayout` to eliminate `Rect` allocations and reduce minor-GC pressure.
+- **Minimap Layer Separation**: Restructured the mini-map to use layered painting (caching item coordinates in a `RepaintBoundary` and painting viewport changes on scroll notifications), reducing canvas repaint draw calls.
+- **SlotMetrics Repaint Guard**: Added value-based equality to `SlotMetrics` to prevent redundant background grid painting.
+- **Keep-Alive Drag State**: Added temporary `KeepAlive` support on active elements during drags to prevent unnecessary widget lifecycle churn.
+- **Web Gesture Throttling**: Added a high-precision `Stopwatch` trailing-edge throttle to safely capture late-arriving pointer positions without overloading the browser thread.
+
+### Bug Fixes & Refinements
+- **Programmatic Scroll Safety**: Added safety checks in `scrollToItem` to prevent Future deadlocks when the controller is detached from an active overlay.
+- **Bound-Correction Safeguards**: Enhanced `correctBounds` with safeguards for zero/negative coordinates and assertions for breakpoint mismatches.
+- **Compaction Determinism**: Introduced alphabetical ID-sorting tie-breakers to `sortLayoutItems` and Skyline compactors to ensure deterministic placement on multi-collision overlaps.
+- **Boundary painting bounds**: Optimized row painting inside the grid background custom painter to clamp drawn lines strictly within the visible viewport.
+
 ## 1.0.0
 
 ### New Features

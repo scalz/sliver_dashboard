@@ -256,6 +256,7 @@ class _DashboardState<T extends Object> extends State<Dashboard<T>> {
 
       // Pass layout params directly to Overlay so it can render the background grid.
       gridStyle: widget.gridStyle,
+      itemStyle: widget.itemStyle,
       slotAspectRatio: widget.slotAspectRatio,
       mainAxisSpacing: widget.mainAxisSpacing,
       crossAxisSpacing: widget.crossAxisSpacing,

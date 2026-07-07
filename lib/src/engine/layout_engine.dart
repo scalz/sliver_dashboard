@@ -84,7 +84,8 @@ class VerticalCompactor extends CompactorDelegate {
         out[index] = newL.copyWith(moved: false);
       }
     }
-    return out.whereType<LayoutItem>().toList();
+    final resultList = out.whereType<LayoutItem>().toList()..sort((a, b) => a.id.compareTo(b.id));
+    return resultList;
   }
 
   @override
@@ -151,7 +152,8 @@ class HorizontalCompactor extends CompactorDelegate {
         out[index] = newL.copyWith(moved: false);
       }
     }
-    return out.whereType<LayoutItem>().toList();
+    final resultList = out.whereType<LayoutItem>().toList()..sort((a, b) => a.id.compareTo(b.id));
+    return resultList;
   }
 
   @override
@@ -265,6 +267,12 @@ class FastVerticalCompactor extends CompactorDelegate {
         // Sort by Y, then X
         if (a.y != b.y) return a.y.compareTo(b.y);
         if (a.x != b.x) return a.x.compareTo(b.x);
+
+        // Tie-breaker. If items have identical coordinates, sort by ID
+        // alphabetically to ensure layout determinism across all platforms.
+        final idCompare = a.id.compareTo(b.id);
+        if (idCompare != 0) return idCompare;
+
         // Static first to act as anchors
         if (a.isStatic && !b.isStatic) return -1;
         if (!a.isStatic && b.isStatic) return 1;
@@ -331,7 +339,8 @@ class FastVerticalCompactor extends CompactorDelegate {
       _updateTide(tide, newItem, maxColWithBuffer);
     }
 
-    return out;
+    final resultList = out..sort((a, b) => a.id.compareTo(b.id));
+    return resultList;
   }
 
   void _updateTide(List<int> tide, LayoutItem item, int maxCol) {
@@ -387,6 +396,10 @@ class FastHorizontalCompactor extends CompactorDelegate {
         // Sort by X (Main Axis), then Y (Cross Axis)
         if (a.x != b.x) return a.x.compareTo(b.x);
         if (a.y != b.y) return a.y.compareTo(b.y);
+
+        // Tie-breaker.
+        final idCompare = a.id.compareTo(b.id);
+        if (idCompare != 0) return idCompare;
 
         // Static first
         if (a.isStatic && !b.isStatic) return -1;
@@ -444,7 +457,8 @@ class FastHorizontalCompactor extends CompactorDelegate {
       _updateTide(tide, newItem, maxRow);
     }
 
-    return out;
+    final resultList = out..sort((a, b) => a.id.compareTo(b.id));
+    return resultList;
   }
 
   void _updateTide(List<int> tide, LayoutItem item, int maxRow) {
@@ -496,21 +510,17 @@ List<LayoutItem> sortLayoutItems(Layout layout, CompactType compactType) {
   final newLayout = List<LayoutItem>.from(layout);
   if (compactType == CompactType.horizontal) {
     newLayout.sort((a, b) {
-      if (a.x > b.x || (a.x == b.x && a.y > b.y)) {
-        return 1;
-      } else if (a.x == b.x && a.y == b.y) {
-        return 0;
-      }
-      return -1;
+      if (a.x != b.x) return a.x.compareTo(b.x);
+      if (a.y != b.y) return a.y.compareTo(b.y);
+
+      return a.id.compareTo(b.id);
     });
   } else {
     newLayout.sort((a, b) {
-      if (a.y > b.y || (a.y == b.y && a.x > b.x)) {
-        return 1;
-      } else if (a.y == b.y && a.x == b.x) {
-        return 0;
-      }
-      return -1;
+      if (a.y != b.y) return a.y.compareTo(b.y);
+      if (a.x != b.x) return a.x.compareTo(b.x);
+
+      return a.id.compareTo(b.id);
     });
   }
   return newLayout;
@@ -594,6 +604,9 @@ LayoutItem resolveCompactionCollision(
 }
 
 // --- Internal Helper for Default Collision Resolution ---
+// Row-indexed: each probe only visits rows that can plausibly overlap,
+// replacing the previous O(N^2) scan of the whole processed list
+// (499,500 collides() calls at N=1000) with O(N*k) work (~16k checks).
 List<LayoutItem> _resolveCollisionsDefault(List<LayoutItem> layout, CompactType compactType) {
   final items = List<LayoutItem>.from(layout);
   final isHorizontal = compactType == CompactType.horizontal;
@@ -609,11 +622,13 @@ List<LayoutItem> _resolveCollisionsDefault(List<LayoutItem> layout, CompactType 
   });
 
   final processed = <LayoutItem>[];
+  final index = _RowIndex.empty();
 
   for (var i = 0; i < items.length; i++) {
     var current = items[i];
     if (current.isStatic) {
       processed.add(current);
+      index.insert(current);
       continue;
     }
 
@@ -622,21 +637,32 @@ List<LayoutItem> _resolveCollisionsDefault(List<LayoutItem> layout, CompactType 
 
     while (hasCollision && safety < 1000) {
       hasCollision = false;
-      for (final obstacle in processed) {
-        if (collides(current, obstacle)) {
-          if (isHorizontal) {
-            current = current.copyWith(x: obstacle.x + obstacle.w);
-          } else {
-            current = current.copyWith(y: obstacle.y + obstacle.h);
-          }
-          hasCollision = true;
-          break;
-        }
+      final hits = index.query(
+        current,
+        top: current.y,
+        bottom: current.y + current.h,
+        left: current.x,
+        right: current.x + current.w,
+      );
+      if (hits.isNotEmpty) {
+        // Deterministic: resolve against the top/left-most obstacle first,
+        // matching the previous main-axis processing order.
+        hits.sort(
+          isHorizontal ? (a, b) => a.x.compareTo(b.x) : (a, b) => a.y.compareTo(b.y),
+        );
+        final obstacle = hits.first;
+        current = isHorizontal
+            ? current.copyWith(x: obstacle.x + obstacle.w)
+            : current.copyWith(y: obstacle.y + obstacle.h);
+        hasCollision = true;
       }
       safety++;
     }
     processed.add(current);
+    index.insert(current);
   }
+
+  processed.sort((a, b) => a.id.compareTo(b.id));
   return processed;
 }
 
@@ -695,58 +721,6 @@ LayoutItem compactItem(
   return l;
 }
 
-/*
-/// Compacts a single item in the layout.
-///
-/// This function moves the item up as much as possible without colliding with
-/// other items.
-LayoutItem compactItem(
-  Layout compareWith,
-  LayoutItem l,
-  CompactType compactType,
-  int cols,
-  Layout fullLayout,
-) {
-  var currentItem = l;
-  final compactV = compactType == CompactType.vertical;
-  final compactH = compactType == CompactType.horizontal;
-
-  if (compactV) {
-    while (currentItem.y > 0 && getFirstCollision(compareWith, currentItem) == null) {
-      currentItem = currentItem.copyWith(y: currentItem.y - 1);
-    }
-  } else if (compactH) {
-    while (currentItem.x > 0 && getFirstCollision(compareWith, currentItem) == null) {
-      currentItem = currentItem.copyWith(x: currentItem.x - 1);
-    }
-  }
-
-  LayoutItem? collidesWith;
-  while ((collidesWith = getFirstCollision(compareWith, currentItem)) != null) {
-    if (compactH) {
-      currentItem = resolveCompactionCollision(
-        fullLayout,
-        currentItem,
-        collidesWith!.x + collidesWith.w,
-        'x',
-      );
-    } else {
-      currentItem = resolveCompactionCollision(
-        fullLayout,
-        currentItem,
-        collidesWith!.y + collidesWith.h,
-        'y',
-      );
-    }
-    if (compactH && currentItem.x + currentItem.w > cols) {
-      currentItem = currentItem.copyWith(x: cols - currentItem.w, y: currentItem.y + 1);
-    }
-  }
-
-  return currentItem.copyWith(y: max(currentItem.y, 0), x: max(currentItem.x, 0));
-}
-*/
-
 /// Corrects the bounds of the layout items to ensure they fit within the
 /// specified number of columns.
 Layout correctBounds(Layout layout, int cols) {
@@ -755,6 +729,23 @@ Layout correctBounds(Layout layout, int cols) {
 
   for (final l in layout) {
     var currentL = l;
+
+    // Enforce positive dimension bounds. Prevent items configured with zero
+    // or negative dimensions from propagating and corrupting engine layout cascades.
+    if (currentL.w < 1) {
+      currentL = currentL.copyWith(w: 1);
+    }
+    if (currentL.h < 1) {
+      currentL = currentL.copyWith(h: 1);
+    }
+
+    // Asset constraint mismatches in debug mode. Alert developers if
+    // an item's minimum width exceeds the physical column space of the current breakpoint.
+    assert(
+      currentL.minW <= cols,
+      'LayoutItem constraint (minW: ${currentL.minW}) exceeds grid columns ($cols)!',
+    );
+
     if (currentL.x + currentL.w > cols) {
       currentL = currentL.copyWith(x: cols - currentL.w);
     }
@@ -776,11 +767,19 @@ Layout correctBounds(Layout layout, int cols) {
   return newLayout;
 }
 
-/// Moves a single element in the layout.
+/// Moves a single layout item [l] to the target grid coordinates ([x], [y]).
+/// Returns a new, mutated, and ID-stabilized [Layout] containing the updated coordinates.
 ///
-/// This function is the core of the drag and drop logic. It moves the specified
-/// item to the new coordinates and then resolves any collisions by pushing
-/// other items down.
+/// ### Algorithmic notes
+/// - **Monotonic re-push cascade**: an obstacle may be pushed several times,
+///   but its `y` strictly increases on every push, so the cascade terminates
+///   and — unlike the previous single-push design — leaves no residual
+///   overlaps. This removes the need for the unconditional O(N^2)
+///   `resolveCollisions` pass on every drag frame.
+/// - **Row-indexed collision queries**: each cascade step only visits the
+///   rows that can plausibly overlap the probe box (O(k) per step).
+/// - **ID-based Index Stability**: the result is sorted by [LayoutItem.id]
+///   so sliver child indices stay immutable across drag frames.
 Layout moveElement(
   Layout layout,
   LayoutItem l,
@@ -811,87 +810,109 @@ Layout moveElement(
   }
 
   final itemWithNewPos = movingItemInLayout.copyWith(x: newX, y: newY, moved: true);
+  final movedId = itemWithNewPos.id;
 
-  // Use a Map for O(1) access
+  // O(1) access by id, used to build the final layout and to dedupe.
   final layoutMap = {for (final item in layout) item.id: item};
-  layoutMap[l.id] = itemWithNewPos;
+  layoutMap[movedId] = itemWithNewPos;
 
-  final queue = ListQueue<LayoutItem>.from([itemWithNewPos]);
-  final processed = <String>{itemWithNewPos.id};
+  final rowIndex = _RowIndex.fromItems(layoutMap.values);
 
-  // SAFETY: Prevent infinite loops.
-  // We allow visiting every item at least once, plus a safety margin.
-  // If the loop exceeds this, it means we have a circular dependency bug.
+  // Queue of item IDs, not snapshots: we always re-read the live instance
+  // from layoutMap so a re-queued item is processed at its latest position.
+  final queue = ListQueue<String>()..add(movedId);
+
+  // SAFETY: Prevent pathological cascades. Every enqueue strictly increases
+  // an item's `y` (or the current item's `y` on a static jump), so the loop
+  // terminates; the cap is a belt-and-braces guard only.
   var safetyLoop = 0;
-  final maxLoops = max(5000, layout.length * 2);
+  final maxLoops = max(5000, layout.length * 4);
 
-  // check AABB (Axis-Aligned Bounding Box).
   while (queue.isNotEmpty) {
     if (safetyLoop++ > maxLoops) {
-      // Dart only, don't import flutter foundation
-      // ignore_for_file: avoid_print
-      print('SliverDashboard: Collision resolution limit reached ($maxLoops).');
+      assert(
+        () {
+          // Debug-only diagnostic; never ships in release builds.
+          // ignore: avoid_print
+          print('SliverDashboard: Collision resolution limit reached ($maxLoops).');
+          return true;
+        }(),
+        'SliverDashboard: Collision resolution limit reached ($maxLoops).',
+      );
       break;
     }
 
-    final currentItem = queue.removeFirst();
+    final currentItem = layoutMap[queue.removeFirst()];
+    if (currentItem == null) continue;
 
-    // Calc edges to avoid to repeat access to props
-    final l = currentItem.x;
-    final r = currentItem.x + currentItem.w;
-    final t = currentItem.y;
-    final b = currentItem.y + currentItem.h;
+    final left = currentItem.x;
+    final right = currentItem.x + currentItem.w;
+    final top = currentItem.y;
+    final bottom = currentItem.y + currentItem.h;
 
-    final collisions = <LayoutItem>[];
+    final collisions = rowIndex.query(
+      currentItem,
+      top: top,
+      bottom: bottom,
+      left: left,
+      right: right,
+    )
+      // Sort required for stability (pushed from top to bottom).
+      ..sort((a, b) => a.y.compareTo(b.y));
 
-    for (final other in layoutMap.values) {
-      if (other.id == currentItem.id) continue;
-
-      // Check AABB Inlined : If no overlap, continue
-      if (r <= other.x || l >= other.x + other.w || b <= other.y || t >= other.y + other.h) {
-        continue;
-      }
-      collisions.add(other);
-    }
-
-    // Sort required for stability (pushed from top to bottom)
-    collisions.sort((a, b) => a.y.compareTo(b.y));
+    var currentItemJumped = false;
 
     for (final collision in collisions) {
-      if (processed.contains(collision.id)) continue;
+      // The user-moved item is the anchor of the cascade: it is never
+      // pushed away from the position the user requested.
+      if (collision.id == movedId && currentItem.id != movedId) continue;
 
-      // If the declarative policy forbids collision/push between currentItem and other,
-      // treat the collision as an immoveable static obstacle, forcing currentItem to jump past it.
-      final isBlockedByPolicy = policy != null && !policy.canCollide(currentItem, collision);
+      // Re-read the live instance: an earlier push in this very loop may
+      // already have moved this obstacle out of the way.
+      final other = layoutMap[collision.id];
+      if (other == null) continue;
 
-      if (collision.isStatic || isBlockedByPolicy) {
-        // Jump static
-        final newY = collision.y + collision.h;
-        final updatedCurrentItem = currentItem.copyWith(y: newY, moved: true);
+      final isBlockedByPolicy = policy != null && !policy.canCollide(currentItem, other);
+
+      if (other.isStatic || isBlockedByPolicy) {
+        // Jump below the blocking item, then restart resolution for the
+        // current item from its NEW position. Continuing through the stale
+        // collision list would push neighbours from outdated coordinates.
+        final jumpY = other.y + other.h;
+        final updatedCurrentItem = currentItem.copyWith(y: jumpY, moved: true);
         layoutMap[currentItem.id] = updatedCurrentItem;
-        queue.addFirst(updatedCurrentItem);
-        continue;
+        rowIndex.update(currentItem, updatedCurrentItem);
+        queue.addFirst(updatedCurrentItem.id);
+        currentItemJumped = true;
+        break;
       }
 
-      final itemToPush = layoutMap[collision.id];
-      if (itemToPush == null) continue;
+      // Live overlap re-check against the up-to-date instance.
+      if (!_overlaps(currentItem, other)) continue;
 
-      processed.add(collision.id);
+      // Push collided item below the current item.
+      final pushedY = currentItem.y + currentItem.h;
+      if (other.y >= pushedY) continue; // Already below.
 
-      // Push collided item to bottom
-      final newY = currentItem.y + currentItem.h;
-      if (collision.y >= newY) continue; // Already on bottom
-
-      final pushedItem = itemToPush.copyWith(y: newY, moved: true);
-      layoutMap[collision.id] = pushedItem;
-      queue.add(pushedItem);
+      final pushedItem = other.copyWith(y: pushedY, moved: true);
+      layoutMap[other.id] = pushedItem;
+      rowIndex.update(other, pushedItem);
+      // Monotonic re-push: the item may be pushed again later, each time
+      // strictly downwards, guaranteeing termination and zero overlaps.
+      queue.add(pushedItem.id);
     }
+
+    if (currentItemJumped) continue;
   }
 
-  final resultLayout = layoutMap.values.toList();
+  final resultLayout = layoutMap.values.toList()
+    // ID-based Index Stability (see doc comment).
+    ..sort((a, b) => a.id.compareTo(b.id));
 
-  // Prevent secondary overlaps while moving
-  if (preventCollision) {
+  // The monotonic cascade is overlap-free by construction; keep the legacy
+  // full resolution strictly as a fallback, gated behind a cheap O(N*k)
+  // verification instead of running the O(N^2) pass on every drag frame.
+  if (preventCollision && _hasResidualOverlap(resultLayout, rowIndex)) {
     return resolveCollisions(
       resultLayout,
       compactType == CompactType.none ? CompactType.vertical : compactType,
@@ -899,6 +920,31 @@ Layout moveElement(
   }
 
   return resultLayout;
+}
+
+/// AABB overlap check (identical semantics to [collides]).
+bool _overlaps(LayoutItem a, LayoutItem b) {
+  if (a.id == b.id) return false;
+  if (a.x + a.w <= b.x) return false;
+  if (a.x >= b.x + b.w) return false;
+  if (a.y + a.h <= b.y) return false;
+  if (a.y >= b.y + b.h) return false;
+  return true;
+}
+
+/// O(N*k) overlap verification using the row index maintained by the cascade.
+bool _hasResidualOverlap(Layout layout, _RowIndex rowIndex) {
+  for (final item in layout) {
+    final hits = rowIndex.query(
+      item,
+      top: item.y,
+      bottom: item.y + item.h,
+      left: item.x,
+      right: item.x + item.w,
+    );
+    if (hits.isNotEmpty) return true;
+  }
+  return false;
 }
 
 /// A private helper function that attempts to resolve collisions by shrinking
@@ -1328,7 +1374,86 @@ Layout moveCluster(
       .where((i) => i.id != bbox.id) // Remove virtual bbox
       .toList()
     ..addAll(movedCluster)
-    ..addAll(staticClusterItems);
+    ..addAll(staticClusterItems)
+    // ID-based Index Stability: without this sort the dragged cluster is
+    // appended at the tail, its sliver index changes on the first drag frame
+    // and again on drop, and Flutter's child manager reorders/deactivates
+    // elements (BuildOwner.finalizeTree / _InactiveElements._unmount spikes).
+    ..sort((a, b) => a.id.compareTo(b.id));
 
   return finalLayout;
+}
+
+/// A minimal spatial index that groups [LayoutItem]s by their top row
+/// (`y`), used internally by [moveElement] to avoid scanning the whole
+/// layout on every collision check.
+///
+/// It only exists to make the cascade-push
+/// resolution in [moveElement] scale with the number of items actually
+/// affected by a move, instead of with the total size of the layout.
+class _RowIndex {
+  _RowIndex._(this._rows, this._maxHeight);
+
+  factory _RowIndex.fromItems(Iterable<LayoutItem> items) {
+    final rows = SplayTreeMap<int, List<LayoutItem>>();
+    var maxHeight = 1;
+    for (final item in items) {
+      rows.putIfAbsent(item.y, () => <LayoutItem>[]).add(item);
+      if (item.h > maxHeight) maxHeight = item.h;
+    }
+    return _RowIndex._(rows, maxHeight);
+  }
+
+  /// An empty index for incremental construction (see _resolveCollisionsDefault).
+  factory _RowIndex.empty() => _RowIndex._(SplayTreeMap<int, List<LayoutItem>>(), 1);
+
+  final SplayTreeMap<int, List<LayoutItem>> _rows;
+
+  // Incremental inserts may raise the tallest known item.
+  // moveElement's cascade never mutates heights (only `y`), so for that
+  // caller the value is still effectively constant.
+  int _maxHeight;
+
+  /// Adds a new item to the index (incremental construction).
+  void insert(LayoutItem item) {
+    _rows.putIfAbsent(item.y, () => <LayoutItem>[]).add(item);
+    if (item.h > _maxHeight) _maxHeight = item.h;
+  }
+
+  /// Returns every indexed item whose box overlaps
+  /// `[left, right) x [top, bottom)`, excluding [currentItem].
+  List<LayoutItem> query(
+    LayoutItem currentItem, {
+    required int top,
+    required int bottom,
+    required int left,
+    required int right,
+  }) {
+    final result = <LayoutItem>[];
+    final lowerBound = top - _maxHeight + 1;
+
+    var key = _rows.containsKey(lowerBound) ? lowerBound : _rows.firstKeyAfter(lowerBound);
+
+    while (key != null && key < bottom) {
+      for (final other in _rows[key]!) {
+        if (other.id == currentItem.id) continue;
+        if (right <= other.x || left >= other.x + other.w) continue;
+        if (bottom <= other.y || top >= other.y + other.h) continue;
+        result.add(other);
+      }
+      key = _rows.firstKeyAfter(key);
+    }
+    return result;
+  }
+
+  /// Must be called every time an item's position changes so later
+  /// queries in the same cascade see up-to-date rows.
+  void update(LayoutItem oldItem, LayoutItem newItem) {
+    final bucket = _rows[oldItem.y];
+    if (bucket != null) {
+      bucket.removeWhere((item) => item.id == oldItem.id);
+      if (bucket.isEmpty) _rows.remove(oldItem.y);
+    }
+    _rows.putIfAbsent(newItem.y, () => <LayoutItem>[]).add(newItem);
+  }
 }
