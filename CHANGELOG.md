@@ -1,3 +1,13 @@
+## 1.1.1
+
+### Enhancement
+- **Interactive Section Barriers**: Section barriers can now be dragged and rearranged in edit mode to easily organize layout sections.
+
+### Bug Fixes
+- **Visual Offsets**: Fixed a bug where tiles could temporarily jump out of place or overlap when rebuilding parent widgets (such as toggling the minimap).
+- **Immovable Dividers**: Ensured section barriers correctly act as static, immovable layout boundaries during compaction while remaining draggable by the user.
+- **Identity Reconciliation**: Resolved element-tracking and focus issues inside the sliver list by assigning stable keys to section barriers.
+
 ## 1.1.0
 
 **No breaking changes in this release.**
