@@ -41,7 +41,15 @@ Perfect for analytics dashboards, IoT control panels, project management tools, 
 
 ## Try the Demo
 
-[Launch Demo](https://scalz.github.io/sliver_dashboard_web_demo/)
+[Launch Live Demo](https://scalz.github.io/sliver_dashboard_web_demo/)
+
+*Note on Web Performance:*
+This playground is built using standard JavaScript compilation:
+```bash
+flutter build web --base-href ... --release
+```
+This intentionally showcase the demo in non-WASM mode to verify efficiency.
+The package is WebAssembly (WASM) compatible. Building your production application with the --wasm flag will yield even greater execution speedups.
 
 
 ## Table of Contents
