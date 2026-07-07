@@ -6,14 +6,15 @@ Your goal is to maintain `sliver_dashboard`, a grid engine package where perform
 - **Strict Layering:** Never mix UI logic (Widgets) with Business logic (Engine).
 - **No Assumptions:** If context is missing, ask questions. Never hallucinate libraries not listed in `pubspec.yaml`.
 - **Explanatory:** When writing complex logic (especially in `LayoutEngine`), add an inline `// Reason: ...` comment explaining the *why*, not just the *what*.
+- **Budget-Driven:** Every change to a hot path must be justified against the performance budgets in §5bis. "It looks faster" is not an argument; op counts and rebuild counts are.
 
 ## 2. Tech Stack
 - **Language:** Dart (Strong mode).
 - **Framework:** Flutter (Sliver Protocol).
-- **State Management:** `state_beacon` only. Do not introduce Provider, Riverpod, or Bloc.
+- **State Management:** `state_beacon` only. Do not introduce Provider, Riverpod, or Bloc. Only use `state_beacon` APIs already exercised in this repo (`.value`, `.peek()`, `.watch(context)`, `Beacon.writable`, `B.writable`); do not introduce `subscribe`-based patterns without a dedicated review.
 - **Testing:** `flutter_test`, `mocktail`.
 - **Linter:** `very_good_analysis` or strict `flutter_lints`.
-- **Target:** Flutter Mobile, Desktop, and Web.
+- **Target:** Flutter Mobile, Desktop, and Web. **Web (dart2js) is the performance-critical target**: allocation churn and megamorphic calls cost 2-5× more than on AOT.
 
 ## 3. Architecture Rules (Strict)
 
@@ -24,6 +25,10 @@ The project follows a strict separation of concerns. **Do not violate layer boun
 - **Deterministic:** Same input layout + parameters = Same output layout.
 - **Functional Style:** Prefer declarative patterns, but avoid external FP libraries (like fpdart) to keep dependencies low.
 - **Pluggable Compaction:** The `compact` and `resolveCollisions` logic is not hardcoded. It must go through the `CompactorDelegate` interface. When modifying default behaviors, edit the specific `*Compactor` class, not the abstract interface.
+- **INVARIANT — Overlap-Free:** any function returning a layout must return **zero overlapping non-static items**. `moveElement` guarantees this via the monotonic re-push cascade + row-indexed (`_RowIndex`) O(N·k) verification. **Never reintroduce an unconditional all-pairs O(N²) `resolveCollisions` pass in the drag hot path** (it costs 499,500 pair checks at N=1000, ~8-16 ms alone on dart2js). The overlap-invariant fuzz test (`move_element_invariants_test.dart`) is the gate: it must stay green.
+- **INVARIANT — Index Stability:** any function returning a layout must preserve **ascending ID order** (including `moveCluster`). Sliver element identity depends on it; breaking it causes full remount churn (`finalizeTree`).
+- **Static-Jump Rule:** after the moved item jumps over a static obstacle, re-resolve from the **new** position; never consume a collision list computed for the pre-jump position.
+- **No `print`:** diagnostics behind `assert(() { ... }())` only.
 
 ### B. State Layer (`lib/src/controller/`)
 - **Interface Separation:** `DashboardController` is a public abstract interface. The logic resides in `DashboardControllerImpl` (hidden).
@@ -31,23 +36,32 @@ The project follows a strict separation of concerns. **Do not violate layer boun
 - **Reactive:** Use `Beacon` to expose state.
 - **Orchestrator:** The controller calls Engine methods and updates Beacons. It contains NO layout calculation logic.
 - **Selection Source of Truth:** `selectedItemIds` (Set<String>) is the source of truth. `activeItemId` is a read-only derived value (Pivot or First Selected). Never try to set `activeItemId` directly.
+- **Default Compactor:** `FastVerticalCompactor` (skyline). The legacy `VerticalCompactor` is O(N²·R) — 1.99M checks + 500k scans per drop at N=1000 — and must never be a default. Any constructor/reset path that instantiates a compactor must instantiate the Fast variant; a regression test asserts drop time.
+- **Gesture Invariant Caching:** everything constant per gesture (pivot original, cluster items, cluster bbox) is computed once in `onDragStart`, cached in private fields, cleared in `onDragEnd`/`cancelInteraction`. `onDragUpdate` must not contain `firstWhere`/`where` scans for gesture-invariant data.
 
 ### C. View Layer (`lib/src/view/`)
 - **Slivers:** The core grid uses `RenderSliverDashboard`.
   - **DANGER ZONE:** `performLayout` implements the `RenderSliverMultiBoxAdaptor` protocol. It relies on a fragile linked-list state (`firstChild`, `childAfter`).
   - **Rule:** Do not refactor the **order of operations** (GC -> Initial -> Trailing -> Leading). Changing this order will break the child manager and cause crashes.
+  - **Rule — Zero Allocation:** `performLayout` must not allocate per pass. Geometry goes through the reusable `Float64List` scratch buffer (`_geom`). Do not reintroduce `List<Rect>`/`Offset` list allocations there.
+  - **Rule — Identity Guards:** keep the `items` setter identity short-circuit and the ID-sequence reuse of the Key→Index map. New setters on the render object must follow the same pattern (no-op on identical/equal input).
 - **Smart Caching Strategy ("The Firewall"):**
   - `DashboardItem` caches **only the user content** (`_cachedWidget`) inside a `RepaintBoundary`. The outer interaction shell (Focus/Border) is rebuilt on state changes.
   - **Rule:** Never remove `RepaintBoundary` or the `contentSignature` signature check in `didUpdateWidget`.
+  - **Rule — Allocation-Free Shell:** `Actions` maps and shortcut maps are per-`State` cached (`late final` + config-keyed cache). Never build maps/closures inside `build()` of `DashboardItem`.
+- **Minimap:** two-layer painting is mandatory: items layer (`RepaintBoundary`, batched `Path`, repaint only on layout instance change) + viewport painter bound via `super(repaint: scrollController)`. Never merge them back into one painter; never repaint items on scroll.
+- **Painters:** every `CustomPainter` parameter type must have value `==`/`hashCode` (see `SlotMetrics`) so `shouldRepaint` can short-circuit. `shouldRepaint => true` is forbidden.
 - **Responsive:** Logic is handled internally in `Dashboard` using `LayoutBuilder` + `addPostFrameCallback` (Skip Frame strategy).
 - **Item Persistence:**
   - **Rule:** When an item is being dragged, the original item in the grid must **NOT be removed** from the tree. Use `Opacity(0.0)` instead. Removing it kills the `FocusNode` and breaks keyboard navigation.
+- **Web Throttle:** the 16 ms web pointer throttle must flush the trailing event (pending-position timer). Do not drop the last event of a burst.
 
 ### D. Accessibility (A11y)
 - **First-Class Citizen:** All interactive features must support Keyboard (Tab/Arrows/Space) and Screen Readers.
 - **Pattern:** Use `FocusableActionDetector` wrapping `Intents` that map to Controller methods (e.g., `moveActiveItemBy`).
 - **Focus Scope:** The Dashboard must be wrapped in a `FocusTraversalGroup` with `OrderedTraversalPolicy`.
 - **Configuration:** Labels and shortcuts must be configurable via `DashboardGuidance` and `DashboardShortcuts`.
+- **Rule:** Action instances read live controller state at invoke time (they are `State`-lifetime singletons); never capture per-build values in action closures.
 
 ## 4. Coding Standards
 
@@ -65,6 +79,7 @@ The project follows a strict separation of concerns. **Do not violate layer boun
 ### Models & State
 - **Immutability:** All models (`LayoutItem`, `GridStyle` ..) must be immutable (`@immutable`).
 - **Serialization:** Implement `fromMap`, `toMap`, `copyWith`, and `==`/`hashCode` for data models.
+- **Equality Laws:** `==` must be symmetric and consistent with `hashCode` (regression: the `isStatic`/`isSectionBarrier` asymmetry). Add an equality-law test for any new model.
 
 ### Multi-Selection & Clustering
 - **Pivot Logic:** During a drag, one item acts as the **Pivot** (the one under the cursor).
@@ -76,7 +91,7 @@ The project follows a strict separation of concerns. **Do not violate layer boun
 - **Prop Drilling:** Configuration (styles, physics) is passed down via constructor parameters (Dashboard -> Sliver -> Item). This is intentional to decouple Logic from UI styling.
 - **Edit Mode:** Visual cues (handles) and interaction wrappers are only built/mounted when `isEditing` is true.
 - **Mobile Gestures:** Be careful with `GestureDetector` conflicts. On mobile, `GuidanceInteractor` must not block `onLongPress` (let the parent Dashboard handle the drag start).
-- **Transactional Drag State:** 
+- **Transactional Drag State:**
   - During interactions (drag/resize), layout calculations are always performed relative to `originalLayoutOnStart`, **not** the previous frame's layout. This prevents floating-point rounding errors and position "drift".
   - **Anti-Drift:** The controller uses a dragOffset beacon for smooth visual translation, distinct from logical grid updates.
 - **Coordinate Separation:**
@@ -103,11 +118,29 @@ The project follows a strict separation of concerns. **Do not violate layer boun
   - **Core Engine (`LayoutEngine`):** Maintain > 95% code coverage.
   - **Controller (`DashboardController`):** Maintain > 95% code coverage.
 - **Engine Tests:** Test all edge cases (collisions, compaction, resizing) using pure unit tests.
+- **Invariant Tests (mandatory, must stay green):**
+  - Overlap-free fuzz: 200 seeded dense layouts × `moveElement`, assert 0 overlaps.
+  - ID-order: every engine function's output is ascending-ID sorted; the dragged item's element is **not remounted** across drag frames (Element identity widget test).
+  - Static-jump regression: neighbour overlapping only the pre-jump position is not pushed.
+  - Default-compactor regression: drag-end at N=1000 completes < 50 ms.
+  - Top-vs-bottom benchmark in `benchmark.dart`: `items.first` vs `items.last` moved 1 row at N ∈ {500, 1000}; report the ratio.
 - **Widget Tests:**
-  - Use `flutter_test` to verify interactions to verify interactions (drag, drop, resize).
+  - Use `flutter_test` to verify interactions (drag, drop, resize).
   - **A11y Tests:** Verify focus traversal and keyboard shortcuts using `tester.sendKeyEvent`.
   - **Sliver Integration:** Test feedback clipping when scrolled under an AppBar.
-- **Performance:** Ensure no regression in rebuild counts (use the `BuildCounter` pattern in tests).
+  - **Repaint Spies:** minimap viewport repaints on scroll; items layer does NOT repaint on pure scroll; grid background short-circuits on identical `SlotMetrics`.
+  - **Lifecycle:** keep-alives released after drag end (live `State` count returns to viewport+cache size); `scrollToItem` does not hang without an attached overlay.
+- **Performance:** Ensure no regression in rebuild counts (use the `BuildCounter` pattern in tests). Identity-guard tests: identical `items` instance triggers no `performLayout`; position-only layout change keeps the Key→Index cache.
+
+## 5bis. Performance Budgets (N=1000, 8 cols — CI thresholds)
+
+| Path | Budget | Regression signal |
+|---|---|---|
+| Drag cell-crossing (engine) | ≤ ~20k collision checks (indexed) | any all-pairs pass reappearing |
+| Drop compaction (default) | < 50 ms on CI runner | legacy compactor as default |
+| `performLayout` | 0 per-pass heap allocations | new `Rect`/`List` in the pass |
+| `DashboardItem` shell rebuild | 0 map/closure allocations | actions/shortcuts built in `build()` |
+| Minimap during drag | 2 `drawPath` for items | per-item `drawRRect` loop |
 
 ## 6. Documentation
 - **Reference:** Read latest `architecture.md` and `AI_AGENTS.md` before starting a new task.
@@ -138,13 +171,13 @@ If the drag feedback is offset from the cursor:
 
 ### Modifying the Layout Algorithm
 1. Edit `lib/src/engine/layout_engine.dart`.
-2. **Run tests immediately.** The engine is complex and regression-prone.
+2. **Run tests immediately.** The engine is complex and regression-prone. The overlap-invariant fuzz test and the ID-order tests are the primary gates.
 
 ### Handling Responsive Layouts
 Do not create a new widget. Use the `breakpoints` map in the `Dashboard` constructor:
 ```dart
 Dashboard(
-  breakpoints: { 0: 4, 600: 8 },
+breakpoints: { 0: 4, 600: 8 },
 // ...
 )
 ```
