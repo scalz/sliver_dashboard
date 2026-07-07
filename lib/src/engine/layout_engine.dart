@@ -792,7 +792,7 @@ Layout moveElement(
   bool force = false,
   DashboardPolicy? policy,
 }) {
-  if (l.isStatic) return layout;
+  if (l.isStatic && !l.isSectionBarrier) return layout;
 
   final oldX = l.x;
   final oldY = l.y;
@@ -1308,9 +1308,14 @@ Layout moveCluster(
   if (clusterIds.isEmpty) return layout;
 
   // 1. Separate Cluster (excluding static items) and Obstacles (including static items)
-  final cluster = layout.where((i) => clusterIds.contains(i.id) && !i.isStatic).toList();
-  final staticClusterItems = layout.where((i) => clusterIds.contains(i.id) && i.isStatic).toList();
-  final obstacles = layout.where((i) => !clusterIds.contains(i.id) || i.isStatic).toList();
+  final cluster = layout
+      .where((i) => clusterIds.contains(i.id) && !(i.isStatic && !i.isSectionBarrier))
+      .toList();
+  final staticClusterItems =
+      layout.where((i) => clusterIds.contains(i.id) && i.isStatic && !i.isSectionBarrier).toList();
+  final obstacles = layout
+      .where((i) => !clusterIds.contains(i.id) || (i.isStatic && !i.isSectionBarrier))
+      .toList();
 
   if (cluster.isEmpty) return layout;
 

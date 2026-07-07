@@ -243,7 +243,10 @@ class _DashboardItemState extends State<DashboardItem>
       child: FocusableActionDetector(
         actions: _actions,
         shortcuts: widget.isEditing ? shortcuts : {},
-        enabled: widget.isEditing && !widget.item.isStatic && !widget.isFeedback,
+        // Enable interaction if the item is dynamic OR if it is an interactive section barrier
+        enabled: widget.isEditing &&
+            (!widget.item.isStatic || widget.item.isSectionBarrier) &&
+            !widget.isFeedback,
         onFocusChange: (hasFocus) {
           // If we lose focus while item was active (eg. moving),
           // cancel interaction to clean state (close Trash, put back item).

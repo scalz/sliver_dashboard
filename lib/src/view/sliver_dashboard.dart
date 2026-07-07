@@ -183,8 +183,17 @@ class _SliverDashboardState extends State<SliverDashboard> {
               // using the custom or default section header builder instead of
               // passing it to the standard card itemBuilder.
               if (item.isSectionBarrier) {
-                return widget.sectionHeaderBuilder?.call(context, item) ??
-                    _DefaultSectionHeader(item: item);
+                return KeyedSubtree(
+                  key: ValueKey('${item.id}${widget.itemGlobalKeySuffix}'),
+                  child: DashboardItem(
+                    item: item,
+                    isEditing: isEditing,
+                    itemStyle: widget.itemStyle,
+                    builder: (context, item) =>
+                        widget.sectionHeaderBuilder?.call(context, item) ??
+                        _DefaultSectionHeader(item: item),
+                  ),
+                );
               }
 
               // Reason: We return the DashboardItem always.
@@ -293,7 +302,10 @@ class SliverDashboardLayout extends SliverMultiBoxAdaptorWidget {
       ..mainAxisSpacing = mainAxisSpacing
       ..crossAxisSpacing = crossAxisSpacing
       ..onPerformLayout = onPerformLayout
-      ..isEditing = isEditing;
+      ..isEditing = isEditing
+
+      // Force a layout pass on structural widget updates to ensure child parentData offsets are aligned
+      ..markNeedsLayout();
   }
 }
 

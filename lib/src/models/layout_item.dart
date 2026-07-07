@@ -32,11 +32,12 @@ class LayoutItem {
     this.maxH = double.infinity,
     this.isDraggable,
     this.isResizable,
-    this.isStatic = false,
+    bool isStatic = false,
     this.moved = false,
     this.isSectionBarrier = false,
     this.sectionTitle,
-  });
+  }) : isStatic =
+            isStatic || isSectionBarrier; // Ensure section barriers are always static in-memory
 
   /// Creates a [LayoutItem] from a JSON-serializable map.
   factory LayoutItem.fromMap(Map<String, dynamic> map) {

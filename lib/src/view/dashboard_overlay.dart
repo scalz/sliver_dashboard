@@ -747,7 +747,8 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
     final renderSliver = hit.renderSliver;
 
     if (foundItem != null && itemRenderBox != null && renderSliver != null) {
-      if (foundItem.isStatic) return;
+      // Prevent dragging static items, unless the item is an interactive section barrier
+      if (foundItem.isStatic && !foundItem.isSectionBarrier) return;
 
       // MULTI-SELECTION LOGIC
       final shortcuts = widget.controller.shortcuts ?? DashboardShortcuts.defaultShortcuts;

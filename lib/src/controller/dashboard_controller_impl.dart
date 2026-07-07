@@ -558,7 +558,8 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
   /// Call when a drag gesture starts on a dashboard item.
   void onDragStart(String itemId) {
     final item = layout.value.firstWhere((i) => i.id == itemId);
-    if (item.isStatic) return;
+    // Allow dragging section barriers even if they are marked static
+    if (item.isStatic && !item.isSectionBarrier) return;
 
     if (policy != null && !policy!.canDrag(item)) return;
 

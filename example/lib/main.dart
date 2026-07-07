@@ -120,6 +120,7 @@ class _DashboardPageState extends State<DashboardPage> {
           w: 8,
           h: 1,
           isSectionBarrier: true,
+          isStatic: true,
           sectionTitle: '📌 System Diagnostics (Section 1)',
         ),
         const LayoutItem(
@@ -158,6 +159,7 @@ class _DashboardPageState extends State<DashboardPage> {
 
     // Sync initial configuration
     controller.setEditMode(isEditing.value);
+    controller.guidance = const DashboardGuidance();
     controller.setAllowAutoShrink(allow: autoShrink.value);
     _updatePolicy();
     _syncJsonField();
@@ -408,6 +410,7 @@ class _DashboardPageState extends State<DashboardPage> {
               controller: controller,
               scrollController: standardScrollController,
               scrollDirection: controller.scrollDirection.value,
+              guidance: const DashboardGuidance(),
               slotAspectRatio: 1.0,
               mainAxisSpacing: 8.0,
               crossAxisSpacing: 8.0,
@@ -461,6 +464,7 @@ class _DashboardPageState extends State<DashboardPage> {
             DashboardOverlay<String>(
               controller: controller,
               scrollController: sliverScrollController,
+              //guidance: const DashboardGuidance(),
               dragStartGesture: handlesOnly
                   ? DragStartGesture.none
                   : DragStartGesture.longPress,
