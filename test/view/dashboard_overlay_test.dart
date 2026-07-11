@@ -288,7 +288,7 @@ void main() {
                 key: ValueKey(item.id),
                 item: item,
                 isEditing: controller.isEditing.value,
-                builder: (context, i) => Text(i.id),
+                itemBuilder: (context, i) => Text(i.id),
               ),
             ),
           ),

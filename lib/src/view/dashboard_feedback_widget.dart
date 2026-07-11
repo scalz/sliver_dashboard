@@ -12,7 +12,6 @@ class DashboardFeedbackItem extends StatelessWidget {
   /// Creates a [DashboardFeedbackItem].
   const DashboardFeedbackItem({
     required this.item,
-    required this.builder,
     required this.controller,
     required this.slotWidth,
     required this.slotHeight,
@@ -21,18 +20,48 @@ class DashboardFeedbackItem extends StatelessWidget {
     required this.scrollDirection,
     required this.isEditing,
     required this.sliverStartPos,
+    this.itemBuilder,
+    this.itemLayoutBuilder,
+    this.itemBreakpointBuilder,
+    this.breakpointResolver,
     this.itemGlobalKeySuffix = '',
     this.feedbackBuilder,
     this.sliverBounds,
     this.itemStyle = DashboardItemStyle.defaultStyle,
     super.key,
-  });
+  }) : assert(
+          (itemBuilder != null ? 1 : 0) +
+                  (itemLayoutBuilder != null ? 1 : 0) +
+                  (itemBreakpointBuilder != null && breakpointResolver != null ? 1 : 0) ==
+              1,
+          'Provide exactly one builder configuration.',
+        );
 
   /// The layout item currently being dragged.
   final LayoutItem item;
 
-  /// The builder used to render the content of the item.
-  final DashboardItemBuilder builder;
+  /// A static builder that creates the widget for a dashboard item.
+  ///
+  /// Highly optimized; completely prevents widget subtree rebuilds during window resizing
+  /// or visual dragging when grid coordinates remain unchanged.
+  final DashboardItemBuilder? itemBuilder;
+
+  /// A layout-aware builder that provides live physical pixel dimensions.
+  ///
+  /// Rebuilds continuously as the physical bounds are adjusted, enabling sub-pixel responsiveness
+  /// and continuous visual updates during resizing.
+  final DashboardItemLayoutBuilder? itemLayoutBuilder;
+
+  /// A breakpoint-aware builder that reconstructs its subtree selectively based on a resolved state.
+  ///
+  /// Rebuilds only when the layout state returned by [breakpointResolver] transitions,
+  /// shielding complex downstream subtrees from redundant build passes during resizing.
+  final DashboardItemBreakpointBuilder? itemBreakpointBuilder;
+
+  /// Maps the item's live physical pixel dimensions to a developer-defined layout state.
+  ///
+  /// Evaluated continuously during resizing when [itemBreakpointBuilder] is provided.
+  final DashboardBreakpointResolver? breakpointResolver;
 
   /// The controller managing the drag state and offsets.
   final DashboardController controller;
@@ -106,7 +135,13 @@ class DashboardFeedbackItem extends StatelessWidget {
       isEditing: isEditing,
       isFeedback: true,
       itemStyle: itemStyle,
-      builder: builder,
+      itemWidth: width,
+      itemHeight: height,
+      slotCount: controller.slotCount.value,
+      itemBuilder: itemBuilder,
+      itemLayoutBuilder: itemLayoutBuilder,
+      itemBreakpointBuilder: itemBreakpointBuilder,
+      breakpointResolver: breakpointResolver,
     );
 
     // Apply custom feedback builder if provided, otherwise use the content directly

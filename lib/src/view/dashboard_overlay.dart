@@ -82,8 +82,10 @@ class DashboardOverlay<T extends Object> extends StatefulWidget {
     required this.controller,
     required this.scrollController,
     required this.child,
-    required this.itemBuilder,
-    super.key,
+    this.itemBuilder,
+    this.itemLayoutBuilder,
+    this.itemBreakpointBuilder,
+    this.breakpointResolver,
     this.gridStyle,
     this.itemStyle = DashboardItemStyle.defaultStyle,
     this.slotAspectRatio = 1.0,
@@ -110,7 +112,14 @@ class DashboardOverlay<T extends Object> extends StatefulWidget {
     this.backgroundBuilder,
     this.fillViewport = false,
     this.dragStartGesture = DragStartGesture.longPress,
-  });
+    super.key,
+  }) : assert(
+          (itemBuilder != null ? 1 : 0) +
+                  (itemLayoutBuilder != null ? 1 : 0) +
+                  (itemBreakpointBuilder != null && breakpointResolver != null ? 1 : 0) ==
+              1,
+          'Provide exactly one builder configuration.',
+        );
 
   /// The controller that manages the state of the dashboard.
   final DashboardController controller;
@@ -122,9 +131,28 @@ class DashboardOverlay<T extends Object> extends StatefulWidget {
   /// The child widget, typically a [CustomScrollView].
   final Widget child;
 
-  /// A builder that creates the widgets for each dashboard item.
-  /// Used for rendering the feedback item during drag.
-  final DashboardItemBuilder itemBuilder;
+  /// A static builder that creates the widget for a dashboard item.
+  ///
+  /// Highly optimized; completely prevents widget subtree rebuilds during window resizing
+  /// or visual dragging when grid coordinates remain unchanged.
+  final DashboardItemBuilder? itemBuilder;
+
+  /// A layout-aware builder that provides live physical pixel dimensions.
+  ///
+  /// Rebuilds continuously as the physical bounds are adjusted, enabling sub-pixel responsiveness
+  /// and continuous visual updates during resizing.
+  final DashboardItemLayoutBuilder? itemLayoutBuilder;
+
+  /// A breakpoint-aware builder that reconstructs its subtree selectively based on a resolved state.
+  ///
+  /// Rebuilds only when the layout state returned by [breakpointResolver] transitions,
+  /// shielding complex downstream subtrees from redundant build passes during resizing.
+  final DashboardItemBreakpointBuilder? itemBreakpointBuilder;
+
+  /// Maps the item's live physical pixel dimensions to a developer-defined layout state.
+  ///
+  /// Evaluated continuously during resizing when [itemBreakpointBuilder] is provided.
+  final DashboardBreakpointResolver? breakpointResolver;
 
   /// Styling options for the background grid in edit mode.
   /// If null, no grid is painted unless [backgroundBuilder] is provided.
@@ -626,7 +654,10 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
             return DashboardFeedbackItem(
               key: ValueKey('feedback_${item.id}'),
               item: item,
-              builder: widget.itemBuilder,
+              itemBuilder: widget.itemBuilder,
+              itemLayoutBuilder: widget.itemLayoutBuilder,
+              itemBreakpointBuilder: widget.itemBreakpointBuilder,
+              breakpointResolver: widget.breakpointResolver,
               feedbackBuilder: widget.itemFeedbackBuilder,
               controller: widget.controller,
               slotWidth: metrics.slotWidth,

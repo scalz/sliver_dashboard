@@ -35,9 +35,11 @@ class SliverDashboardParentData extends SliverMultiBoxAdaptorParentData {
 class SliverDashboard extends StatefulWidget {
   /// Creates a [SliverDashboard].
   const SliverDashboard({
-    required this.itemBuilder,
+    this.itemBuilder,
+    this.itemLayoutBuilder,
+    this.itemBreakpointBuilder,
+    this.breakpointResolver,
     this.sectionHeaderBuilder,
-    super.key,
     this.gridStyle,
     this.itemStyle = DashboardItemStyle.defaultStyle,
     this.scrollDirection = Axis.vertical,
@@ -48,10 +50,37 @@ class SliverDashboard extends StatefulWidget {
     this.itemGlobalKeySuffix = '',
     this.onPerformLayout,
     this.fillViewport = false,
-  });
+    super.key,
+  }) : assert(
+          (itemBuilder != null ? 1 : 0) +
+                  (itemLayoutBuilder != null ? 1 : 0) +
+                  (itemBreakpointBuilder != null && breakpointResolver != null ? 1 : 0) ==
+              1,
+          'Provide exactly one builder configuration.',
+        );
 
-  /// A builder that creates the widgets for each dashboard item.
-  final DashboardItemBuilder itemBuilder;
+  /// A static builder that creates the widget for a dashboard item.
+  ///
+  /// Highly optimized; completely prevents widget subtree rebuilds during window resizing
+  /// or visual dragging when grid coordinates remain unchanged.
+  final DashboardItemBuilder? itemBuilder;
+
+  /// A layout-aware builder that provides live physical pixel dimensions.
+  ///
+  /// Rebuilds continuously as the physical bounds are adjusted, enabling sub-pixel responsiveness
+  /// and continuous visual updates during resizing.
+  final DashboardItemLayoutBuilder? itemLayoutBuilder;
+
+  /// A breakpoint-aware builder that reconstructs its subtree selectively based on a resolved state.
+  ///
+  /// Rebuilds only when the layout state returned by [breakpointResolver] transitions,
+  /// shielding complex downstream subtrees from redundant build passes during resizing.
+  final DashboardItemBreakpointBuilder? itemBreakpointBuilder;
+
+  /// Maps the item's live physical pixel dimensions to a developer-defined layout state.
+  ///
+  /// Evaluated continuously during resizing when [itemBreakpointBuilder] is provided.
+  final DashboardBreakpointResolver? breakpointResolver;
 
   /// Optional builder to customize the appearance of section headers.
   final DashboardSectionHeaderBuilder? sectionHeaderBuilder;
@@ -166,6 +195,22 @@ class _SliverDashboardState extends State<SliverDashboard> {
           }
         }
 
+        // Pre-calculate the physical slot sizes during the build phase
+        // to allow single-pass pixel updates.
+        final crossAxisExtent = constraints.crossAxisExtent;
+        final slotCount = _controller.slotCount.value;
+        final double slotWidth;
+        final double slotHeight;
+        final isVertical = widget.scrollDirection == Axis.vertical;
+
+        if (isVertical) {
+          slotWidth = (crossAxisExtent - (slotCount - 1) * widget.crossAxisSpacing) / slotCount;
+          slotHeight = slotWidth / widget.slotAspectRatio;
+        } else {
+          slotHeight = (crossAxisExtent - (slotCount - 1) * widget.mainAxisSpacing) / slotCount;
+          slotWidth = slotHeight * widget.slotAspectRatio;
+        }
+
         return SliverDashboardLayout(
           items: _controller.layout.value,
           slotCount: _controller.slotCount.value,
@@ -179,6 +224,27 @@ class _SliverDashboardState extends State<SliverDashboard> {
             (context, index) {
               final item = _controller.layout.value[index];
 
+              // Calculate exact dimensions analytically only if a responsive builder is active.
+              final double? itemWidth;
+              final double? itemHeight;
+
+              if (widget.itemLayoutBuilder != null || widget.itemBreakpointBuilder != null) {
+                if (isVertical) {
+                  itemWidth =
+                      item.w * (slotWidth + widget.crossAxisSpacing) - widget.crossAxisSpacing;
+                  itemHeight =
+                      item.h * (slotHeight + widget.mainAxisSpacing) - widget.mainAxisSpacing;
+                } else {
+                  itemWidth =
+                      item.w * (slotWidth + widget.mainAxisSpacing) - widget.mainAxisSpacing;
+                  itemHeight =
+                      item.h * (slotHeight + widget.crossAxisSpacing) - widget.crossAxisSpacing;
+                }
+              } else {
+                itemWidth = null;
+                itemHeight = null;
+              }
+
               // If the item represents a Section Barrier, we render it
               // using the custom or default section header builder instead of
               // passing it to the standard card itemBuilder.
@@ -189,14 +255,19 @@ class _SliverDashboardState extends State<SliverDashboard> {
                     item: item,
                     isEditing: isEditing,
                     itemStyle: widget.itemStyle,
-                    builder: (context, item) =>
-                        widget.sectionHeaderBuilder?.call(context, item) ??
+                    itemWidth: itemWidth,
+                    itemHeight: itemHeight,
+                    slotCount: slotCount,
+                    // Section barriers are static headers that do not require
+                    // pixel tracking. We build them using the optimized 2-parameter itemBuilder.
+                    itemBuilder: (ctx, item) =>
+                        widget.sectionHeaderBuilder?.call(ctx, item) ??
                         _DefaultSectionHeader(item: item),
                   ),
                 );
               }
 
-              // Reason: We return the DashboardItem always.
+              // We return the DashboardItem always.
               // The item itself handles its visibility (Opacity 0.0) if it is the active item,
               // to preserve its FocusNode for keyboard accessibility.
               return KeyedSubtree(
@@ -205,7 +276,13 @@ class _SliverDashboardState extends State<SliverDashboard> {
                   item: item,
                   isEditing: isEditing,
                   itemStyle: widget.itemStyle,
-                  builder: widget.itemBuilder,
+                  itemWidth: itemWidth,
+                  itemHeight: itemHeight,
+                  slotCount: slotCount,
+                  itemBuilder: widget.itemBuilder,
+                  itemLayoutBuilder: widget.itemLayoutBuilder,
+                  itemBreakpointBuilder: widget.itemBreakpointBuilder,
+                  breakpointResolver: widget.breakpointResolver,
                 ),
               );
             },

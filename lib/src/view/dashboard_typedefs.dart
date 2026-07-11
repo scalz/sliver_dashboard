@@ -3,8 +3,35 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:sliver_dashboard/src/models/layout_item.dart';
 
-/// A builder function for dashboard items.
+/// A static builder function for dashboard items (optimized; skips rebuilds on resize).
 typedef DashboardItemBuilder = Widget Function(BuildContext context, LayoutItem item);
+
+/// Alternative builder providing live physical pixel dimensions (rebuilds continuously on resize).
+typedef DashboardItemLayoutBuilder = Widget Function(
+  BuildContext context,
+  LayoutItem item,
+  double width,
+  double height,
+  int slotCount,
+);
+
+/// A responsive builder that reconstructs the child subtree ONLY when the resolved breakpoint transitions.
+typedef DashboardItemBreakpointBuilder = Widget Function(
+  BuildContext context,
+  LayoutItem item,
+  dynamic breakpoint,
+  double width,
+  double height,
+  int slotCount,
+);
+
+/// Maps physical dimensions to a developer-defined custom breakpoint state.
+typedef DashboardBreakpointResolver = dynamic Function(
+  double width,
+  double height,
+  LayoutItem item,
+  int slotCount,
+);
 
 /// A builder for the widget that is dragged from an external source.
 typedef DraggableFeedbackBuilder = Widget Function(BuildContext context);

@@ -690,7 +690,7 @@ void main() {
             item: item,
             isEditing: isEditing,
             itemStyle: DashboardItemStyle.defaultStyle,
-            builder: (ctx, i) {
+            itemBuilder: (ctx, i) {
               buildCount++;
               return Text('Build $buildCount');
             },

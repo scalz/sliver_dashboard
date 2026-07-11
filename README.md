@@ -72,6 +72,7 @@ The package is WebAssembly (WASM) compatible. Building your production applicati
   - [Configuration & Styles](#configuration--styles)
   - [Import / Export (Persistence)](#import--export-persistence)
   - [Responsive Layouts](#responsive-layouts)
+  - [Pixel Based Responsive Layouts](#pixel-based-responsive-layouts)
   - [Mini Map](#mini-map)
   - [Auto Layout bulk add](#auto-layout-bulk-add)
   - [Accessibility and Keyboard Navigation](#accessibility-and-keyboard-navigation)
@@ -82,7 +83,7 @@ The package is WebAssembly (WASM) compatible. Building your production applicati
   - [Utilities](#utilities)
 - [Contributing](#contributing)
 - [Roadmap](#roadmap)
-
+  
 ## Getting Started
 
 ### 1. Add Dependency
@@ -724,6 +725,45 @@ Dashboard(
 )
 ```
 
+### Pixel Based Responsive Layouts
+
+By default, the standard `DashboardItemBuilder` is optimized to never rebuild during desktop window resizing as long as an item's grid coordinates remain unchanged.
+
+If your widgets must adapt to their actual physical dimensions (e.g. adjusting font scales or toggling sub-components), you can opt-in to the alternative responsive builders.
+
+#### 1. Live Pixel Responsiveness (`DashboardItemLayoutBuilder`)
+Using `DashboardItemLayoutBuilder` provides live physical pixel dimensions and the grid's `slotCount` calculated analytically during the build phase with $O(1)$ constant time complexity. This avoids the double-pass rendering and deferred build callbacks of Flutter's native `LayoutBuilder`.
+
+#### 2. Selective Breakpoint Caching (`DashboardItemBreakpointBuilder`)
+To prevent performance degradation from rebuilding complex widget subtrees on every single pixel changed during window resizing, use `DashboardItemBreakpointBuilder` paired with a **`DashboardBreakpointResolver`**.
+
+This configuration evaluates your resolver continuously at runtime and only reconstructs the child widget subtree when the resolved state (e.g. an enum, int, or string) actually transitions. The resolver and builder both receive the logical dimensions (via `item`) and `slotCount` to enable hybrid responsive rules.
+
+```dart
+// 1. Define your custom structural layout states (can be an enum, int, or string)
+enum MyTileLayout { compact, row, column }
+
+Dashboard(
+  controller: controller,
+  // 2. Define a resolver mapping raw pixel sizes, logical layout items, and slotCount to your layout state
+  breakpointResolver: (width, height, item, slotCount) {
+    if (item.w == slotCount) return MyTileLayout.column; // Full-width logical check
+    if (width < 150) return MyTileLayout.compact;          // Physical pixel check
+    if (width > height * 1.5) return MyTileLayout.row;
+      return MyTileLayout.column;
+    },
+    // 3. Opt-in to the state-driven breakpoint builder with full layout context
+    itemBreakpointBuilder: (context, item, layout, width, height, slotCount) {
+      final tileLayout = layout as MyTileLayout;
+      return switch (tileLayout) {
+        case MyTileLayout.compact => const MyCompactWidget();
+        case MyTileLayout.row => MyRowWidget(width: width);
+        case MyTileLayout.column => MyColumnCard(id: item.id);
+    }
+  },
+)
+```
+
 ### Mini Map
 
 For large dashboards, you can add a Mini-Map to visualize the layout and the current viewport.
@@ -1101,4 +1141,4 @@ Pull requests should pass all checks before they can be merged into the `main` b
 - ✅ **Mini-map:** Display and navigate via a minimap.
 - ✅ **Multi-Selection:** Multi item selection and dragging.
 - ✅ **Sticky Headers:** Special item to create "barrier" for defining sections in layout.
-- 🔲 **Nested dashboard:** Special "folder" item where you can drag&drop items from main dashboard to a "folder" dashboard, and vice-versa.
+- 🔲 **Nested dashboard:** nested grids with drag & drop between grids.

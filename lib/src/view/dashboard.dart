@@ -22,8 +22,10 @@ class Dashboard<T extends Object> extends StatefulWidget {
   /// Creates a new Dashboard.
   const Dashboard({
     required this.controller,
-    required this.itemBuilder,
-    super.key,
+    this.itemBuilder,
+    this.itemLayoutBuilder,
+    this.itemBreakpointBuilder,
+    this.breakpointResolver,
     this.scrollDirection = Axis.vertical,
     this.slotAspectRatio = 1.0,
     this.mainAxisSpacing = 8.0,
@@ -58,13 +60,40 @@ class Dashboard<T extends Object> extends StatefulWidget {
     this.trashHoverDelay = const Duration(milliseconds: 800),
     this.dragStartGesture = DragStartGesture.longPress,
     this.sectionHeaderBuilder,
-  });
+    super.key,
+  }) : assert(
+          (itemBuilder != null ? 1 : 0) +
+                  (itemLayoutBuilder != null ? 1 : 0) +
+                  (itemBreakpointBuilder != null && breakpointResolver != null ? 1 : 0) ==
+              1,
+          'Provide exactly one builder configuration.',
+        );
 
   /// The controller that manages the state of the dashboard.
   final DashboardController controller;
 
-  /// A builder that creates the widgets for each dashboard item.
-  final DashboardItemBuilder itemBuilder;
+  /// A static builder that creates the widget for a dashboard item.
+  ///
+  /// Highly optimized; completely prevents widget subtree rebuilds during window resizing
+  /// or visual dragging when grid coordinates remain unchanged.
+  final DashboardItemBuilder? itemBuilder;
+
+  /// A layout-aware builder that provides live physical pixel dimensions.
+  ///
+  /// Rebuilds continuously as the physical bounds are adjusted, enabling sub-pixel responsiveness
+  /// and continuous visual updates during resizing.
+  final DashboardItemLayoutBuilder? itemLayoutBuilder;
+
+  /// A breakpoint-aware builder that reconstructs its subtree selectively based on a resolved state.
+  ///
+  /// Rebuilds only when the layout state returned by [breakpointResolver] transitions,
+  /// shielding complex downstream subtrees from redundant build passes during resizing.
+  final DashboardItemBreakpointBuilder? itemBreakpointBuilder;
+
+  /// Maps the item's live physical pixel dimensions to a developer-defined layout state.
+  ///
+  /// Evaluated continuously during resizing when [itemBreakpointBuilder] is provided.
+  final DashboardBreakpointResolver? breakpointResolver;
 
   /// The direction of scrolling for the dashboard.
   final Axis scrollDirection;
@@ -236,6 +265,9 @@ class _DashboardState<T extends Object> extends State<Dashboard<T>> {
       controller: widget.controller,
       scrollController: _scrollController,
       itemBuilder: widget.itemBuilder,
+      itemLayoutBuilder: widget.itemLayoutBuilder,
+      itemBreakpointBuilder: widget.itemBreakpointBuilder,
+      breakpointResolver: widget.breakpointResolver,
       itemFeedbackBuilder: widget.itemFeedbackBuilder,
       trashBuilder: widget.trashBuilder,
       trashLayout: widget.trashLayout,
@@ -282,6 +314,9 @@ class _DashboardState<T extends Object> extends State<Dashboard<T>> {
                 padding: widget.padding ?? EdgeInsets.zero,
                 sliver: SliverDashboard(
                   itemBuilder: widget.itemBuilder,
+                  itemLayoutBuilder: widget.itemLayoutBuilder,
+                  itemBreakpointBuilder: widget.itemBreakpointBuilder,
+                  breakpointResolver: widget.breakpointResolver,
                   sectionHeaderBuilder: widget.sectionHeaderBuilder,
                   itemStyle: widget.itemStyle,
                   scrollDirection: widget.scrollDirection,

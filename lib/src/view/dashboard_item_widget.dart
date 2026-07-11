@@ -17,7 +17,7 @@ import 'package:state_beacon/state_beacon.dart';
 /// edit mode interactions, and accessibility.
 ///
 /// This widget is the "smart wrapper" for the user's content. Its primary responsibilities are:
-/// 1. **Performance:** It caches the user's content widget (built via [builder])
+/// 1. **Performance:** It caches the user's content widget (built via [itemBuilder])
 ///    and wraps it in a [RepaintBoundary].
 /// 2. **Interaction:** It handles focus traversal and visual highlighting via [itemStyle].
 /// 3. **Accessibility:** It maps keyboard shortcuts (Arrows, Space, Enter) to
@@ -28,11 +28,23 @@ class DashboardItem extends StatefulWidget {
   const DashboardItem({
     required this.item,
     required this.isEditing,
-    required this.builder,
+    this.itemBuilder,
+    this.itemLayoutBuilder,
+    this.itemBreakpointBuilder,
+    this.breakpointResolver,
+    this.itemWidth,
+    this.itemHeight,
+    this.slotCount,
     this.itemStyle = DashboardItemStyle.defaultStyle,
     this.isFeedback = false,
     super.key,
-  });
+  }) : assert(
+          (itemBuilder != null ? 1 : 0) +
+                  (itemLayoutBuilder != null ? 1 : 0) +
+                  (itemBreakpointBuilder != null && breakpointResolver != null ? 1 : 0) ==
+              1,
+          'Provide exactly one builder configuration: itemBuilder, itemLayoutBuilder, or both itemBreakpointBuilder and breakpointResolver.',
+        );
 
   /// The data model representing this item's position and dimensions.
   final LayoutItem item;
@@ -40,8 +52,43 @@ class DashboardItem extends StatefulWidget {
   /// Whether the dashboard is in edit mode (showing resize handles).
   final bool isEditing;
 
-  /// The builder that creates the actual content widget for this item.
-  final DashboardItemBuilder builder;
+  /// A static builder that creates the widget for a dashboard item.
+  ///
+  /// Highly optimized; completely prevents widget subtree rebuilds during window resizing
+  /// or visual dragging when grid coordinates remain unchanged.
+  final DashboardItemBuilder? itemBuilder;
+
+  /// A layout-aware builder that provides live physical pixel dimensions.
+  ///
+  /// Rebuilds continuously as the physical bounds are adjusted, enabling sub-pixel responsiveness
+  /// and continuous visual updates during resizing.
+  final DashboardItemLayoutBuilder? itemLayoutBuilder;
+
+  /// A breakpoint-aware builder that reconstructs its subtree selectively based on a resolved state.
+  ///
+  /// Rebuilds only when the layout state returned by [breakpointResolver] transitions,
+  /// shielding complex downstream subtrees from redundant build passes during resizing.
+  final DashboardItemBreakpointBuilder? itemBreakpointBuilder;
+
+  /// Maps the item's live physical pixel dimensions to a developer-defined layout state.
+  ///
+  /// Evaluated continuously during resizing when [itemBreakpointBuilder] is provided.
+  final DashboardBreakpointResolver? breakpointResolver;
+
+  /// The physical width of this item in pixels, calculated during the build phase.
+  ///
+  /// This value is non-null only when [trackDimensions] is true (such as when using
+  /// [itemLayoutBuilder] or [itemBreakpointBuilder]) to drive layout-aware invalidation.
+  final double? itemWidth;
+
+  /// The current slotCount used by the grid.
+  final int? slotCount;
+
+  /// The physical height of this item in pixels, calculated during the build phase.
+  ///
+  /// This value is non-null only when [trackDimensions] is true (such as when using
+  /// [itemLayoutBuilder] or [itemBreakpointBuilder]) to drive layout-aware invalidation.
+  final double? itemHeight;
 
   /// Configuration for the visual style (focus border, radius, etc.).
   final DashboardItemStyle itemStyle;
@@ -51,6 +98,9 @@ class DashboardItem extends StatefulWidget {
   /// If true, the widget remains visible even if it is the active item,
   /// and keyboard interactions are disabled to prevent conflicts.
   final bool isFeedback;
+
+  /// Whether the item tracks pixel dimension changes to invalidate its cache.
+  bool get trackDimensions => itemLayoutBuilder != null || itemBreakpointBuilder != null;
 
   @override
   State<DashboardItem> createState() => _DashboardItemState();
@@ -62,6 +112,9 @@ class _DashboardItemState extends State<DashboardItem>
   Widget? _cachedWidget;
   late int _lastSignature;
   late bool _lastIsEditing;
+  double? _lastWidth;
+  double? _lastHeight;
+  int? _lastSlotCount;
 
   bool _isFocused = false;
 
@@ -167,6 +220,9 @@ class _DashboardItemState extends State<DashboardItem>
     // The widget will be built in the build() method where context is valid.
     _lastSignature = widget.item.contentSignature;
     _lastIsEditing = widget.isEditing;
+    _lastWidth = widget.itemWidth;
+    _lastHeight = widget.itemHeight;
+    _lastSlotCount = widget.slotCount;
   }
 
   @override
@@ -180,10 +236,22 @@ class _DashboardItemState extends State<DashboardItem>
     // 2. The global edit mode changes.
 
     final newSignature = widget.item.contentSignature;
-    if (newSignature != _lastSignature || widget.isEditing != _lastIsEditing) {
+    final signatureChanged = newSignature != _lastSignature;
+    final editingChanged = widget.isEditing != _lastIsEditing;
+
+    // Invalidate cache on dimension changes if sub-pixel or breakpoint builders are active.
+    final dimensionsChanged = widget.trackDimensions &&
+        (widget.itemWidth != _lastWidth ||
+            widget.itemHeight != _lastHeight ||
+            widget.slotCount != _lastSlotCount);
+
+    if (signatureChanged || editingChanged || dimensionsChanged) {
       _cachedWidget = null; // Invalidate cache
       _lastSignature = newSignature;
       _lastIsEditing = widget.isEditing;
+      _lastWidth = widget.itemWidth;
+      _lastHeight = widget.itemHeight;
+      _lastSlotCount = widget.slotCount;
     }
   }
 
@@ -211,7 +279,21 @@ class _DashboardItemState extends State<DashboardItem>
     // We wrap it in RepaintBoundary here to ensure the heavy subtree isn't repainted
     // when we just change the border color or focus state.
     _cachedWidget ??= RepaintBoundary(
-      child: widget.builder(context, widget.item),
+      child: widget.itemBreakpointBuilder != null
+          ? DashboardBreakpointBuilder<dynamic>(
+              width: widget.itemWidth!,
+              height: widget.itemHeight!,
+              item: widget.item,
+              resolver: (w, h) => widget.breakpointResolver!(w, h, widget.item, widget.slotCount!),
+              builder: (context, item, breakpoint, w, h) {
+                return widget.itemBreakpointBuilder!(
+                    context, item, breakpoint, w, h, widget.slotCount!);
+              },
+            )
+          : widget.itemLayoutBuilder != null
+              ? widget.itemLayoutBuilder!(
+                  context, widget.item, widget.itemWidth!, widget.itemHeight!, widget.slotCount!)
+              : widget.itemBuilder!(context, widget.item),
     );
 
     // Watch Selection State
@@ -293,5 +375,88 @@ class _DashboardItemState extends State<DashboardItem>
         ),
       ),
     );
+  }
+}
+
+/// A highly optimized performance widget that shields its child subtree from rebuilds
+/// during continuous desktop window resizing.
+///
+/// It only invalidates the cached widget when the resolved layout type of type [T]
+/// (defined by the developer) changes or when the item's content signature updates.
+class DashboardBreakpointBuilder<T> extends StatefulWidget {
+  /// Creates a [DashboardBreakpointBuilder].
+  const DashboardBreakpointBuilder({
+    required this.width,
+    required this.height,
+    required this.item,
+    required this.resolver,
+    required this.builder,
+    super.key,
+  });
+
+  /// The live width of the layout item in pixels.
+  final double width;
+
+  /// The live height of the layout item in pixels.
+  final double height;
+
+  /// The layout item metadata.
+  final LayoutItem item;
+
+  /// A pure function mapping current pixel dimensions to a developer-defined layout state of type [T].
+  final T Function(double width, double height) resolver;
+
+  /// Rebuilds only when the resolved layout type [T] changes.
+  final Widget Function(
+    BuildContext context,
+    LayoutItem item,
+    T layout,
+    double width,
+    double height,
+  ) builder;
+
+  @override
+  State<DashboardBreakpointBuilder<T>> createState() => _DashboardBreakpointBuilderState<T>();
+}
+
+class _DashboardBreakpointBuilderState<T> extends State<DashboardBreakpointBuilder<T>> {
+  Widget? _cachedChild;
+  late T _currentLayout;
+  late int _lastItemSignature;
+
+  @override
+  void initState() {
+    super.initState();
+    _currentLayout = widget.resolver(widget.width, widget.height);
+    _lastItemSignature = widget.item.contentSignature;
+  }
+
+  @override
+  void didUpdateWidget(covariant DashboardBreakpointBuilder<T> oldWidget) {
+    super.didUpdateWidget(oldWidget);
+
+    // Evaluate the resolver using the new dimensions
+    final newLayout = widget.resolver(widget.width, widget.height);
+    final signatureChanged = widget.item.contentSignature != _lastItemSignature;
+
+    // Reason: Only invalidate the cached subtree if a real breakpoint was crossed
+    // or if the underlying item content signature has been mutated.
+    if (_currentLayout != newLayout || signatureChanged) {
+      _currentLayout = newLayout;
+      _lastItemSignature = widget.item.contentSignature;
+      _cachedChild = null; // Forces a rebuild in the next pass
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    _cachedChild ??= widget.builder(
+      context,
+      widget.item,
+      _currentLayout,
+      widget.width,
+      widget.height,
+    );
+    return _cachedChild!;
   }
 }
