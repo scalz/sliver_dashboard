@@ -3,6 +3,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:sliver_dashboard/src/controller/layout_metrics.dart';
 import 'package:sliver_dashboard/src/models/layout_item.dart';
+import 'package:sliver_dashboard/src/view/sliver_dashboard.dart' show RenderSliverDashboard;
 
 /// A custom painter that draws the background grid lines and the highlight
 /// for the currently active item (or placeholder) within a Sliver context.
@@ -15,13 +16,12 @@ class GridBackgroundPainter extends CustomPainter {
   const GridBackgroundPainter({
     required this.metrics,
     required this.scrollOffset,
+    required this.renderSliver,
     this.draggedItems = const [],
     this.placeholder,
     this.lineColor = Colors.black12,
     this.lineWidth = 1.0,
     this.fillColor = Colors.black12,
-    this.sliverTop = 0.0,
-    this.sliverHeight = 0.0,
     this.fillViewport = false,
   });
 
@@ -30,6 +30,9 @@ class GridBackgroundPainter extends CustomPainter {
 
   /// The current scroll offset of the viewport.
   final double scrollOffset;
+
+  /// Reference to the RenderObject
+  final RenderSliverDashboard? renderSliver;
 
   /// The items currently being dragged/resized by the user (internal).
   /// These represent the "shadows" on the grid.
@@ -47,13 +50,6 @@ class GridBackgroundPainter extends CustomPainter {
   /// The color used to fill the area of the active item or placeholder.
   final Color fillColor;
 
-  /// The layout offset of the sliver within the scroll view (e.g., `precedingScrollExtent`).
-  /// This accounts for widgets placed before this dashboard (like SliverAppBars).
-  final double sliverTop;
-
-  /// The total extent (height/width) of the sliver's content.
-  final double sliverHeight;
-
   /// If true, ignore sliverHeight for clipping
   final bool fillViewport;
 
@@ -67,10 +63,17 @@ class GridBackgroundPainter extends CustomPainter {
 
     final isVertical = metrics.scrollDirection == Axis.vertical;
 
-    // Calculate the screen coordinate where the sliver content physically begins.
-    // Reason: `sliverTop` is the layout offset in the scroll view. Subtracting
-    // `scrollOffset` gives us the visual position relative to the viewport top.
-    // This value implicitly includes the main-axis padding (e.g., SliverPadding.top).
+    var sliverTop = 0.0;
+    var sliverHeight = 0.0;
+
+    if (renderSliver != null && renderSliver!.attached && renderSliver!.geometry != null) {
+      sliverTop = renderSliver!.constraints.precedingScrollExtent;
+      sliverHeight = renderSliver!.geometry!.scrollExtent;
+    } else {
+      // Fallback si le sliver n'a pas encore de géométrie calculée
+      sliverHeight = isVertical ? size.height : size.width;
+    }
+
     final visualStart = sliverTop - scrollOffset;
 
     canvas.save();
@@ -159,9 +162,9 @@ class GridBackgroundPainter extends CustomPainter {
         isVertical ? Size(contentWidth, largeExtent) : Size(largeExtent, contentHeight);
 
     if (isVertical) {
-      _paintVerticalGrid(canvas, drawBounds, linePaint, visualStart, size.height);
+      _paintVerticalGrid(canvas, drawBounds, linePaint, visualStart, size.height, sliverHeight);
     } else {
-      _paintHorizontalGrid(canvas, drawBounds, linePaint, visualStart, size.width);
+      _paintHorizontalGrid(canvas, drawBounds, linePaint, visualStart, size.width, sliverHeight);
     }
 
     canvas.restore();
@@ -173,6 +176,7 @@ class GridBackgroundPainter extends CustomPainter {
     Paint paint,
     double visualStart,
     double viewportHeight,
+    double sliverHeight,
   ) {
     // Limit drawing range of vertical grid columns on the cross-axis.
     for (var i = 1; i < metrics.slotCount; i++) {
@@ -219,6 +223,7 @@ class GridBackgroundPainter extends CustomPainter {
     Paint paint,
     double visualStart,
     double viewportWidth,
+    double sliverHeight,
   ) {
     // Limit drawing range of horizontal grid rows on the cross-axis.
     for (var i = 1; i < metrics.slotCount; i++) {
@@ -263,8 +268,11 @@ class GridBackgroundPainter extends CustomPainter {
         oldDelegate.scrollOffset != scrollOffset ||
         !listEquals(oldDelegate.draggedItems, draggedItems) ||
         oldDelegate.placeholder != placeholder ||
-        oldDelegate.sliverTop != sliverTop ||
-        oldDelegate.sliverHeight != sliverHeight;
+        oldDelegate.renderSliver != renderSliver ||
+        oldDelegate.fillViewport != fillViewport ||
+        oldDelegate.lineColor != lineColor ||
+        oldDelegate.lineWidth != lineWidth ||
+        oldDelegate.fillColor != fillColor;
   }
 
   /// Helper for list comparison if you don't have foundation imported

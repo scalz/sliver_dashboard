@@ -287,12 +287,23 @@ class _DashboardItemState extends State<DashboardItem>
               resolver: (w, h) => widget.breakpointResolver!(w, h, widget.item, widget.slotCount!),
               builder: (context, item, breakpoint, w, h) {
                 return widget.itemBreakpointBuilder!(
-                    context, item, breakpoint, w, h, widget.slotCount!);
+                  context,
+                  item,
+                  breakpoint,
+                  w,
+                  h,
+                  widget.slotCount!,
+                );
               },
             )
           : widget.itemLayoutBuilder != null
               ? widget.itemLayoutBuilder!(
-                  context, widget.item, widget.itemWidth!, widget.itemHeight!, widget.slotCount!)
+                  context,
+                  widget.item,
+                  widget.itemWidth!,
+                  widget.itemHeight!,
+                  widget.slotCount!,
+                )
               : widget.itemBuilder!(context, widget.item),
     );
 

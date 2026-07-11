@@ -66,6 +66,12 @@ class _DashboardGridState extends State<DashboardGrid> {
 
   @override
   Widget build(BuildContext context) {
+    final isEditing = widget.controller.isEditing.watch(context);
+    if (!isEditing) {
+      _renderSliver = null; // Free up the reference to avoid memory leaks
+      return const SizedBox.shrink();
+    }
+
     return AnimatedBuilder(
       animation: widget.scrollController,
       builder: (context, child) {
@@ -89,9 +95,6 @@ class _DashboardGridState extends State<DashboardGrid> {
               scrollDirection: widget.scrollDirection,
             );
 
-            final isEditing = widget.controller.isEditing.watch(context);
-            if (!isEditing) return const SizedBox.shrink();
-
             final isDragging = widget.controller.isDragging.watch(context);
             final selectedIds = widget.controller.selectedItemIds.watch(context);
             var draggedItems = <LayoutItem>[];
@@ -102,26 +105,6 @@ class _DashboardGridState extends State<DashboardGrid> {
             }
 
             final placeholder = widget.controller.currentDragPlaceholder;
-
-            // Extract positioning information from the actual Sliver RenderObject.
-            var startOffset = 0.0;
-            var contentExtent = 0.0;
-
-            if (_renderSliver != null && _renderSliver!.geometry != null) {
-              // Reasoning: The grid is drawn in an Overlay (Stack), which covers the
-              // entire viewport. However, the actual Dashboard content might be
-              // pushed down by a SliverAppBar or other slivers.
-              // `precedingScrollExtent` tells us exactly where the dashboard starts
-              // in the scroll view, allowing us to align the grid lines perfectly.
-              startOffset = _renderSliver!.constraints.precedingScrollExtent;
-              contentExtent = _renderSliver!.geometry!.scrollExtent;
-            } else {
-              // Fallback: If the sliver hasn't performed layout yet, assume full size.
-              // This prevents visual glitches during the very first frame.
-              contentExtent = widget.scrollDirection == Axis.vertical
-                  ? constraints.maxHeight
-                  : constraints.maxWidth;
-            }
 
             return CustomPaint(
               size: constraints.biggest,
@@ -134,9 +117,7 @@ class _DashboardGridState extends State<DashboardGrid> {
                 lineColor: widget.gridStyle.lineColor,
                 lineWidth: widget.gridStyle.lineWidth,
                 fillColor: widget.gridStyle.fillColor,
-                // Pass the calculated offsets to the painter for clipping and translation.
-                sliverTop: startOffset,
-                sliverHeight: contentExtent,
+                renderSliver: _renderSliver,
                 fillViewport: widget.fillViewport,
               ),
             );

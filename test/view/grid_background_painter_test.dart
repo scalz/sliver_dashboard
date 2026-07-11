@@ -1,11 +1,20 @@
 import 'dart:ui';
 
-import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mocktail/mocktail.dart';
 import 'package:sliver_dashboard/sliver_dashboard.dart';
 import 'package:sliver_dashboard/src/controller/layout_metrics.dart';
 
-// A simple mock canvas to verify calls (optional, but good for verifying paint logic)
+// A simple mock of RenderSliverDashboard using mocktail
+class MockRenderSliverDashboard extends Mock implements RenderSliverDashboard {
+  @override
+  String toString({DiagnosticLevel minLevel = DiagnosticLevel.info}) {
+    return 'MockRenderSliverDashboard';
+  }
+}
+
+// A simple mock canvas to verify calls
 class MockCanvas extends Fake implements Canvas {
   int drawRectCalls = 0;
   int clipRectCalls = 0;
@@ -47,120 +56,140 @@ void main() {
     );
 
     test('shouldRepaint returns true when properties change', () {
-      const oldPainter = GridBackgroundPainter(
+      final sliverA = MockRenderSliverDashboard();
+      final sliverB = MockRenderSliverDashboard();
+
+      final oldPainter = GridBackgroundPainter(
         metrics: metrics,
         scrollOffset: 0,
-        sliverTop: 0,
-        sliverHeight: 1000,
+        renderSliver: sliverA,
       );
 
       // 1. Change Scroll Offset
-      const newPainterScroll = GridBackgroundPainter(
+      final newPainterScroll = GridBackgroundPainter(
         metrics: metrics,
         scrollOffset: 10, // Changed
-        sliverTop: 0,
-        sliverHeight: 1000,
+        renderSliver: sliverA,
       );
       expect(newPainterScroll.shouldRepaint(oldPainter), isTrue);
 
       // 2. Change Active Item
-      const newPainterItem = GridBackgroundPainter(
+      final newPainterItem = GridBackgroundPainter(
         metrics: metrics,
         scrollOffset: 0,
-        draggedItems: [LayoutItem(id: '1', x: 0, y: 0, w: 1, h: 1)], // Changed
-        sliverTop: 0,
-        sliverHeight: 1000,
+        draggedItems: const [LayoutItem(id: '1', x: 0, y: 0, w: 1, h: 1)], // Changed
+        renderSliver: sliverA,
       );
       expect(newPainterItem.shouldRepaint(oldPainter), isTrue);
 
-      // 3. Change Sliver Top
-      const newPainterTop = GridBackgroundPainter(
+      // 3. Change RenderSliver reference
+      final newPainterSliver = GridBackgroundPainter(
         metrics: metrics,
         scrollOffset: 0,
-        sliverTop: 50, // Changed
-        sliverHeight: 1000,
+        renderSliver: sliverB, // Changed
       );
-      expect(newPainterTop.shouldRepaint(oldPainter), isTrue);
+      expect(newPainterSliver.shouldRepaint(oldPainter), isTrue);
 
-      // 4. Change Sliver Height
-      const newPainterHeight = GridBackgroundPainter(
+      // 4. Change fillViewport
+      final newPainterViewport = GridBackgroundPainter(
         metrics: metrics,
         scrollOffset: 0,
-        sliverTop: 0,
-        sliverHeight: 2000, // Changed
+        renderSliver: sliverA,
+        fillViewport: true, // Changed
       );
-      expect(newPainterHeight.shouldRepaint(oldPainter), isTrue);
+      expect(newPainterViewport.shouldRepaint(oldPainter), isTrue);
     });
 
     test('shouldRepaint detects changes in draggedItems content (Deep List Comparison)', () {
       const itemA = LayoutItem(id: '1', x: 0, y: 0, w: 1, h: 1);
       const itemB = LayoutItem(id: '2', x: 0, y: 0, w: 1, h: 1);
+      final sliver = MockRenderSliverDashboard();
 
-      const oldPainter = GridBackgroundPainter(
+      final oldPainter = GridBackgroundPainter(
         metrics: metrics,
         scrollOffset: 0,
-        draggedItems: [itemA], // List with Item A
+        renderSliver: sliver,
+        draggedItems: const [itemA], // List with Item A
       );
 
       // 1. Same list instance -> Should NOT repaint (covered by identical check)
       final sameListPainter = GridBackgroundPainter(
         metrics: metrics,
         scrollOffset: 0,
+        renderSliver: sliver,
         draggedItems: oldPainter.draggedItems,
       );
       expect(sameListPainter.shouldRepaint(oldPainter), isFalse);
 
       // 2. Different list instance, SAME content -> Should NOT repaint
-      // This covers the loop where a[i] == b[i]
-      const sameContentPainter = GridBackgroundPainter(
+      final sameContentPainter = GridBackgroundPainter(
         metrics: metrics,
         scrollOffset: 0,
-        draggedItems: [itemA], // New list, same item
+        renderSliver: sliver,
+        draggedItems: const [itemA], // New list, same item
       );
       expect(sameContentPainter.shouldRepaint(oldPainter), isFalse);
 
       // 3. Different list instance, DIFFERENT content -> Should repaint
-      // This covers the loop where a[i] != b[i]
-      const diffContentPainter = GridBackgroundPainter(
+      final diffContentPainter = GridBackgroundPainter(
         metrics: metrics,
         scrollOffset: 0,
-        draggedItems: [itemB], // New list, different item
+        renderSliver: sliver,
+        draggedItems: const [itemB], // New list, different item
       );
       expect(diffContentPainter.shouldRepaint(oldPainter), isTrue);
     });
 
     test('paint handles fillViewport: false (Clipping logic)', () {
-      const painter = GridBackgroundPainter(
+      final renderSliver = MockRenderSliverDashboard();
+
+      // Stubbing the renderSliver's layout properties
+      when(() => renderSliver.attached).thenReturn(true);
+      when(() => renderSliver.geometry).thenReturn(const SliverGeometry(scrollExtent: 500));
+      when(() => renderSliver.constraints).thenReturn(
+        const SliverConstraints(
+          axisDirection: AxisDirection.down,
+          growthDirection: GrowthDirection.forward,
+          userScrollDirection: ScrollDirection.idle,
+          scrollOffset: 0,
+          precedingScrollExtent: 0,
+          overlap: 0,
+          remainingPaintExtent: 1000,
+          crossAxisExtent: 400,
+          crossAxisDirection: AxisDirection.right,
+          viewportMainAxisExtent: 1000, // Fixed: 'viewportMainAxisExtent' is required
+          remainingCacheExtent: 1000,
+          cacheOrigin: 0,
+        ),
+      );
+
+      final painter = GridBackgroundPainter(
         metrics: metrics,
         scrollOffset: 0,
-        sliverTop: 0,
-        sliverHeight: 500, // Content is smaller than screen
+        renderSliver: renderSliver,
         fillViewport: false,
       );
 
       final canvas = MockCanvas();
-      // Screen size is 1000, but content is 500.
       painter.paint(canvas, const Size(400, 1000));
 
-      // We just verify it runs without error and calls clipRect.
-      // The logic inside paint uses sliverHeight (500) for clipping instead of size.height.
       expect(canvas.clipRectCalls, 1);
     });
 
     test('paint draws placeholder if provided', () {
-      const painter = GridBackgroundPainter(
+      final sliver = MockRenderSliverDashboard();
+      when(() => sliver.attached).thenReturn(false);
+
+      final painter = GridBackgroundPainter(
         metrics: metrics,
         scrollOffset: 0,
-        placeholder: LayoutItem(id: 'p', x: 1, y: 1, w: 1, h: 1),
+        renderSliver: sliver,
+        placeholder: const LayoutItem(id: 'p', x: 1, y: 1, w: 1, h: 1),
       );
 
       final canvas = MockCanvas();
       painter.paint(canvas, const Size(400, 1000));
 
-      // drawRect is called for:
-      // 1. The placeholder highlight
-      // 2. The grid lines (if implemented via drawLine, this count might vary,
-      //    but we ensure the highlight logic is triggered).
       expect(canvas.drawRectCalls, greaterThan(0));
     });
   });
