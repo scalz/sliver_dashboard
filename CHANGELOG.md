@@ -1,4 +1,7 @@
 ## 1.2.0
+
+**No breaking changes in this release.**
+
 ### New Features
 Easily create per-item breakpoints. The grid already computes every item's pixel size and slotCount during layout, so it now hands them to your builder directly — no extra layout passes.
 
