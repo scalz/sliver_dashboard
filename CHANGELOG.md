@@ -1,3 +1,16 @@
+## 1.2.0
+### New Features
+Easily create per-item breakpoints. The grid already computes every item's pixel size and slotCount during layout, so it now hands them to your builder directly — no extra layout passes.
+
+- **DashboardItemLayoutBuilder**: Added an alternative builder providing live physical pixel dimensions and slotCount, for continuous sub-pixel responsiveness during resize.
+- **DashboardItemBreakpointBuilder**: Added an alternative builder, the selective variant — rebuilds only when the resolved breakpoint changes, shielding heavy subtrees from resize churn.
+- **DashboardBreakpointResolver**: maps pixel dimensions + item metadata + slotCount to your own layout states.
+
+### Performance & Refinements
+- **Granular Rebuild Short-Circuiting**: Isolated physical dimension and slot-count invalidations so that standard `DashboardItemBuilder` execution remains unaffected by resize events.
+- **Lazy RenderSliver Lookup & Paint-Phase Alignment**: Deferred sliver metric queries to the paint phase, resolving a first-frame visual grid misalignment when entering edit mode.
+
+
 ## 1.1.1
 
 ### Enhancement
