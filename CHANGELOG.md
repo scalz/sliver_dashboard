@@ -4,10 +4,9 @@
 defaults preserving 1.x behavior; without a `DashboardNestedScope` in the
 tree, the new code paths reduce to a few null-checks per pointer event.
 
-### New Features — Nested Grids (GridStack.js-class)
+### New Features — Nested Grids
 
-- **`NestedDashboard`**: embed a full dashboard inside a grid item
-  (GridStack's `subGridOpts` equivalent), at any depth.
+- **`NestedDashboard`**: embed a full dashboard inside a grid item at any depth.
 - **Cross-grid drag & drop**: drag items between a parent grid,
   its nested grids, and sibling grids under a shared `DashboardNestedScope`.
   Live push-preview placeholder in whichever grid is hovered, floating drag
@@ -18,7 +17,7 @@ tree, the new code paths reduce to a few null-checks per pointer event.
 - **`DashboardNestedScope`**: opt-in coordinator scope with
   `onItemMovedToGrid`, `subGridDynamic`, `nestHoverDelay`,
   `onNestedGridRequested`.
-- **`autoSlotCount`** (GridStack `column: 'auto'`): the nested grid's slot
+- **`autoSlotCount`**: the nested grid's slot
   count follows its host item width, keeping inner/outer cells visually
   consistent during host resizes.
 - **`sizeToContent`** (+ `sizeToContentMax`, `chromeExtent`): the host item
@@ -33,10 +32,23 @@ tree, the new code paths reduce to a few null-checks per pointer event.
   nested grid permanently) (`subGrid: {slotCount, items}` payloads,
   delivered automatically to grids that mount later).
 - **Programmatic moves**: `DashboardNestedCoordinator.moveItemToGrid`.
+- **`maxNestingDepth`** (`DashboardNestedScope` / `DashboardNestedCoordinator`,
+  default `null` = unlimited): caps how many nesting levels users can create.
+  The root grid is level 0, so `1` allows one level of nesting and `0`
+  disables it. Enforced where levels are *created* — cross-grid drops of a
+  host item, and `subGridDynamic` arming — while plain leaf moves and explicit
+  `moveItemToGrid` calls are unaffected. `canHostAtDepth(depth)` exposes the
+  same predicate for building UI affordances.
 - **`CrossGridProbe`** (`DashboardNestedScope.probe`): choose whether the
-  pointer (default, GridStack behavior) or the dragged tile's visual center
-  decides which grid it enters — the latter makes enter-vs-push independent
-  of where the tile was grabbed.
+  pointer (default) or the dragged tile's visual center decides which grid it
+  enters — the latter makes enter-vs-push independent of where the tile was
+  grabbed.
+- **`sizeToContent` no longer overrides a manual host resize mid-gesture**:
+  the guard that pauses content-driven height sync now covers resize (not just
+  drag) on both the parent and the child grid, so dragging the host's resize
+  handle is not fought by sizeToContent. Note `sizeToContent: true` still owns
+  the host height by design (it reconciles to the content height after the
+  gesture); disable it for a host whose height users should set by hand.
 - **`sizeToContent` grid lines**: a `sizeToContent` nested grid now paints
   background grid lines only for the rows its content occupies (new
   `Dashboard.fillViewport` param, default `true`, set to `false` by
@@ -74,6 +86,20 @@ tree, the new code paths reduce to a few null-checks per pointer event.
   template-preserving external drop (`onDropExternalItem`), programmatic
   clamped resize (`setItemSize`).
 
+### Bug Fixes
+
+- **Auto-scroll tick placeholder re-anchoring**: while auto-scrolling under a
+  stationary pointer, the tick re-anchored any active placeholder with the
+  `DragTarget` size (`placeholderWidth/Height`) and could resurrect a
+  placeholder from a stale position; it now uses the hovering item's real
+  size for cross-grid drags and only re-anchors when a hover is actually
+  active.
+- **Overlay hit-testing with nested dashboards**: the overlay previously
+  returned the first grid item found on the hit-test path, which for nested
+  layouts is an item of the *inner* grid — crashing the outer grid's drag
+  start on an unknown id. Hit-test entries are now filtered by sliver
+  ownership, so the outer grid correctly resolves to its own host item.
+
 ### Documentation & Tooling
 
 - `README_NESTED_GRID.md`: feature guide.
@@ -100,8 +126,6 @@ tree, the new code paths reduce to a few null-checks per pointer event.
 
 ### Documentation & Tooling
 
-- `README_NESTED_GRID.md`: feature guide, GridStack parity map, documented
-  divergences, performance notes.
 - New example entry point `example/lib/nested_example.dart` and a demo
   launcher in `example/lib/main.dart`.
 - 14 new tests (cross-grid controller protocol, pointer claiming, hit-test

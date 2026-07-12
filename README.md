@@ -978,6 +978,19 @@ Key options:
 - Auto-scroll: fixed-size nested grids (`sizeToContent: false`) scroll
   internally with edge auto-scroll; `sizeToContent: true` grids delegate edge
   auto-scroll to the parent grid, which scrolls to follow the growing content.
+- `DashboardNestedScope.subGridDynamicSameGrid` (default `false`): the
+  same-grid variant of `subGridDynamic` (the two flags are independent) —
+  pause the pointer mid-drag over a sibling to freeze the pushes and arm it
+  as a nested-grid host. Opt-in because the visible freeze changes the drag
+  feel.
+- `DashboardNestedScope.onNestedGridRequestAbandoned`: fired when a
+  nested-grid request ends without the item landing in the requested host's
+  child grid — revert your speculative conversion there (the example shows
+  how).
+- `DashboardNestedScope.maxNestingDepth` (default `null` = unlimited): cap the
+  number of nesting levels users can create (root is level 0, so `1` = one
+  level, `0` = nesting off). Plain item moves are never blocked; only the
+  creation of a deeper level is.
 - `LayoutItem.hasNestedGrid`: declarative host flag — branch your builder on
   it (`if (item.hasNestedGrid) return NestedDashboard(...)`) instead of on
   ids, so groups stay portable between grids and across save/load.
@@ -992,7 +1005,9 @@ loadNestedTree(coordinator, root, tree);          // nested payloads delivered
 ```
 
 Notes: cross-grid drags carry a single item (multi-selection drags stay in
-their grid), and item ids must be unique across the tree.
+their grid), and item ids must be unique across the tree. See
+[`README_NESTED_GRID.md`](README_NESTED_GRID.md) for the full guide and
+documented behaviors.
 
 ### Layout Optimizer
 

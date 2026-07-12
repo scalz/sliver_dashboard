@@ -410,6 +410,40 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     }
 
     layout.value = resolved;
+
+    // Write-through to the in-flight snapshots. Everything the engine
+    // rebuilds from the pre-interaction snapshot — onDragUpdate recomputes,
+    // the cross-grid exit base in [beginCrossGridExit], the canceled-drop
+    // restore in [finishCrossGridExit] — would otherwise silently erase a
+    // mid-interaction mutation. Concrete case: the same-grid subGridDynamic
+    // conversion flips `hasNestedGrid` on a host while the drag is still in
+    // flight; without this, the flag is lost the moment the session starts
+    // and the freshly mounted nested grid unmounts with its content.
+    // The transform is applied to the snapshot's own entry so the snapshot's
+    // pristine positions are preserved. Limitation (unchanged): transforming
+    // the actively dragged pivot itself mid-drag remains unsupported (the
+    // cached pivot/cluster copies are not rewritten).
+    final snapshot = originalLayoutOnStart.peek();
+    if (snapshot.isNotEmpty) {
+      final idx = snapshot.indexWhere((i) => i.id == itemId);
+      if (idx != -1) {
+        final next = List<LayoutItem>.from(snapshot);
+        var patched = transform(next[idx]);
+        if (patched.id != itemId) patched = patched.copyWith(id: itemId);
+        next[idx] = patched;
+        originalLayoutOnStart.value = next;
+      }
+    }
+    final exitSnapshot = _crossGridExitSnapshot;
+    if (exitSnapshot != null) {
+      final idx = exitSnapshot.indexWhere((i) => i.id == itemId);
+      if (idx != -1) {
+        var patched = transform(exitSnapshot[idx]);
+        if (patched.id != itemId) patched = patched.copyWith(id: itemId);
+        exitSnapshot[idx] = patched;
+      }
+    }
+
     onLayoutChanged?.call(layout.value, slotCount.value);
   }
 
@@ -645,6 +679,30 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     if (placeholder.value == null) return null;
     final snapshot = originalLayoutOnStart.peek();
     return snapshot.isEmpty ? null : snapshot;
+  }
+
+  /// The pre-drag layout snapshot while an interactive in-grid drag is in
+  /// progress, or null. Same-grid `subGridDynamic` uses it to hit-test the
+  /// item under the pointer with the live collision pushes factored out —
+  /// the pushed layout constantly lies about what is being hovered.
+  List<LayoutItem>? get dragOriginSnapshot {
+    if (!_isDraggingState.peek()) return null;
+    final snapshot = originalLayoutOnStart.peek();
+    return snapshot.isEmpty ? null : snapshot;
+  }
+
+  /// Reverts the visual collision pushes of the in-grid drag by restoring the
+  /// pre-drag snapshot while keeping the drag itself alive (the same-grid
+  /// `subGridDynamic` freeze). Also resets the drag-update boundary bypass so
+  /// the next [onDragUpdate] re-applies the pushes instead of hitting the
+  /// "bbox unchanged" fast path against a stale cache.
+  void freezeDragPushes() {
+    if (!_isDraggingState.peek()) return;
+    final snapshot = originalLayoutOnStart.peek();
+    if (snapshot.isEmpty) return;
+    _lastBBoxX = null;
+    _lastBBoxY = null;
+    layout.value = List<LayoutItem>.from(snapshot);
   }
 
   /// Temporarily removes [itemIds] from this grid because they are being

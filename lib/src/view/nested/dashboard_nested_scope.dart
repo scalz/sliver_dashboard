@@ -28,6 +28,17 @@ typedef DashboardNestedGridRequestCallback = void Function(
   DashboardController hostGridController,
 );
 
+/// Signature for the callback fired when a nested-grid request (see
+/// [DashboardNestedCoordinator.onNestedGridRequested]) is abandoned: the
+/// request fired, but the drag ended without the dragged item landing in the
+/// child grid of [host] — dropped elsewhere, returned to its origin, or
+/// canceled. Lets the application revert a speculative conversion (e.g. an
+/// empty panel created in response to the request).
+typedef DashboardNestedGridAbandonedCallback = void Function(
+  LayoutItem host,
+  DashboardController hostGridController,
+);
+
 /// How the coordinator decides which grid is under a cross-grid drag.
 enum CrossGridProbe {
   /// The raw pointer position decides.
@@ -145,7 +156,9 @@ class DashboardNestedCoordinator {
   DashboardNestedCoordinator({
     this.onItemMovedToGrid,
     this.onNestedGridRequested,
+    this.onNestedGridRequestAbandoned,
     this.subGridDynamic = false,
+    this.subGridDynamicSameGrid = false,
     this.nestHoverDelay = const Duration(milliseconds: 600),
     this.probe = CrossGridProbe.pointer,
     this.maxNestingDepth,
@@ -158,8 +171,59 @@ class DashboardNestedCoordinator {
   /// request a dynamic nested grid (see [subGridDynamic]).
   DashboardNestedGridRequestCallback? onNestedGridRequested;
 
+  /// Fired when a [onNestedGridRequested] request is abandoned: the drag
+  /// ended without the dragged item landing in the child grid of the
+  /// requested host. Use it to revert a speculative conversion (delete the
+  /// empty panel, clear the `hasNestedGrid` flag, dispose the controller).
+  DashboardNestedGridAbandonedCallback? onNestedGridRequestAbandoned;
+
+  // The last fired-but-unresolved nested-grid request. Set when the request
+  // fires (both the cross-grid and the same-grid arming paths), resolved at
+  // drag end. Deliberately NOT cleared when a session begins: the handoff
+  // into the freshly created child grid happens through a session, and the
+  // request is only confirmed by the drop that ends it.
+  ({LayoutItem host, DashboardController hostGrid})? _pendingNestRequest;
+
+  /// Records that [onNestedGridRequested] has fired for [host] in
+  /// [hostGrid]. Called by both arming paths right before the callback.
+  void notifyNestRequestFired(LayoutItem host, DashboardController hostGrid) {
+    _pendingNestRequest = (host: host, hostGrid: hostGrid);
+  }
+
+  /// Resolves the pending nested-grid request, if any. [droppedInto] is the
+  /// grid that received the item, or null when the drag ended without a
+  /// cross-grid drop. Fires [onNestedGridRequestAbandoned] unless the item
+  /// landed in the child grid of the requested host. Idempotent.
+  void resolveNestRequest(DashboardController? droppedInto) {
+    final pending = _pendingNestRequest;
+    if (pending == null) return;
+    _pendingNestRequest = null;
+    final child = childGridsOf(pending.hostGrid)[pending.host.id];
+    final confirmed = droppedInto != null && child != null && identical(droppedInto, child);
+    if (!confirmed) {
+      onNestedGridRequestAbandoned?.call(pending.host, pending.hostGrid);
+    }
+  }
+
   /// Enables the `subGridDynamic` hover detection.
   bool subGridDynamic;
+
+  /// Extends [subGridDynamic] to drags that never leave their own grid.
+  ///
+  /// In-grid drags push their neighbours continuously, so "hovering" a
+  /// sibling is normally impossible — the sibling is shoved away before the
+  /// pointer can rest on it. When this is true (and [subGridDynamic] is on),
+  /// keeping the pointer stationary briefly during an in-grid drag *freezes*
+  /// the pushes (the pre-drag layout is restored while the drag stays alive),
+  /// highlights the item under the pointer, and after [nestHoverDelay] fires
+  /// [onNestedGridRequested] with the same contract as the cross-grid arming.
+  /// Moving the pointer again cancels the freeze and resumes the drag;
+  /// releasing right after the request drops the dragged item into the
+  /// freshly created nested grid (via the regular cross-grid handoff).
+  /// Independent of [subGridDynamic]: either may be enabled alone.
+  /// Default: false — pausing mid-drag visibly freezes the collision pushes,
+  /// which changes the feel of the drag, so this is strictly opt-in.
+  bool subGridDynamicSameGrid;
 
   /// How long the user must hover a plain item before
   /// [onNestedGridRequested] fires.
@@ -476,6 +540,7 @@ class DashboardNestedCoordinator {
           session.nestTimer = Timer(nestHoverDelay, () {
             final current = _session;
             if (current == null || current.nestHoverId != host.id) return;
+            notifyNestRequestFired(host, over.controller);
             onNestedGridRequested?.call(host, current.item, over.controller);
           });
         }
@@ -506,6 +571,7 @@ class DashboardNestedCoordinator {
     }
 
     if (placed == null) {
+      resolveNestRequest(null);
       originImpl.finishCrossGridExit(outcome: CrossGridExitOutcome.canceled);
       _clearSession(restoreOrigin: false); // already restored above
       return null;
@@ -518,6 +584,7 @@ class DashboardNestedCoordinator {
     if (movedAway) {
       onItemMovedToGrid?.call(placed, session.origin.controller, over.controller);
     }
+    resolveNestRequest(over.controller);
     _clearSession(restoreOrigin: false);
     return placed;
   }
@@ -527,6 +594,7 @@ class DashboardNestedCoordinator {
   void cancelSession() {
     final session = _session;
     if (session == null) return;
+    resolveNestRequest(null);
     session.over?.foreignDragLeave();
     session.origin.controller.internal.finishCrossGridExit(outcome: CrossGridExitOutcome.canceled);
     _clearSession(restoreOrigin: false);
@@ -634,6 +702,7 @@ class DashboardNestedCoordinator {
 
   /// Releases coordinator resources. Called by the scope on dispose.
   void dispose() {
+    _pendingNestRequest = null; // teardown
     _clearSession(restoreOrigin: true);
     _registrations.clear();
     _pendingChildGrids.clear();
@@ -689,7 +758,9 @@ class DashboardNestedScope extends StatefulWidget {
     this.coordinator,
     this.onItemMovedToGrid,
     this.onNestedGridRequested,
+    this.onNestedGridRequestAbandoned,
     this.subGridDynamic = false,
+    this.subGridDynamicSameGrid = false,
     this.nestHoverDelay = const Duration(milliseconds: 600),
     this.probe = CrossGridProbe.pointer,
     this.maxNestingDepth,
@@ -708,9 +779,19 @@ class DashboardNestedScope extends StatefulWidget {
   /// Fired when a dynamic nested grid is requested (see [subGridDynamic]).
   final DashboardNestedGridRequestCallback? onNestedGridRequested;
 
+  /// Fired when a nested-grid request is abandoned (drag ended without
+  /// dropping into the requested host's child grid). See
+  /// [DashboardNestedCoordinator.onNestedGridRequestAbandoned].
+  final DashboardNestedGridAbandonedCallback? onNestedGridRequestAbandoned;
+
   /// Enables `subGridDynamic` behavior: holding a dragged item
   /// over a plain item arms a request to convert it into a nested grid.
   final bool subGridDynamic;
+
+  /// Extends [subGridDynamic] to same-grid drags: pausing the pointer during
+  /// an in-grid drag freezes the pushes and arms the hovered sibling.
+  /// See [DashboardNestedCoordinator.subGridDynamicSameGrid]. Default: false.
+  final bool subGridDynamicSameGrid;
 
   /// Hover duration before [onNestedGridRequested] fires.
   final Duration nestHoverDelay;
@@ -755,7 +836,9 @@ class _DashboardNestedScopeState extends State<DashboardNestedScope> {
     _coordinator
       ..onItemMovedToGrid = widget.onItemMovedToGrid
       ..onNestedGridRequested = widget.onNestedGridRequested
+      ..onNestedGridRequestAbandoned = widget.onNestedGridRequestAbandoned
       ..subGridDynamic = widget.subGridDynamic
+      ..subGridDynamicSameGrid = widget.subGridDynamicSameGrid
       ..nestHoverDelay = widget.nestHoverDelay
       ..probe = widget.probe
       ..maxNestingDepth = widget.maxNestingDepth;

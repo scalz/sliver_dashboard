@@ -267,6 +267,19 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
   // Parent grid overlay currently scrolled on our behalf (sizeToContent
   // nested grids delegate edge auto-scroll to their parent).
   CrossGridDragTarget? _delegatedAutoScroll;
+  // --- Same-grid subGridDynamic (subGridDynamicSameGrid) ---
+  // In-grid drags push neighbours continuously, so a hovered sibling is
+  // shoved away before the pointer can rest on it. When the option is on, a
+  // stationary pointer freezes the pushes (pre-drag snapshot restored while
+  // the drag stays alive), highlights the item under the pointer and arms the
+  // nested-grid request — the in-grid twin of the cross-grid arming.
+  static const Duration _sameGridPauseDelay = Duration(milliseconds: 350);
+  static const double _sameGridMoveTolerance = 8;
+  Timer? _sameGridPauseTimer;
+  Timer? _sameGridArmTimer;
+  String? _sameGridArmedHostId;
+  Offset? _sameGridFreezePosition;
+  Offset? _sameGridPauseAnchor;
   StreamSubscription<ScrollRequest>? _scrollSubscription;
 
   // State for tracking the active drag/resize operation
@@ -443,6 +456,8 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
     _isTrashActive.dispose();
     _trashTimer?.cancel();
     _throttleFlushScheduled?.cancel();
+    _sameGridPauseTimer?.cancel();
+    _sameGridArmTimer?.cancel();
     _nestedCoordinator?.unregister(this);
     super.dispose();
   }
@@ -968,6 +983,11 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
       return;
     }
 
+    // Same-grid dynamic nesting: while frozen, jitter within the tolerance is
+    // swallowed (no pushes, no auto-scroll — the pause IS the intent); a real
+    // move disarms and falls through, resuming the normal drag below.
+    if (_handleSameGridNestPause(position)) return;
+
     _handleAutoScroll(position);
     _performUpdate(position);
   }
@@ -1075,10 +1095,26 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
   Future<void> _onPointerUp() async {
     if (_isProcessingPointerUp) return;
     _isProcessingPointerUp = true;
+    final hadActiveDrag = _activeItemId != null;
 
     try {
       _stopScrollTimer();
       _trashTimer?.cancel();
+
+      // Same-grid nest arming: releasing while frozen drops at the pointer —
+      // one final update re-applies the move and, if the armed host was just
+      // converted, hands the item over to the freshly mounted nested grid
+      // (the regular cross-grid session start inside _performUpdate), which
+      // the _ownsCrossGridSession branch below then finalizes as a drop.
+      if (_sameGridArmedHostId != null) {
+        _cancelSameGridNest();
+        if (_activeItemId != null && _lastGlobalPosition != null) {
+          _performUpdate(_lastGlobalPosition!);
+        }
+      } else {
+        _sameGridPauseTimer?.cancel();
+        _sameGridPauseTimer = null;
+      }
 
       // Clic management for group
       if (_shouldClearSelectionOnUp && _activeItemId != null) {
@@ -1148,6 +1184,12 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
         widget.onItemDragEnd?.call(currentItem);
       }
     } finally {
+      // Resolve any fired-but-unconfirmed nested-grid request. A session
+      // drop has already resolved it inside dropSession (no-op here); a
+      // plain in-grid release resolves it as abandoned. Guarded so a stray
+      // pointer-up on a non-dragging overlay can't steal another grid's
+      // pending request.
+      if (hadActiveDrag) _nestedCoordinator?.resolveNestRequest(null);
       _resetOperationState();
       _isProcessingPointerUp = false;
     }
@@ -1169,6 +1211,7 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
     _throttleFlushScheduled?.cancel();
     _throttleFlushScheduled = null;
     _pendingThrottledPosition = null;
+    _cancelSameGridNest();
     // Cross-grid cleanup: release the pointer claim and, if a session we own
     // is somehow still alive (exception path), cancel it so the source grid
     // is restored instead of silently losing the item.
@@ -1462,6 +1505,22 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
 
   @override
   LayoutItem? itemAtGlobal(Offset globalPosition, {String? excludeId}) {
+    // When a foreign placeholder is active, its collision pushes constantly
+    // move items away from the cursor; hover detection is therefore done
+    // against the pre-push snapshot so the hovered item is stable.
+    final base =
+        widget.controller.internal.placeholderHitTestSnapshot ?? widget.controller.layout.peek();
+    return _itemAtGlobalIn(base, globalPosition, excludeId: excludeId);
+  }
+
+  /// Resolves the item whose cell contains [globalPosition] within [base] —
+  /// which may be the live layout or a pre-push snapshot, depending on why
+  /// the caller needs hover stability (foreign placeholder vs same-grid drag).
+  LayoutItem? _itemAtGlobalIn(
+    List<LayoutItem> base,
+    Offset globalPosition, {
+    String? excludeId,
+  }) {
     final point = _gridPointAtGlobal(globalPosition);
     if (point == null) return null;
     final metrics = point.metrics;
@@ -1474,11 +1533,6 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
     final cy = (point.dy / strideY).floor();
     if (cx < 0 || cy < 0) return null;
 
-    // When a foreign placeholder is active, its collision pushes constantly
-    // move items away from the cursor; hover detection is therefore done
-    // against the pre-push snapshot so the hovered item is stable.
-    final base =
-        widget.controller.internal.placeholderHitTestSnapshot ?? widget.controller.layout.peek();
     for (final candidate in base) {
       if (candidate.id == '__placeholder__' || candidate.id == excludeId) continue;
       if (cx >= candidate.x &&
@@ -1489,6 +1543,126 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
       }
     }
     return null;
+  }
+
+  // ===========================================================================
+  // Same-grid subGridDynamic (subGridDynamicSameGrid)
+  // ===========================================================================
+
+  /// Called on every internal-drag pointer move. Returns true while the drag
+  /// is frozen (armed) and the move is within the jitter tolerance — the
+  /// caller must then skip its drag math so the freeze holds. A real move
+  /// disarms and returns false, letting the normal drag resume.
+  bool _handleSameGridNestPause(Offset position) {
+    final coordinator = _nestedCoordinator;
+    // Note: deliberately independent of subGridDynamic — the two are
+    // orthogonal surfaces (cross-grid hover vs in-grid pause).
+    if (coordinator == null ||
+        !coordinator.subGridDynamicSameGrid ||
+        coordinator.onNestedGridRequested == null ||
+        _activeResizeHandle != null ||
+        _ownsCrossGridSession) {
+      return false;
+    }
+    // Same rule as cross-grid: dynamic nesting carries exactly one item.
+    if (widget.controller.selectedItemIds.peek().length != 1) return false;
+
+    if (_sameGridArmedHostId != null) {
+      final anchor = _sameGridFreezePosition;
+      if (anchor != null && (position - anchor).distance <= _sameGridMoveTolerance) {
+        return true; // frozen: swallow jitter, keep the pushes reverted
+      }
+      // Real movement: disarm. The caller falls through to _performUpdate,
+      // which re-applies the pushes (freezeDragPushes reset the bbox cache)
+      // or hands the drag over to a freshly mounted nested grid.
+      _cancelSameGridNest();
+      return false;
+    }
+
+    // Not armed: (re)start pause detection. Pointer events stop arriving when
+    // the pointer stops, so the pause can only be observed with a timer —
+    // but one restarted only on REAL movement: trackpads and touch screens
+    // emit sub-pixel jitter continuously, and restarting on every event
+    // would keep the pause forever out of reach on those devices.
+    final anchor = _sameGridPauseAnchor;
+    if (anchor == null || (position - anchor).distance > _sameGridMoveTolerance) {
+      _sameGridPauseAnchor = position;
+      _sameGridPauseTimer?.cancel();
+      _sameGridPauseTimer = Timer(_sameGridPauseDelay, _armSameGridNest);
+    }
+    return false;
+  }
+
+  /// Pause-timer callback: the pointer has been stationary for
+  /// [_sameGridPauseDelay] during an in-grid drag. Freezes the pushes,
+  /// highlights the hovered item (resolved against the pre-drag snapshot,
+  /// since the pushed layout lies about what is under the pointer) and arms
+  /// the nested-grid request after [DashboardNestedCoordinator.nestHoverDelay].
+  void _armSameGridNest() {
+    if (!mounted) return;
+    final coordinator = _nestedCoordinator;
+    final itemId = _activeItemId;
+    final position = _lastGlobalPosition;
+    if (coordinator == null || itemId == null || position == null) return;
+    if (_ownsCrossGridSession || _activeResizeHandle != null) return;
+    // Pausing over the trash is a delete intent, not a nest intent.
+    if (_isHoveringTrash.peek()) return;
+
+    final impl = widget.controller.internal;
+    final snapshot = impl.dragOriginSnapshot;
+    if (snapshot == null) return;
+
+    final host = _itemAtGlobalIn(snapshot, position, excludeId: itemId);
+    final myReg = coordinator.registrationOf(widget.controller);
+    final hostable = host != null &&
+        !host.isStatic &&
+        !host.isSectionBarrier &&
+        !host.hasNestedGrid &&
+        !coordinator.hasChildGrid(widget.controller, host.id) &&
+        (myReg == null || coordinator.canHostAtDepth(myReg.depth));
+    if (!hostable) return;
+
+    // Freeze: revert the collision pushes so the hovered item is visually
+    // back under the pointer — the in-grid equivalent of the cross-grid
+    // freeze (foreignDragLeave before arming). Stop the edge auto-scroll
+    // first: its periodic tick re-runs _performUpdate and would fight the
+    // freeze every 16ms.
+    _stopScrollTimer();
+    impl
+      ..freezeDragPushes()
+      ..setNestTargetHover(host.id);
+    _sameGridArmedHostId = host.id;
+    _sameGridFreezePosition = position;
+
+    _sameGridArmTimer?.cancel();
+    _sameGridArmTimer = Timer(coordinator.nestHoverDelay, () {
+      if (!mounted) return;
+      if (_sameGridArmedHostId != host.id || _activeItemId != itemId) return;
+      final dragged = snapshot.firstWhereOrNull((i) => i.id == itemId) ?? _activeItemInitialLayout;
+      if (dragged == null) return;
+      coordinator.notifyNestRequestFired(host, widget.controller);
+      coordinator.onNestedGridRequested?.call(host, dragged, widget.controller);
+      // Stay frozen: the app converts the host and the nested grid mounts
+      // under the (stationary) pointer. The next pointer move — or the
+      // release itself — hands the drag over to it through the regular
+      // cross-grid session start in _performUpdate.
+    });
+  }
+
+  /// Cancels any same-grid pause/arming state and clears the highlight.
+  /// Idempotent; never touches the drag itself (the caller decides whether
+  /// to resume it, drop it, or reset the whole operation).
+  void _cancelSameGridNest() {
+    _sameGridPauseTimer?.cancel();
+    _sameGridPauseTimer = null;
+    _sameGridArmTimer?.cancel();
+    _sameGridArmTimer = null;
+    _sameGridPauseAnchor = null;
+    if (_sameGridArmedHostId != null) {
+      _sameGridArmedHostId = null;
+      _sameGridFreezePosition = null;
+      widget.controller.internal.setNestTargetHover(null);
+    }
   }
 
   @override

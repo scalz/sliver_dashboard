@@ -3,6 +3,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sliver_dashboard/sliver_dashboard.dart';
 import 'package:sliver_dashboard/src/controller/layout_metrics.dart';
 
+//
+// ignore_for_file: cascade_invocations
+
 /// A minimal in-test [CrossGridDragTarget]: geometry comes from a real
 /// attached [RenderBox] (pumped by the test), behavior is scripted so the
 /// coordinator's own state machine can be exercised without gestures.
@@ -12,7 +15,10 @@ class _FakeTarget implements CrossGridDragTarget {
   @override
   final DashboardController controller;
 
-  RenderBox? box;
+  /// Resolved lazily on every call — exactly like the real overlay does with
+  /// its stack key — so a frame that replaces/detaches the render object
+  /// between capture and use can never leave the fake holding a stale box.
+  RenderBox? Function()? boxProvider;
   bool accept = true;
   bool dragOut = true;
 
@@ -32,7 +38,7 @@ class _FakeTarget implements CrossGridDragTarget {
   bool get canDragItemsOut => dragOut;
 
   @override
-  RenderBox? get overlayRenderBox => box;
+  RenderBox? get overlayRenderBox => boxProvider?.call();
 
   @override
   SlotMetrics? currentSlotMetrics() => null;
@@ -62,6 +68,10 @@ class _FakeTarget implements CrossGridDragTarget {
   @override
   void stopAutoScroll() => stopScrollCalls++;
 }
+
+/// Lazy render-box resolver for [_FakeTarget.boxProvider].
+RenderBox? Function() boxOf(GlobalKey key) =>
+    () => key.currentContext?.findRenderObject() as RenderBox?;
 
 void main() {
   group('DashboardNestedCoordinator (unit)', () {
@@ -198,10 +208,9 @@ void main() {
           ),
         ),
       );
-      final box = boxKey.currentContext!.findRenderObject()! as RenderBox;
 
       final sourceTarget = _FakeTarget(origin);
-      final destTarget = _FakeTarget(other)..box = box;
+      final destTarget = _FakeTarget(other)..boxProvider = boxOf(boxKey);
       coordinator
         ..register(sourceTarget, depth: 0)
         ..register(destTarget, depth: 0);
@@ -367,10 +376,9 @@ void main() {
           ),
         ),
       );
-      final box = boxKey.currentContext!.findRenderObject()! as RenderBox;
 
       final sourceTarget = _FakeTarget(origin);
-      final destTarget = _FakeTarget(other)..box = box;
+      final destTarget = _FakeTarget(other)..boxProvider = boxOf(boxKey);
       coordinator
         ..subGridDynamic = true
         ..nestHoverDelay = const Duration(milliseconds: 100)
@@ -426,64 +434,255 @@ void main() {
         ..unregister(destTarget);
     });
 
-/*    testWidgets('subGridDynamic does not arm on an item that already hosts a grid',
-            (tester) async {
-          final boxKey = GlobalKey();
-          await tester.pumpWidget(
-            MaterialApp(
-              home: Align(
-                alignment: Alignment.topLeft,
-                child: SizedBox(key: boxKey, width: 200, height: 200),
-              ),
-            ),
-          );
-          final box = boxKey.currentContext!.findRenderObject()! as RenderBox;
+    testWidgets('a fired request is abandoned when the drop lands elsewhere', (tester) async {
+      final boxKey = GlobalKey();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Align(
+            alignment: Alignment.topLeft,
+            child: SizedBox(key: boxKey, width: 200, height: 200),
+          ),
+        ),
+      );
 
-          final sourceTarget = _FakeTarget(origin);
-          final destTarget = _FakeTarget(other)..box = box;
-          final childOfLeaf = DashboardController(initialSlotCount: 2);
-          addTearDown(childOfLeaf.dispose);
+      final sourceTarget = _FakeTarget(origin);
+      final destTarget = _FakeTarget(other)..boxProvider = boxOf(boxKey);
+      coordinator
+        ..subGridDynamic = true
+        ..nestHoverDelay = const Duration(milliseconds: 100)
+        ..register(sourceTarget, depth: 0)
+        ..register(destTarget, depth: 0);
 
-          coordinator
-            ..subGridDynamic = true
-            ..onNestedGridRequested = (h, d, c) => fail('must not arm on a host item')
-            ..register(sourceTarget, depth: 0)
-            ..register(destTarget, depth: 0)
-          // 'leaf' already hosts a grid via the link map.
-            ..linkChildGrid(parent: other, parentItemId: 'leaf', child: childOfLeaf);
+      final abandoned = <(String, DashboardController)>[];
+      coordinator
+        ..onNestedGridRequested = (h, d, c) {}
+        ..onNestedGridRequestAbandoned = (host, grid) => abandoned.add((host.id, grid));
 
-          destTarget.hoverItem = const LayoutItem(id: 'leaf', x: 0, y: 0, w: 2, h: 2);
+      const leaf = LayoutItem(id: 'leaf', x: 0, y: 0, w: 2, h: 2);
+      destTarget.hoverItem = leaf;
 
-          coordinator.beginSession(
-            source: sourceTarget,
-            item: origin.layout.value.first,
-            globalPosition: const Offset(50, 50),
-            grabOffset: Offset.zero,
-            itemPixelSize: const Size(10, 10),
-            overlayContext: boxKey.currentContext!,
-            proxyChild: const SizedBox(),
-          );
-          await tester.pump(); // settle the proxy overlay insert
+      coordinator
+        ..beginSession(
+          source: sourceTarget,
+          item: origin.layout.value.first,
+          globalPosition: const Offset(50, 50),
+          grabOffset: Offset.zero,
+          itemPixelSize: const Size(10, 10),
+          overlayContext: boxKey.currentContext!,
+          proxyChild: const SizedBox(),
+        )
+        ..updateSession(const Offset(50, 50));
+      await tester.pump(const Duration(milliseconds: 150)); // request fires
 
-          // Sanity probe: the dest grid must be resolvable at this point. If this
-          // fails, the problem is targetAt/geometry, not the subGridDynamic logic.
-          expect(
-            coordinator.targetAt(const Offset(50, 50))?.target,
-            same(destTarget),
-            reason: 'targetAt must resolve the dest grid before the dynamic check',
-          );
+      // Drop into the dest grid itself (NOT a child of 'leaf'): abandoned.
+      destTarget.hoverItem = null;
+      coordinator.updateSession(const Offset(80, 80));
+      destTarget.dropResult = const LayoutItem(id: 'x1', x: 3, y: 3, w: 1, h: 1);
+      final placed = coordinator.dropSession(const Offset(80, 80));
+      expect(placed, isNotNull);
+      expect(abandoned, [('leaf', other)]);
 
-          coordinator.updateSession(const Offset(50, 50));
+      coordinator
+        ..unregister(sourceTarget)
+        ..unregister(destTarget);
+    });
 
-          // Not hostable: no highlight, and the placeholder path runs instead.
-          expect(destTarget.highlight, isNull);
-          expect(destTarget.overCalls, greaterThan(0));
+    testWidgets(
+        'a fired request is NOT abandoned when the drop lands in the '
+        "requested host's child grid", (tester) async {
+      final boxKey = GlobalKey();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Align(
+            alignment: Alignment.topLeft,
+            child: SizedBox(key: boxKey, width: 200, height: 200),
+          ),
+        ),
+      );
 
-          coordinator.cancelSession();
-          coordinator
-            ..unregister(sourceTarget)
-            ..unregister(destTarget);
-        });*/
+      final sourceTarget = _FakeTarget(origin);
+      final destTarget = _FakeTarget(other)..boxProvider = boxOf(boxKey);
+      final childCtrl = DashboardController(initialSlotCount: 2)..setEditMode(true);
+      addTearDown(childCtrl.dispose);
+
+      coordinator
+        ..subGridDynamic = true
+        ..nestHoverDelay = const Duration(milliseconds: 100)
+        ..register(sourceTarget, depth: 0)
+        ..register(destTarget, depth: 0);
+
+      final abandoned = <String>[];
+      final moved = <(String, DashboardController)>[];
+      coordinator
+        ..onNestedGridRequested = (h, d, c) {}
+        ..onNestedGridRequestAbandoned = (host, grid) => abandoned.add(host.id);
+      coordinator.onItemMovedToGrid = (item, from, to) => moved.add((item.id, to));
+
+      const leaf = LayoutItem(id: 'leaf', x: 0, y: 0, w: 2, h: 2);
+      destTarget.hoverItem = leaf;
+
+      coordinator
+        ..beginSession(
+          source: sourceTarget,
+          item: origin.layout.value.first,
+          globalPosition: const Offset(50, 50),
+          grabOffset: Offset.zero,
+          itemPixelSize: const Size(10, 10),
+          overlayContext: boxKey.currentContext!,
+          proxyChild: const SizedBox(),
+        )
+        ..updateSession(const Offset(50, 50));
+      await tester.pump(const Duration(milliseconds: 150)); // request fires
+
+      // App-side conversion: 'leaf' now hosts childCtrl, whose grid overlays
+      // the same box one level deeper — the natural handoff resolves it.
+      final childTarget = _FakeTarget(childCtrl)..boxProvider = boxOf(boxKey);
+      coordinator
+        ..linkChildGrid(parent: other, parentItemId: 'leaf', child: childCtrl)
+        ..register(childTarget, depth: 1)
+        ..updateSession(const Offset(50, 50)); // hands over to child
+      childTarget.dropResult = const LayoutItem(id: 'x1', x: 0, y: 0, w: 1, h: 1);
+      final placed = coordinator.dropSession(const Offset(50, 50));
+
+      expect(placed, isNotNull);
+      expect(
+        abandoned,
+        isEmpty,
+        reason: 'landing in the requested child grid confirms the request',
+      );
+      expect(moved.single.$1, 'x1');
+      expect(identical(moved.single.$2, childCtrl), isTrue);
+
+      coordinator
+        ..unregister(sourceTarget)
+        ..unregister(destTarget)
+        ..unregister(childTarget);
+    });
+
+    testWidgets('a fired request is abandoned when the session is canceled', (tester) async {
+      final boxKey = GlobalKey();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Align(
+            alignment: Alignment.topLeft,
+            child: SizedBox(key: boxKey, width: 200, height: 200),
+          ),
+        ),
+      );
+
+      final sourceTarget = _FakeTarget(origin);
+      final destTarget = _FakeTarget(other)..boxProvider = boxOf(boxKey);
+      coordinator
+        ..subGridDynamic = true
+        ..nestHoverDelay = const Duration(milliseconds: 100)
+        ..register(sourceTarget, depth: 0)
+        ..register(destTarget, depth: 0);
+
+      final abandoned = <String>[];
+      coordinator
+        ..onNestedGridRequested = (h, d, c) {}
+        ..onNestedGridRequestAbandoned = (host, grid) => abandoned.add(host.id);
+
+      destTarget.hoverItem = const LayoutItem(id: 'leaf', x: 0, y: 0, w: 2, h: 2);
+
+      coordinator
+        ..beginSession(
+          source: sourceTarget,
+          item: origin.layout.value.first,
+          globalPosition: const Offset(50, 50),
+          grabOffset: Offset.zero,
+          itemPixelSize: const Size(10, 10),
+          overlayContext: boxKey.currentContext!,
+          proxyChild: const SizedBox(),
+        )
+        ..updateSession(const Offset(50, 50));
+      await tester.pump(const Duration(milliseconds: 150)); // request fires
+
+      coordinator.cancelSession();
+      expect(abandoned, ['leaf']);
+
+      coordinator
+        ..unregister(sourceTarget)
+        ..unregister(destTarget);
+    });
+
+    testWidgets('subGridDynamic does not arm on an item that already hosts a grid', (tester) async {
+      final boxKey = GlobalKey();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Align(
+            alignment: Alignment.topLeft,
+            child: SizedBox(key: boxKey, width: 200, height: 200),
+          ),
+        ),
+      );
+
+      final sourceTarget = _FakeTarget(origin);
+      final destTarget = _FakeTarget(other)..boxProvider = boxOf(boxKey);
+      final childOfLeaf = DashboardController(initialSlotCount: 2);
+      addTearDown(childOfLeaf.dispose);
+
+      // The request callback is assigned as a plain statement, NEVER as a
+      // `..cb = (…) => …` cascade section followed by more `..` sections:
+      // that shape is a grammar trap — after a merge/reformat the trailing
+      // sections can end up parsed as a cascade on the lambda BODY. With
+      // fail() the trap is silent: it returns `Never`, which statically
+      // accepts any member, so the swallowed register() calls compile fine
+      // and simply never run (targetAt then returns null).
+      var fired = 0;
+      coordinator.onNestedGridRequested = (h, d, c) => fired++;
+      coordinator
+        ..subGridDynamic = true
+        ..register(sourceTarget, depth: 0)
+        ..register(destTarget, depth: 0)
+        // 'leaf' already hosts a grid via the link map.
+        ..linkChildGrid(parent: other, parentItemId: 'leaf', child: childOfLeaf);
+
+      destTarget.hoverItem = const LayoutItem(id: 'leaf', x: 0, y: 0, w: 2, h: 2);
+
+      coordinator.beginSession(
+        source: sourceTarget,
+        item: origin.layout.value.first,
+        globalPosition: const Offset(50, 50),
+        grabOffset: Offset.zero,
+        itemPixelSize: const Size(10, 10),
+        overlayContext: boxKey.currentContext!,
+        proxyChild: const SizedBox(),
+      );
+      await tester.pump(); // settle the proxy overlay insert
+
+      // Split diagnostic: registration mechanics first, geometry second. If
+      // the first probe fails, register() never ran (see the grammar-trap
+      // note above); if only the second fails, it is targetAt/geometry.
+      expect(
+        coordinator.registrationOf(other),
+        isNotNull,
+        reason: 'destTarget must be registered before the probe',
+      );
+      expect(
+        coordinator.targetAt(const Offset(50, 50))?.target,
+        same(destTarget),
+        reason: 'targetAt must resolve the dest grid before the dynamic check '
+            '(box attached: '
+            '${boxKey.currentContext?.findRenderObject()?.attached})',
+      );
+
+      coordinator.updateSession(const Offset(50, 50));
+
+      // Not hostable: no highlight, and the placeholder path runs instead.
+      expect(destTarget.highlight, isNull);
+      expect(destTarget.overCalls, greaterThan(0));
+      expect(fired, 0, reason: 'must not arm on a host item');
+
+      // Outlive the default nestHoverDelay (600ms): nothing may fire late.
+      await tester.pump(const Duration(milliseconds: 700));
+      expect(fired, 0, reason: 'must not arm on a host item (late timer)');
+
+      coordinator
+        ..cancelSession()
+        ..unregister(sourceTarget)
+        ..unregister(destTarget);
+    });
 
     testWidgets('dragging a host item is rejected by a depth-limited target', (tester) async {
       final boxKey = GlobalKey();
@@ -495,7 +694,6 @@ void main() {
           ),
         ),
       );
-      final box = boxKey.currentContext!.findRenderObject()! as RenderBox;
 
       final hostOrigin = DashboardController(
         initialSlotCount: 4,
@@ -506,7 +704,7 @@ void main() {
       addTearDown(hostOrigin.dispose);
 
       final sourceTarget = _FakeTarget(hostOrigin);
-      final destTarget = _FakeTarget(other)..box = box;
+      final destTarget = _FakeTarget(other)..boxProvider = boxOf(boxKey);
       coordinator
         ..maxNestingDepth = 1
         ..register(sourceTarget, depth: 0)
@@ -542,10 +740,9 @@ void main() {
           ),
         ),
       );
-      final box = boxKey.currentContext!.findRenderObject()! as RenderBox;
 
       final t = _FakeTarget(other)
-        ..box = box
+        ..boxProvider = boxOf(boxKey)
         ..accept = false;
       coordinator.register(t, depth: 0);
 

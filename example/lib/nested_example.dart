@@ -13,6 +13,8 @@ import 'package:sliver_dashboard/sliver_dashboard.dart';
 ///  * `subGridDynamic`: hover a plain leaf with a dragged item to turn it
 ///    into a brand-new nested grid on the fly;
 ///  * save / load of the whole tree, with the JSON shown in the panel.
+///
+/// Run with: flutter run -t lib/nested_example.dart
 void main() => runApp(const NestedExampleApp());
 
 class NestedExampleApp extends StatelessWidget {
@@ -41,7 +43,7 @@ class _Palette {
   static const hostHeader = Color(0xFFF59E0B); // amber 500
   static const nestedTile = Color(0xFFFB923C); // orange 400
   static const leafTile = Color(0xFF4ADE80); // green 400
-  static const dynamicHostTile = Color(0xFF67E8F9); // cyan 300
+  static const dynamicHostTile = Color(0xFF67E8F9); // cyan 300 (was a leaf)
   static const onTile = Color(0xFF1F2937); // slate 800 — readable on pastels
 }
 
@@ -87,6 +89,9 @@ class _NestedExamplePageState extends State<NestedExamplePage> {
   final isEditing = ValueNotifier<bool>(true);
   final sizeToContent = ValueNotifier<bool>(true);
   final subGridDynamic = ValueNotifier<bool>(false);
+
+  /// Same-grid variant: pause the pointer mid-drag over a sibling leaf.
+  final subGridDynamicSameGrid = ValueNotifier<bool>(false);
   final compactionType = ValueNotifier<CompactType>(CompactType.vertical);
 
   List<Map<String, dynamic>>? _savedTree;
@@ -96,6 +101,7 @@ class _NestedExamplePageState extends State<NestedExamplePage> {
     isEditing.dispose();
     sizeToContent.dispose();
     subGridDynamic.dispose();
+    subGridDynamicSameGrid.dispose();
     compactionType.dispose();
     jsonController.dispose();
     maxDepthController.dispose();
@@ -161,17 +167,36 @@ class _NestedExamplePageState extends State<NestedExamplePage> {
     _dynamicChildren[host.id] = child;
 
     // Flag the host so the builder swaps its content to a NestedDashboard.
+    // A metadata-only change, so recompact:false keeps the other items put.
     hostGrid.updateItem(
       host.id,
       (i) => i.copyWith(hasNestedGrid: true),
       recompact: false,
     );
     setState(() {});
+    // No programmatic move: the held drag hands itself over to the freshly
+    // mounted child grid (next pointer move or the release itself), through
+    // the regular cross-grid session. A programmatic move here would even be
+    // harmful in the same-grid flow: the dragged item is still present in
+    // hostGrid, so moving it mid-drag would duplicate its id across grids.
+  }
 
-    // Let the flagged host mount its NestedDashboard, then move the item in.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      coordinator.moveItemToGrid(from: hostGrid, to: child, itemId: dragged.id);
-    });
+  /// A request fired but the drag ended without dropping into the host's
+  /// child grid: revert the speculative conversion (issue: without this,
+  /// every armed-but-unused leaf stays converted as an empty nested grid).
+  void _onNestedGridAbandoned(LayoutItem host, DashboardController hostGrid) {
+    final child = _dynamicChildren.remove(host.id);
+    if (child == null) return; // not one of our dynamic conversions
+
+    coordinator.unlinkChildGrid(child);
+    hostGrid.updateItem(
+      host.id,
+      (i) => i.copyWith(hasNestedGrid: false),
+      recompact: false,
+    );
+    // The NestedDashboard for this host may still be mounted this frame.
+    WidgetsBinding.instance.addPostFrameCallback((_) => child.dispose());
+    setState(() {});
   }
 
   void _saveTree() {
@@ -248,7 +273,7 @@ class _NestedExamplePageState extends State<NestedExamplePage> {
                   controller: child,
                   parentItemId: item.id,
                   sizeToContent: stc,
-                  chromeExtent: 40,
+                  chromeExtent: 40, // the header above
                   itemBuilder: (context, leaf) =>
                       _tile(leaf, _Palette.nestedTile),
                 ),
@@ -264,8 +289,10 @@ class _NestedExamplePageState extends State<NestedExamplePage> {
     return DashboardNestedScope(
       coordinator: coordinator,
       subGridDynamic: subGridDynamic.value,
+      subGridDynamicSameGrid: subGridDynamicSameGrid.value,
       maxNestingDepth: maxNestingDepth.value,
       onNestedGridRequested: _onNestedGridRequested,
+      onNestedGridRequestAbandoned: _onNestedGridAbandoned,
       onItemMovedToGrid: (item, from, to) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -307,6 +334,7 @@ class _NestedExamplePageState extends State<NestedExamplePage> {
       isEditing: isEditing,
       sizeToContent: sizeToContent,
       subGridDynamic: subGridDynamic,
+      subGridDynamicSameGrid: subGridDynamicSameGrid,
       compactionType: compactionType,
       maxNestingDepth: maxNestingDepth,
       maxDepthController: maxDepthController,
@@ -340,8 +368,14 @@ class _NestedExamplePageState extends State<NestedExamplePage> {
       body: Row(
         children: [
           Expanded(
+            // subGridDynamic and maxNestingDepth are read in _buildDashboard():
+            // rebuild when either changes.
             child: ListenableBuilder(
-              listenable: Listenable.merge([subGridDynamic, maxNestingDepth]),
+              listenable: Listenable.merge([
+                subGridDynamic,
+                subGridDynamicSameGrid,
+                maxNestingDepth,
+              ]),
               builder: (context, _) => _buildDashboard(),
             ),
           ),
@@ -364,6 +398,7 @@ class _ConfigPanel extends StatelessWidget {
     required this.isEditing,
     required this.sizeToContent,
     required this.subGridDynamic,
+    required this.subGridDynamicSameGrid,
     required this.compactionType,
     required this.maxNestingDepth,
     required this.maxDepthController,
@@ -379,6 +414,7 @@ class _ConfigPanel extends StatelessWidget {
   final ValueNotifier<bool> isEditing;
   final ValueNotifier<bool> sizeToContent;
   final ValueNotifier<bool> subGridDynamic;
+  final ValueNotifier<bool> subGridDynamicSameGrid;
   final ValueNotifier<CompactType> compactionType;
   final ValueNotifier<int?> maxNestingDepth;
   final TextEditingController maxDepthController;
@@ -424,6 +460,10 @@ class _ConfigPanel extends StatelessWidget {
           _SwitchTile(
             title: 'subGridDynamic (hover a leaf to nest it)',
             notifier: subGridDynamic,
+          ),
+          _SwitchTile(
+            title: 'subGridDynamicSameGrid (pause mid-drag over a sibling)',
+            notifier: subGridDynamicSameGrid,
           ),
           const SizedBox(height: 8),
           ValueListenableBuilder<int?>(
