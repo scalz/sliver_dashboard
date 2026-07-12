@@ -148,6 +148,7 @@ class DashboardNestedCoordinator {
     this.subGridDynamic = false,
     this.nestHoverDelay = const Duration(milliseconds: 600),
     this.probe = CrossGridProbe.pointer,
+    this.maxNestingDepth,
   });
 
   /// Fired after a successful cross-grid move (drag & drop or programmatic).
@@ -166,6 +167,24 @@ class DashboardNestedCoordinator {
 
   /// Which point decides the grid under a cross-grid drag (see [CrossGridProbe]).
   CrossGridProbe probe;
+
+  /// Maximum number of nesting levels allowed, or null (default) for no limit.
+  ///
+  /// Depth is counted from the root grid, which is level 0. A value of `1`
+  /// therefore lets the root host nested grids but stops those from hosting
+  /// further grids; `0` disables nesting entirely. When a limit is set, a grid
+  /// already at (or beyond) `maxNestingDepth` levels deep is not offered as a
+  /// drop target for cross-grid drags, and `subGridDynamic` will not arm on
+  /// its items — so users cannot create grids deeper than the limit. Programmatic
+  /// [moveItemToGrid] is not constrained (the caller is explicit).
+  int? maxNestingDepth;
+
+  /// Whether a grid at [depth] (root = 0) may host a nested grid one level
+  /// deeper, given [maxNestingDepth]. Always true when no limit is set.
+  ///
+  /// Useful from `onNestedGridRequested` or a custom builder to mirror the
+  /// coordinator's own limit (e.g. to hide an "add sub-grid" affordance).
+  bool canHostAtDepth(int depth) => maxNestingDepth == null || depth < maxNestingDepth!;
 
   /// The probe point for the active session at pointer [globalPosition]:
   /// the pointer itself, or the dragged tile's visual center.
@@ -411,7 +430,14 @@ class DashboardNestedCoordinator {
       itemPixelSize: session.itemPixelSize,
     );
 
-    final reg = targetAt(probePoint);
+    var reg = targetAt(probePoint);
+    // Depth limit: dropping a *host* item (one that carries its own nested
+    // grid) into a target adds a level below that target. Reject targets that
+    // are already at the maximum nesting depth for such items. A plain leaf
+    // move adds no level, so it is never blocked here.
+    if (reg != null && session.item.hasNestedGrid && !canHostAtDepth(reg.depth)) {
+      reg = null;
+    }
     final newTarget = reg?.target;
     final oldTarget = session.over;
 
@@ -426,16 +452,18 @@ class DashboardNestedCoordinator {
     // subGridDynamic: hovering a plain item (that hosts no grid yet) freezes
     // the placeholder and arms the nested-grid request after [nestHoverDelay].
     if (subGridDynamic && onNestedGridRequested != null) {
+      final overReg = registrationOf(over.controller);
       final host = over.itemAtGlobal(probePoint, excludeId: session.item.id);
-      // An item is a candidate for dynamic nesting only if it is dynamic and
-      // does not already host a grid — checked both via the live link map and
-      // via the declarative [LayoutItem.hasNestedGrid] flag, which also
-      // covers hosts whose grid was never linked in this session.
+      // An item is a candidate for dynamic nesting only if it is dynamic, does
+      // not already host a grid (checked via the live link map and the
+      // declarative [LayoutItem.hasNestedGrid] flag), and its grid may host one
+      // more level (see [maxNestingDepth]).
       final hostable = host != null &&
           !host.isStatic &&
           !host.isSectionBarrier &&
           !host.hasNestedGrid &&
-          !hasChildGrid(over.controller, host.id);
+          !hasChildGrid(over.controller, host.id) &&
+          (overReg == null || canHostAtDepth(overReg.depth));
       if (hostable) {
         if (session.nestHoverId != host.id) {
           _clearNestHover(session);
@@ -664,6 +692,7 @@ class DashboardNestedScope extends StatefulWidget {
     this.subGridDynamic = false,
     this.nestHoverDelay = const Duration(milliseconds: 600),
     this.probe = CrossGridProbe.pointer,
+    this.maxNestingDepth,
   });
 
   /// The subtree containing the dashboards.
@@ -689,6 +718,12 @@ class DashboardNestedScope extends StatefulWidget {
   /// Which point decides the grid under a cross-grid drag
   /// (pointer — default — or the dragged tile's center).
   final CrossGridProbe probe;
+
+  /// Maximum nesting depth, or null (default) for no limit.
+  ///
+  /// The root grid is level 0. `1` allows one level of nesting; `0` disables
+  /// nesting. See [DashboardNestedCoordinator.maxNestingDepth].
+  final int? maxNestingDepth;
 
   /// The coordinator of the nearest enclosing scope, or null.
   static DashboardNestedCoordinator? maybeOf(BuildContext context) =>
@@ -722,7 +757,8 @@ class _DashboardNestedScopeState extends State<DashboardNestedScope> {
       ..onNestedGridRequested = widget.onNestedGridRequested
       ..subGridDynamic = widget.subGridDynamic
       ..nestHoverDelay = widget.nestHoverDelay
-      ..probe = widget.probe;
+      ..probe = widget.probe
+      ..maxNestingDepth = widget.maxNestingDepth;
   }
 
   @override

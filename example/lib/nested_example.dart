@@ -79,6 +79,10 @@ class _NestedExamplePageState extends State<NestedExamplePage> {
   final Map<String, DashboardController> _dynamicChildren = {};
 
   final jsonController = TextEditingController();
+  final maxDepthController = TextEditingController();
+
+  /// null = unlimited nesting.
+  final maxNestingDepth = ValueNotifier<int?>(null);
 
   final isEditing = ValueNotifier<bool>(true);
   final sizeToContent = ValueNotifier<bool>(true);
@@ -94,6 +98,8 @@ class _NestedExamplePageState extends State<NestedExamplePage> {
     subGridDynamic.dispose();
     compactionType.dispose();
     jsonController.dispose();
+    maxDepthController.dispose();
+    maxNestingDepth.dispose();
     coordinator.dispose();
     root.dispose();
     group.dispose();
@@ -113,6 +119,24 @@ class _NestedExamplePageState extends State<NestedExamplePage> {
     for (final c in _allControllers) {
       c.setEditMode(isEditing.value);
     }
+  }
+
+  /// Parses the depth text field. Empty/invalid -> unlimited (null); clamps
+  /// negatives to 0. Applied on submit so partial typing never fights the user.
+  void _setMaxDepthFromText(String raw) {
+    final text = raw.trim();
+    if (text.isEmpty) {
+      maxNestingDepth.value = null;
+      return;
+    }
+    final parsed = int.tryParse(text);
+    if (parsed == null) {
+      // Invalid entry: reset to unlimited and clear the field.
+      maxNestingDepth.value = null;
+      maxDepthController.clear();
+      return;
+    }
+    maxNestingDepth.value = parsed < 0 ? 0 : parsed;
   }
 
   void _applyCompactType() {
@@ -137,11 +161,11 @@ class _NestedExamplePageState extends State<NestedExamplePage> {
     _dynamicChildren[host.id] = child;
 
     // Flag the host so the builder swaps its content to a NestedDashboard.
-    hostGrid.layout.value = [
-      for (final i in hostGrid.layout.value)
-        if (i.id == host.id) i.copyWith(hasNestedGrid: true) else i,
-    ];
-    hostGrid.updateItem(host.id, (i) => i.copyWith(hasNestedGrid: true));
+    hostGrid.updateItem(
+      host.id,
+      (i) => i.copyWith(hasNestedGrid: true),
+      recompact: false,
+    );
     setState(() {});
 
     // Let the flagged host mount its NestedDashboard, then move the item in.
@@ -240,6 +264,7 @@ class _NestedExamplePageState extends State<NestedExamplePage> {
     return DashboardNestedScope(
       coordinator: coordinator,
       subGridDynamic: subGridDynamic.value,
+      maxNestingDepth: maxNestingDepth.value,
       onNestedGridRequested: _onNestedGridRequested,
       onItemMovedToGrid: (item, from, to) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -283,6 +308,9 @@ class _NestedExamplePageState extends State<NestedExamplePage> {
       sizeToContent: sizeToContent,
       subGridDynamic: subGridDynamic,
       compactionType: compactionType,
+      maxNestingDepth: maxNestingDepth,
+      maxDepthController: maxDepthController,
+      onMaxDepthSubmitted: _setMaxDepthFromText,
       jsonController: jsonController,
       canRestore: _savedTree != null,
       onEditModeChanged: _applyEditMode,
@@ -312,9 +340,9 @@ class _NestedExamplePageState extends State<NestedExamplePage> {
       body: Row(
         children: [
           Expanded(
-            child: ValueListenableBuilder<bool>(
-              valueListenable: subGridDynamic,
-              builder: (context, _, _) => _buildDashboard(),
+            child: ListenableBuilder(
+              listenable: Listenable.merge([subGridDynamic, maxNestingDepth]),
+              builder: (context, _) => _buildDashboard(),
             ),
           ),
           if (isDesktop)
@@ -337,6 +365,9 @@ class _ConfigPanel extends StatelessWidget {
     required this.sizeToContent,
     required this.subGridDynamic,
     required this.compactionType,
+    required this.maxNestingDepth,
+    required this.maxDepthController,
+    required this.onMaxDepthSubmitted,
     required this.jsonController,
     required this.canRestore,
     required this.onEditModeChanged,
@@ -349,6 +380,9 @@ class _ConfigPanel extends StatelessWidget {
   final ValueNotifier<bool> sizeToContent;
   final ValueNotifier<bool> subGridDynamic;
   final ValueNotifier<CompactType> compactionType;
+  final ValueNotifier<int?> maxNestingDepth;
+  final TextEditingController maxDepthController;
+  final ValueChanged<String> onMaxDepthSubmitted;
   final TextEditingController jsonController;
   final bool canRestore;
   final VoidCallback onEditModeChanged;
@@ -390,6 +424,25 @@ class _ConfigPanel extends StatelessWidget {
           _SwitchTile(
             title: 'subGridDynamic (hover a leaf to nest it)',
             notifier: subGridDynamic,
+          ),
+          const SizedBox(height: 8),
+          ValueListenableBuilder<int?>(
+            valueListenable: maxNestingDepth,
+            builder: (context, depth, _) {
+              return TextField(
+                controller: maxDepthController,
+                keyboardType: TextInputType.number,
+                onSubmitted: onMaxDepthSubmitted,
+                decoration: InputDecoration(
+                  isDense: true,
+                  border: const OutlineInputBorder(),
+                  labelText: 'maxNestingDepth',
+                  helperText: depth == null
+                      ? 'empty = unlimited · 0 = off · 1 = one level'
+                      : 'limit: $depth level(s) — press Enter to apply',
+                ),
+              );
+            },
           ),
 
           const SizedBox(height: 10),
