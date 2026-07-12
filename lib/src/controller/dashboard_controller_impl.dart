@@ -155,12 +155,6 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
   int? _lastResizeX;
   int? _lastResizeY;
 
-  // Per-drag cached invariants (computed once in onDragStart)
-  LayoutItem? _dragPivotOriginal;
-  List<LayoutItem> _dragClusterItems = const [];
-  LayoutItem? _dragOriginalBBox;
-  LayoutItem? _lastMovedPivot;
-
   // --- PUBLIC METHODS IMPLEMENTATION ---
 
   @override
@@ -359,6 +353,67 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
   }
 
   @override
+  void updateItem(
+    String itemId,
+    LayoutItem Function(LayoutItem item) transform, {
+    bool recompact = true,
+  }) {
+    final current = layout.value;
+
+    // Locate the target once. No-op on unknown id (robustness guarantee).
+    LayoutItem? original;
+    for (final i in current) {
+      if (i.id == itemId) {
+        original = i;
+        break;
+      }
+    }
+    if (original == null) return;
+
+    var updated = transform(original);
+
+    // Enforce id identity: a transform must not repoint the item to a new id
+    // (it would silently create a duplicate or orphan). In debug this is a
+    // hard error; in release we defensively restore the id so the layout
+    // cannot be corrupted by misuse.
+    assert(
+      updated.id == itemId,
+      'updateItem: transform must not change the item id '
+      '(expected "$itemId", got "${updated.id}").',
+    );
+    if (updated.id != itemId) {
+      updated = updated.copyWith(id: itemId);
+    }
+
+    // Nothing changed: no mutation, no event (robustness guarantee).
+    if (updated == original) return;
+
+    // Correct bounds so a transform returning invalid geometry (w/h < 1, or an
+    // out-of-grid position) cannot corrupt the cascade. correctBounds also
+    // re-clamps against the current column count.
+    final candidate = [
+      for (final i in current)
+        if (i.id == itemId) updated else i,
+    ];
+    final corrected = engine.correctBounds(candidate, slotCount.value);
+
+    final List<LayoutItem> resolved;
+    if (recompact) {
+      // Size/position may have changed: run the full strategy.
+      resolved = compactionType.value == engine.CompactType.none
+          ? _compactor.resolveCollisions(corrected, slotCount.value)
+          : _compactor.compact(corrected, slotCount.value);
+    } else {
+      // Metadata-only change: don't pull items back, only clear any overlap
+      // the change might have introduced (usually none for a flag/title).
+      resolved = _compactor.resolveCollisions(corrected, slotCount.value);
+    }
+
+    layout.value = resolved;
+    onLayoutChanged?.call(layout.value, slotCount.value);
+  }
+
+  @override
   void toggleSelection(String itemId, {bool multi = false}) {
     final currentSet = selectedItemIds.value.toSet();
     if (multi) {
@@ -413,6 +468,7 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
   @override
   void dispose() {
     _scrollToItemController.close().ignore();
+    hoveredNestTargetId.dispose();
     super.dispose();
   }
 
@@ -554,6 +610,202 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
 
     onLayoutChanged?.call(layout.value, slotCount.value);
   }
+
+  /// Call when a drag gesture starts on a dashboard item.
+  // ===========================================================================
+  // Nested grids / cross-grid drag & drop (v2)
+  // ===========================================================================
+
+  /// The item currently highlighted as a dynamic nested-grid host
+  /// (`subGridDynamic` hover). Watched by the item shells for the visual ring;
+  /// the heavy item content behind its RepaintBoundary never rebuilds.
+  late final hoveredNestTargetId = B.writable<String?>(null);
+
+  /// Sets or clears the nested-grid hover highlight.
+  void setNestTargetHover(String? itemId) {
+    if (hoveredNestTargetId.peek() == itemId) return;
+    hoveredNestTargetId.value = itemId;
+  }
+
+  // Snapshot of the pre-drag layout taken when a cross-grid exit begins,
+  // used to restore this grid if the drop is canceled or lands nowhere.
+  List<LayoutItem>? _crossGridExitSnapshot;
+
+  /// Whether a cross-grid temporary removal is pending resolution.
+  bool get hasPendingCrossGridExit => _crossGridExitSnapshot != null;
+
+  /// The pre-push layout snapshot to use for hover/hit detection while a
+  /// foreign placeholder is active, or null when no placeholder is active.
+  ///
+  /// While an external/cross-grid placeholder is shown, the live [layout] is
+  /// continuously reshuffled by collision pushes, which makes "what is under
+  /// the cursor" unstable. This exposes the frozen [originalLayoutOnStart]
+  /// snapshot for that purpose without leaking the test-only beacons.
+  List<LayoutItem>? get placeholderHitTestSnapshot {
+    if (placeholder.value == null) return null;
+    final snapshot = originalLayoutOnStart.peek();
+    return snapshot.isEmpty ? null : snapshot;
+  }
+
+  /// Temporarily removes [itemIds] from this grid because they are being
+  /// dragged over another grid.
+  ///
+  /// The removal is *silent*: `onLayoutChanged` is deliberately not fired —
+  /// the move is not committed until [finishCrossGridExit]. The internal drag
+  /// state is reset without the usual drop compaction/event.
+  ///
+  /// Returns the removed items with their pre-drag geometry (from the
+  /// drag-start snapshot when available), so the receiving grid gets clean
+  /// coordinates and constraints.
+  List<LayoutItem> beginCrossGridExit(Set<String> itemIds) {
+    if (_crossGridExitSnapshot != null) return const [];
+    final current = layout.value;
+    final base = originalLayoutOnStart.peek().isNotEmpty ? originalLayoutOnStart.peek() : current;
+    final removed = base.where((i) => itemIds.contains(i.id)).toList();
+    if (removed.isEmpty) return const [];
+
+    _crossGridExitSnapshot = List<LayoutItem>.from(base);
+
+    // Silently terminate the in-grid drag: no compaction event, no
+    // onLayoutChanged — the gesture is still in flight.
+    _isDraggingState.value = false;
+    _pivotItemId = null;
+    originalLayoutOnStart.value = [];
+    dragOffset.value = Offset.zero;
+    _dragPivotOriginal = null;
+    _dragClusterItems = const [];
+    _dragOriginalBBox = null;
+    _lastMovedPivot = null;
+    clearSelection();
+
+    final remaining = base.where((i) => !itemIds.contains(i.id)).toList();
+    layout.value = compactionType.value == engine.CompactType.none
+        ? _compactor.resolveCollisions(remaining, slotCount.value)
+        : _compactor.compact(remaining, slotCount.value);
+    return removed;
+  }
+
+  /// Resolves a pending cross-grid exit (see [beginCrossGridExit]).
+  ///
+  /// * [CrossGridExitOutcome.movedAway] — the item landed in another grid:
+  ///   the removal becomes definitive and `onLayoutChanged` fires once.
+  /// * [CrossGridExitOutcome.returned] — the item was dropped back into this
+  ///   grid via the external-drop path, which already emitted the final
+  ///   layout: the snapshot is discarded silently.
+  /// * [CrossGridExitOutcome.canceled] — the drop failed: the pre-drag layout
+  ///   is restored silently, exactly like [cancelInteraction].
+  void finishCrossGridExit({required CrossGridExitOutcome outcome}) {
+    final snapshot = _crossGridExitSnapshot;
+    if (snapshot == null) return;
+    _crossGridExitSnapshot = null;
+    switch (outcome) {
+      case CrossGridExitOutcome.movedAway:
+        onLayoutChanged?.call(layout.value, slotCount.value);
+      case CrossGridExitOutcome.returned:
+        break;
+      case CrossGridExitOutcome.canceled:
+        layout.value = snapshot;
+    }
+  }
+
+  /// Finalizes a drop from another grid (or any caller holding a full
+  /// [LayoutItem]), preserving the template's id, constraints and flags —
+  /// unlike [onDropExternal], which only receives an id.
+  ///
+  /// Returns the placed item, or null when no placeholder is active.
+  LayoutItem? onDropExternalItem({required LayoutItem template}) {
+    final currentPlaceholder = placeholder.value;
+    if (currentPlaceholder == null) return null;
+
+    final finalPlaceholderPos =
+        layout.value.firstWhereOrNull((e) => e.id == '__placeholder__') ?? currentPlaceholder;
+
+    final newItem = template.copyWith(
+      x: finalPlaceholderPos.x,
+      y: finalPlaceholderPos.y,
+      w: finalPlaceholderPos.w,
+      h: finalPlaceholderPos.h,
+      moved: false,
+    );
+
+    final finalLayout = layout.value.map((item) {
+      if (item.id == '__placeholder__') return newItem;
+      return item;
+    }).toList();
+
+    layout.value = _compactor.compact(
+      finalLayout,
+      slotCount.value,
+      allowOverlap: false,
+    );
+
+    placeholder.value = null;
+    originalLayoutOnStart.value = [];
+
+    onLayoutChanged?.call(layout.value, slotCount.value);
+    var placed = newItem;
+    for (final i in layout.value) {
+      if (i.id == newItem.id) {
+        placed = i;
+        break;
+      }
+    }
+    return placed;
+  }
+
+  /// Programmatically resizes [itemId] to [w] x [h] slots (either may be
+  /// null to keep the current value), clamped to the item's min/max
+  /// constraints, then re-runs the current compaction strategy.
+  ///
+  /// Used by `NestedDashboard.sizeToContent` to grow/shrink the host item.
+  /// Returns the updated item, or null when not found or unchanged.
+  LayoutItem? setItemSize(String itemId, {int? w, int? h}) {
+    final current = layout.value;
+    LayoutItem? item;
+    for (final i in current) {
+      if (i.id == itemId) {
+        item = i;
+        break;
+      }
+    }
+    if (item == null) return null;
+
+    var newW = w ?? item.w;
+    var newH = h ?? item.h;
+    final maxW = item.maxW.isFinite ? item.maxW.toInt() : slotCount.value;
+    final maxH = item.maxH.isFinite ? item.maxH.toInt() : 1 << 20;
+    newW = newW.clamp(item.minW, maxW < item.minW ? item.minW : maxW);
+    newH = newH.clamp(item.minH, maxH < item.minH ? item.minH : maxH);
+    if (scrollDirection.value == Axis.vertical) {
+      newW = newW.clamp(1, slotCount.value);
+    } else {
+      newH = newH.clamp(1, slotCount.value);
+    }
+    if (newW == item.w && newH == item.h) return item;
+
+    final resized = item.copyWith(w: newW, h: newH, moved: false);
+    final newLayout = [
+      for (final i in current)
+        if (i.id == itemId) resized else i,
+    ];
+    layout.value = compactionType.value == engine.CompactType.none
+        ? _compactor.resolveCollisions(newLayout, slotCount.value)
+        : _compactor.compact(newLayout, slotCount.value);
+    onLayoutChanged?.call(layout.value, slotCount.value);
+    for (final i in layout.value) {
+      if (i.id == itemId) return i;
+    }
+    return resized;
+  }
+
+  // --- Per-drag cached invariants (computed once in onDragStart) ---
+  // The original pivot, the cluster and its bounding box never change during
+  // a drag; recomputing them on every pointer event (~60Hz) costs three O(N)
+  // scans plus two list allocations per event at N=1000.
+  LayoutItem? _dragPivotOriginal;
+  List<LayoutItem> _dragClusterItems = const [];
+  LayoutItem? _dragOriginalBBox;
+  LayoutItem? _lastMovedPivot;
 
   /// Call when a drag gesture starts on a dashboard item.
   void onDragStart(String itemId) {
@@ -698,15 +950,14 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     layout.value = finalLayout;
     onLayoutChanged?.call(layout.value, slotCount.value);
 
-    _dragPivotOriginal = null;
-    _dragClusterItems = const [];
-    _dragOriginalBBox = null;
-    _lastMovedPivot = null;
-
     _isDraggingState.value = false;
     _pivotItemId = null;
     originalLayoutOnStart.value = [];
     dragOffset.value = Offset.zero;
+    _dragPivotOriginal = null;
+    _dragClusterItems = const [];
+    _dragOriginalBBox = null;
+    _lastMovedPivot = null;
   }
 
   /// Call when a resize gesture starts on a dashboard item.
@@ -849,16 +1100,15 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
 
     onLayoutChanged?.call(layout.value, slotCount.value);
 
-    _dragPivotOriginal = null;
-    _dragClusterItems = const [];
-    _dragOriginalBBox = null;
-    _lastMovedPivot = null;
-
     isResizing.value = false;
     _pivotItemId = null;
     activeItem.value = null;
     originalLayoutOnStart.value = [];
     dragOffset.value = Offset.zero;
+    _dragPivotOriginal = null;
+    _dragClusterItems = const [];
+    _dragOriginalBBox = null;
+    _lastMovedPivot = null;
   }
 
   @override
@@ -920,16 +1170,15 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
       layout.value = List.from(originalLayoutOnStart.value);
     }
 
-    _dragPivotOriginal = null;
-    _dragClusterItems = const [];
-    _dragOriginalBBox = null;
-    _lastMovedPivot = null;
-
     _isDraggingState.value = false;
     isResizing.value = false;
     _pivotItemId = null;
     originalLayoutOnStart.value = [];
     dragOffset.value = Offset.zero;
+    _dragPivotOriginal = null;
+    _dragClusterItems = const [];
+    _dragOriginalBBox = null;
+    _lastMovedPivot = null;
   }
 
   @override
@@ -989,4 +1238,17 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
 
     return completer.future;
   }
+}
+
+/// How a pending cross-grid temporary removal is resolved.
+/// See [DashboardControllerImpl.beginCrossGridExit].
+enum CrossGridExitOutcome {
+  /// The item was dropped into another grid: commit the removal.
+  movedAway,
+
+  /// The item came back into this grid through the external-drop path.
+  returned,
+
+  /// The drop failed: restore the pre-drag layout.
+  canceled,
 }

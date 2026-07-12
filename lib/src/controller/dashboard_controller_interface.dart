@@ -152,6 +152,34 @@ abstract class DashboardController {
   /// Removes multiple items from the dashboard by their IDs.
   void removeItems(List<String> itemIds);
 
+  /// Applies [transform] to the single item identified by [itemId], in place.
+  ///
+  /// This is the safe, controller-owned way to mutate one item (flags, title,
+  /// constraints, size, …) instead of rewriting [layout] by hand.
+  ///
+  /// Robustness guarantees:
+  /// * **No-op on unknown id** — if no item matches [itemId], nothing happens.
+  /// * **Identity of id is enforced** — [transform] must not change the item's
+  ///   id; doing so is a programming error (asserts in debug, and the returned
+  ///   id is ignored in release so the item keeps [itemId]).
+  /// * **Bounds are corrected** — the transformed item is passed through the
+  ///   engine's bound correction (positive dimensions, in-grid position), so a
+  ///   transform returning e.g. `w: 0` or an out-of-grid `x` cannot corrupt
+  ///   the layout.
+  /// * **No spurious events** — if the transform yields an equal item, the
+  ///   call is a no-op (no layout mutation, no `onLayoutChanged`).
+  ///
+  /// When [recompact] is true (default) the current compaction/collision
+  /// strategy runs after the change (use this when the transform changes size
+  /// or position). When false, only overlaps are resolved without pulling
+  /// items back — appropriate for metadata-only changes (a flag, a title)
+  /// where you don't want other items to move.
+  void updateItem(
+    String itemId,
+    LayoutItem Function(LayoutItem item) transform, {
+    bool recompact = true,
+  });
+
   /// Selects or deselects an item.
   ///
   /// [itemId]: The item to toggle.

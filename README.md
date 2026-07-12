@@ -16,19 +16,20 @@ Perfect for analytics dashboards, IoT control panels, project management tools, 
 
 - 🚀 **High Performance:** Built on Flutter's `Sliver` protocol with **smart caching**. It only renders visible items and prevents unnecessary rebuilds of children during drag/resize operations.
 - 🧩 **Sliver Composition:** Integrate the dashboard's grid seamlessly with other slivers like `SliverAppBar` and `SliverList` within a single `CustomScrollView`.
+- 🪆 **Nested Grids:** Embed full dashboards inside grid items (`NestedDashboard`) at any depth, and **drag items seamlessly between grids** (parent ↔ child ↔ siblings)  with a live push-preview placeholder. Supports auto-sizing hosts, dynamic sub-grid creation, and one-call recursive save/load.
 - 🎨 **Fully Customizable:** Control the number of columns, aspect ratio, spacing, grid and handles style. Items can be draggable, resizable, and static. Support for dedicated **Drag Handles** (`DashboardDragStartListener`) and configurable mobile drag start gestures (long-press, tap, or handle-only).
 - 🛡️ **Declarative Interaction Policies (`DashboardPolicy`):** Inject granular business rules (e.g., "charts cannot push system KPIs", "block dragging on Row 0") on-the-fly without having to write custom compaction delegates.
 - 📌 **Segmented Grids (Section Barriers):** Divide your grid into organized visual sections using static section barriers with custom header builders while maintaining strict collision boundaries.
 - ↔️ **Horizontal & Vertical Layouts:** Supports both vertical (default) and horizontal scrolling directions.
 - 💥 **Smart Collision Detection:** Choose your desired behavior:
-    - **Push:** Items push each other out of the way to avoid overlap.
-    - **Push or Shrink:** Items can be shrinked or pushed when resizing a neighbour item.
-    - **Auto-Shrink on Drag:** Move large widgets over smaller items, and the engine automatically contracts neighboring elements to clear room.
+  - **Push:** Items push each other out of the way to avoid overlap.
+  - **Push or Shrink:** Items can be shrinked or pushed when resizing a neighbour item.
+  - **Auto-Shrink on Drag:** Move large widgets over smaller items, and the engine automatically contracts neighboring elements to clear room.
 - 🧲 **Compaction:** Choose your desired behavior:
-    - **None:** Free positioning. Items are not compacted.
-    - **Vertical:** Items are compacted to top. 
-    - **Horizontal:** Items are compacted to left.
-    - **Custom:** Implement `CompactorDelegate` to define custom rules (e.g., specific gravity, fixed zones).
+  - **None:** Free positioning. Items are not compacted.
+  - **Vertical:** Items are compacted to top.
+  - **Horizontal:** Items are compacted to left.
+  - **Custom:** Implement `CompactorDelegate` to define custom rules (e.g., specific gravity, fixed zones).
 - 🗑️ **Built-in Trash:** Easy-to-implement drag-to-delete functionality. Or implement your own using available callbacks.
 - ✨ **Custom Feedback:** Customize the appearance of items while they are being dragged. Use onInteractionStart callback for haptic feedback...
 - 📥 **Drag From Outside:** Drop new items from external sources directly into the grid with auto-scrolling support.
@@ -77,13 +78,14 @@ The package is WebAssembly (WASM) compatible. Building your production applicati
   - [Auto Layout bulk add](#auto-layout-bulk-add)
   - [Accessibility and Keyboard Navigation](#accessibility-and-keyboard-navigation)
   - [Multi Selection and Cluster Drag](#multi-selection-and-cluster-drag)
+  - [Nested Grids & Cross-Grid Drag](#nested-grids--cross-grid-drag)
   - [Layout Optimizer](#layout-optimizer)
   - [Custom Compaction Strategy](#custom-compaction-strategy)
   - [Interaction & Collision Policies Custom Rules](#interaction--collision-policies-custom-rules)
   - [Utilities](#utilities)
 - [Contributing](#contributing)
 - [Roadmap](#roadmap)
-  
+
 ## Getting Started
 
 ### 1. Add Dependency
@@ -159,7 +161,7 @@ For advanced layouts (e.g., collapsing app bars, mixed lists and grids), use `Da
   - When using `SliverDashboard` to compose with others slivers, the grid stops precisely at the content end (allowing subsequent slivers to be visible).
     If no subsequent slivers to be visible (eg. `SliverAppBar` + `SliverDashboard`), you can set `fillViewport` to true to extend grid in viewport.
   - While using `Dashboard` widget, in an `Expanded`, the grid fills the viewport, and `fillViewport` has no action.
-  
+
 ```dart
   // You must provide the same ScrollController to both the Overlay and the ScrollView
 final scrollController = ScrollController();
@@ -929,6 +931,69 @@ controller.shortcuts = DashboardShortcuts(
 );
 ```
 
+### Nested Grids & Cross-Grid Drag
+
+Embed a full dashboard inside a grid item, and let users drag items **between**
+grids — parent ↔ nested ↔ siblings, at any depth. The item leaves its source
+grid live, a push-preview placeholder follows the cursor in whichever grid is
+hovered, and dropping outside every grid restores the source layout.
+
+```dart
+final root  = DashboardController(initialLayout: [...]);
+final group = DashboardController(initialLayout: [...]);
+
+DashboardNestedScope(
+  onItemMovedToGrid: (item, from, to) => persist(),
+  child: Dashboard(
+    controller: root,
+    itemBuilder: (context, item) {
+      if (item.id == 'group-1') {
+        return NestedDashboard(
+          controller: group,
+          parentItemId: item.id,   // links the tree
+          sizeToContent: true,     // host item grows/shrinks with content
+          itemBuilder: buildLeafItem,
+        );
+      }
+      return buildLeafItem(context, item);
+    },
+  ),
+)
+```
+
+Key options:
+
+- `NestedDashboard.autoSlotCount` (default `true`): the nested grid's column
+  count follows its host item width — inner and outer cells keep the same
+  visual size while the host is resized.
+- `NestedDashboard.sizeToContent` (+ `sizeToContentMax`, `chromeExtent`): the
+  host item's height adapts so the nested grid never scrolls internally.
+- `Dashboard.crossGridDragOut` / `Dashboard.acceptCrossGridItems` (default
+  `true`): per-grid opt-out of leaving/receiving items.
+- `DashboardNestedScope.subGridDynamic` + `onNestedGridRequested`: holding a
+  dragged item over a plain item highlights it and, after `nestHoverDelay`,
+  asks your app to convert it into a nested grid.
+- `DashboardNestedScope.probe`: whether the pointer or the dragged tile's
+  visual center decides which grid it enters, independent of the grab point.
+- Auto-scroll: fixed-size nested grids (`sizeToContent: false`) scroll
+  internally with edge auto-scroll; `sizeToContent: true` grids delegate edge
+  auto-scroll to the parent grid, which scrolls to follow the growing content.
+- `LayoutItem.hasNestedGrid`: declarative host flag — branch your builder on
+  it (`if (item.hasNestedGrid) return NestedDashboard(...)`) instead of on
+  ids, so groups stay portable between grids and across save/load.
+- Programmatic move: `coordinator.moveItemToGrid(from: a, to: b, itemId: 'x')`.
+
+Persistence of the whole tree is a single call each way:
+
+```dart
+final tree = exportNestedTree(coordinator, root); // JSON-encodable
+loadNestedTree(coordinator, root, tree);          // nested payloads delivered
+                                                  // automatically on mount
+```
+
+Notes: cross-grid drags carry a single item (multi-selection drags stay in
+their grid), and item ids must be unique across the tree.
+
 ### Layout Optimizer
 
 If your dashboard becomes fragmented (full of gaps) after many moves, you can use the optimizer to compact the layout.
@@ -1132,8 +1197,9 @@ The CI pipeline will fail if:
 - **Linting violations** are detected.
 - **Static analysis** reveals warnings or errors.
 - **Tests fail**, or the code coverage decreases below the required threshold.
+
 Pull requests should pass all checks before they can be merged into the `main` branch.
- 
+
 ## Roadmap
 - ✅ **SliverDashboard:** Compose a dashboard with others slivers in your `CustomScrollView`.
 - ✅ **Accessibility:** Enhanced screen reader support and keyboard navigation with configurable keys and messages.
@@ -1141,4 +1207,4 @@ Pull requests should pass all checks before they can be merged into the `main` b
 - ✅ **Mini-map:** Display and navigate via a minimap.
 - ✅ **Multi-Selection:** Multi item selection and dragging.
 - ✅ **Sticky Headers:** Special item to create "barrier" for defining sections in layout.
-- 🔲 **Nested dashboard:** nested grids with drag & drop between grids.
+- ✅ **Nested dashboard:** Special item/nested grid with cross-drag.
