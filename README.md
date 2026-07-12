@@ -4,11 +4,11 @@
 [![style: very good analysis](https://img.shields.io/badge/style-very_good_analysis-B22C89.svg)](https://pub.dev/packages/very_good_analysis)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
-A high-performance, customizable, and sliver-based grid dashboard for Flutter.
+**A high-performance and scalable dashboard engine for Flutter, built on Slivers.**
 
-`sliver_dashboard` provides a robust foundation for building dynamic, user-configurable layouts.
+`sliver_dashboard` is a sliver-native layout engine for building interactive, user-configurable dashboards with drag & drop, resizing, nested grids, and viewport virtualization. Designed as an engine rather than a monolithic widget, it composes naturally with Flutter's scrolling system while remaining responsive with hundreds or thousands of tiles.
 
-Perfect for analytics dashboards, IoT control panels, project management tools, or any application that requires a draggable and resizable grid layout.
+Ideal for analytics platforms, IoT control panels, project management tools, no-code builders, and any application requiring complex, interactive layouts across mobile, desktop, and web.
 
 ![Sliver Dashboard Demo](https://raw.githubusercontent.com/scalz/sliver_dashboard/main/img/demo.gif)
 
@@ -16,7 +16,7 @@ Perfect for analytics dashboards, IoT control panels, project management tools, 
 
 - 🚀 **High Performance:** Built on Flutter's `Sliver` protocol with **smart caching**. It only renders visible items and prevents unnecessary rebuilds of children during drag/resize operations.
 - 🧩 **Sliver Composition:** Integrate the dashboard's grid seamlessly with other slivers like `SliverAppBar` and `SliverList` within a single `CustomScrollView`.
-- 🪆 **Nested Grids:** Embed full dashboards inside grid items (`NestedDashboard`) at any depth, and **drag items seamlessly between grids** (parent ↔ child ↔ siblings)  with a live push-preview placeholder. Supports auto-sizing hosts, dynamic sub-grid creation, and one-call recursive save/load.
+- 🪆 **Nested Grids (v2):** Embed full dashboards inside grid items (`NestedDashboard`) at any depth, and **drag items between grids** (parent ↔ child ↔ siblings) with a live push-preview placeholder. Supports auto-sizing hosts, dynamic sub-grid creation, and one-call recursive save/load.
 - 🎨 **Fully Customizable:** Control the number of columns, aspect ratio, spacing, grid and handles style. Items can be draggable, resizable, and static. Support for dedicated **Drag Handles** (`DashboardDragStartListener`) and configurable mobile drag start gestures (long-press, tap, or handle-only).
 - 🛡️ **Declarative Interaction Policies (`DashboardPolicy`):** Inject granular business rules (e.g., "charts cannot push system KPIs", "block dragging on Row 0") on-the-fly without having to write custom compaction delegates.
 - 📌 **Segmented Grids (Section Barriers):** Divide your grid into organized visual sections using static section barriers with custom header builders while maintaining strict collision boundaries.
@@ -42,49 +42,46 @@ Perfect for analytics dashboards, IoT control panels, project management tools, 
 
 ## Try the Demo
 
-[Launch Live Demo](https://scalz.github.io/sliver_dashboard_web_demo/)
-
-*Note on Web Performance:*
-This playground is built using standard JavaScript compilation:
-```bash
-flutter build web --base-href ... --release
-```
-This intentionally showcase the demo in non-WASM mode to verify efficiency.
-The package is WebAssembly (WASM) compatible. Building your production application with the --wasm flag will yield even greater execution speedups.
-
+[Launch Demo](https://scalz.github.io/sliver_dashboard_web_demo/)
 
 ## Table of Contents
 
 - [Getting Started](#getting-started)
-- [Advanced Sliver Composition](#advanced-sliver-composition)
-- [API Showcase](#api-showcase)
+- [Core API](#core-api)
   - [Controlling Edit Mode](#controlling-edit-mode)
   - [Adding and Removing Items](#adding-and-removing-items)
-  - [Segmented Grids & Section Barriers](#segmented-grids--section-barriers)
+  - [Interaction Callbacks](#interaction-callbacks)
   - [Programmatic Scrolling](#programmatic-scrolling)
-  - [Scroll direction](#scroll-direction)
-  - [Allowing free positioning](#allowing-free-positioning)
+  - [Import / Export (Persistence)](#import--export-persistence)
+- [Drag & Drop](#drag--drop)
   - [Dragging From Outside](#dragging-from-outside)
   - [Drag to Delete (Trash Bin)](#drag-to-delete-trash-bin)
   - [Custom Drag Handles & Mobile Gestures](#custom-drag-handles--mobile-gestures)
   - [Custom Drag Feedback](#custom-drag-feedback)
-  - [Interaction Callbacks](#interaction-callbacks)
-  - [Guidance Messages](#guidance-messages)
-  - [Configuration & Styles](#configuration--styles)
-  - [Import / Export (Persistence)](#import--export-persistence)
-  - [Responsive Layouts](#responsive-layouts)
-  - [Pixel Based Responsive Layouts](#pixel-based-responsive-layouts)
-  - [Mini Map](#mini-map)
-  - [Auto Layout bulk add](#auto-layout-bulk-add)
-  - [Accessibility and Keyboard Navigation](#accessibility-and-keyboard-navigation)
+  - [Haptic Feedback](#haptic-feedback)
   - [Multi Selection and Cluster Drag](#multi-selection-and-cluster-drag)
-  - [Nested Grids & Cross-Grid Drag](#nested-grids--cross-grid-drag)
+  - [Adaptive Neighbor Shrinking (Auto-Shrink on Drag)](#adaptive-neighbor-shrinking-auto-shrink-on-drag)
+- [Layout & Structure](#layout--structure)
+  - [Segmented Grids & Section Barriers](#segmented-grids--section-barriers)
+  - [Custom Section Headers](#custom-section-headers)
+  - [Scroll direction](#scroll-direction)
+  - [Allowing free positioning](#allowing-free-positioning)
+  - [Auto Layout bulk add](#auto-layout-bulk-add)
+  - [Responsive Layouts](#responsive-layouts)
   - [Layout Optimizer](#layout-optimizer)
+- [Appearance & Accessibility](#appearance--accessibility)
+  - [Configuration & Styles](#configuration--styles)
+  - [Guidance Messages](#guidance-messages)
+  - [Mini Map](#mini-map)
+  - [Accessibility and Keyboard Navigation](#accessibility-and-keyboard-navigation)
+- [Advanced & Extensibility](#advanced--extensibility)
+  - [Advanced Sliver Composition](#advanced-sliver-composition)
+  - [Nested Grids & Cross-Grid Drag](#nested-grids--cross-grid-drag)
   - [Custom Compaction Strategy](#custom-compaction-strategy)
-  - [Interaction & Collision Policies Custom Rules](#interaction--collision-policies-custom-rules)
+  - [Interaction & Collision Policies (Custom Rules)](#interaction--collision-policies-custom-rules)
   - [Utilities](#utilities)
+- [Benchmark](#benchmark)
 - [Contributing](#contributing)
-- [Roadmap](#roadmap)
 
 ## Getting Started
 
@@ -145,81 +142,9 @@ class MyDashboardPage extends StatelessWidget {
 }
 ```
 
-## Advanced Sliver Composition
+## Core API
 
-For advanced layouts (e.g., collapsing app bars, mixed lists and grids), use `DashboardOverlay` and `SliverDashboard`.
-
-<p align="center">
-  <img src="https://raw.githubusercontent.com/scalz/sliver_dashboard/main/img/demo_sliver.gif" alt="Native SliverDashboard" width="400"/>
-</p>
-
-
-1.  **`DashboardOverlay`**: Wraps your `CustomScrollView`. It handles gestures, auto-scrolling, the background grid, and the trash bin.
-2.  **`SliverDashboard`**: Renders the grid items inside the scroll view.
-
-- **Grid Clipping behavior:**
-  - When using `SliverDashboard` to compose with others slivers, the grid stops precisely at the content end (allowing subsequent slivers to be visible).
-    If no subsequent slivers to be visible (eg. `SliverAppBar` + `SliverDashboard`), you can set `fillViewport` to true to extend grid in viewport.
-  - While using `Dashboard` widget, in an `Expanded`, the grid fills the viewport, and `fillViewport` has no action.
-
-```dart
-  // You must provide the same ScrollController to both the Overlay and the ScrollView
-final scrollController = ScrollController();
-
-@override
-Widget build(BuildContext context) {
-  return Scaffold(
-    // 1. Wrap with DashboardOverlay
-    body: DashboardOverlay(
-      controller: controller,
-      scrollController: scrollController,
-      
-      // Define grid styling here so it renders behind the slivers
-      gridStyle: const GridStyle(lineColor: Colors.red), 
-      padding: const EdgeInsets.all(8),
-      // grid stops precisely at the content of the dashboard
-      // to not draw grid behind subsequent slivers
-      fillViewport: false, 
-      
-      // Handle external drops here
-      onDrop: (data, item) => 'new_id', 
-      
-      // Used for drag feedback rendering
-      itemBuilder: (ctx, item) => MyCard(item), 
-      
-      // 2. Your CustomScrollView
-      child: CustomScrollView(
-        controller: scrollController,
-        slivers: [
-          const SliverAppBar(
-            title: Text('My Dashboard'),
-            floating: true,
-            expandedHeight: 200,
-          ),
-          
-          // 3. The Dashboard Sliver
-          SliverPadding(
-            padding: const EdgeInsets.all(8),
-            sliver: SliverDashboard(
-              itemBuilder: (ctx, item) => MyCard(item),
-            ),
-          ),
-          
-          // 4. Other Slivers
-          SliverList(
-            delegate: SliverChildBuilderDelegate(
-              (ctx, index) => ListTile(title: Text('Item $index')),
-              childCount: 20,
-            ),
-          ),
-        ],
-      ),
-    ),
-  );
-}
-```
-
-## API Showcase
+Everyday controller operations: toggling edit mode, mutating the layout, listening to interactions, and persisting it.
 
 ### Controlling Edit Mode
 
@@ -253,67 +178,18 @@ void deleteItem(String id) {
 }
 ```
 
-### Segmented Grids & Section Barriers
+### Interaction Callbacks
 
-You can organize your widgets into distinct, visually separated groups (e.g. "Overview", "Analytics") within a single `DashboardController` . Simply add a static section barrier item spanning the full width of the grid :
-
-```dart
-final controller = DashboardController(
-  initialSlotCount: 8,
-  initialLayout: [
-    // 1. Define a Section Barrier spanning full width (8 columns)
-    const LayoutItem(
-      id: 'section_1',
-      x: 0,
-      y: 0,
-      w: 8,
-      h: 1,
-      isSectionBarrier: true,
-      sectionTitle: '📌 System Performance',
-    ),
-    // Dynamic items inside Section 1
-    const LayoutItem(id: '9', x: 0, y: 1, w: 2, h: 2),
-
-    // 2. Define a second Section Barrier
-    const LayoutItem(
-      id: 'section_2',
-      x: 0,
-      y: 3,
-      w: 8,
-      h: 1,
-      isSectionBarrier: true,
-      sectionTitle: '📊 User Analytics',
-    ),
-    const LayoutItem(id: '15', x: 0, y: 4, w: 2, h: 2),
-  ],
-);
-```
-
-### Custom Section Headers
-
-By default, the package renders a clean text header using your active Theme's primary color . You can fully customize this using the sectionHeaderBuilder callback
+Hook into the lifecycle of drag and resize events.
 
 ```dart
 Dashboard(
   controller: controller,
-  // Custom section header builder
-  sectionHeaderBuilder: (context, item) {
-    return Container(
-      color: Colors.blue.shade50,
-      padding: const EdgeInsets.all(12),
-      child: Row(
-        children: [
-          const Icon(Icons.bookmark, color: Colors.blue),
-          const SizedBox(width: 8),
-          Text(
-            item.sectionTitle ?? '',
-            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-          ),
-        ],
-      ),
-    );
-  },
-  itemBuilder: (context, item) => MyCard(item),
+  onItemDragStart: (item) => print('Started dragging ${item.id}'),
+  onItemDragUpdate: (item, offset) => print('Dragging at $offset'), // Useful for custom hit-testing
+  onItemDragEnd: (item) => print('Stopped dragging ${item.id}'),
+  onItemResizeStart: (item) => print('Started resizing ${item.id}'),
+  onItemResizeEnd: (item) => print('Stopped resizing ${item.id}'),
 )
 ```
 
@@ -339,29 +215,25 @@ await controller.scrollToItem(
 );
 ```
 
-### Scroll direction
+### Import / Export (Persistence)
 
-Simply change the `scrollDirection`. The dashboard and all interactions will adapt.
-
-```dart
-Dashboard(
-    scrollDirection: Axis.horizontal,
-    controller: controller,
-    itemBuilder: (context, item) { /* ... */ },
-)
-```
-
-### Allowing free positioning
-
-By default, items push each other. You can disable this to allow free positioning items without compaction.
+Easily save and restore layouts using JSON-compatible Maps. Can be used for persisting the user's dashboard configuration to a database or shared preferences.
+**Note:** importLayout automatically validates the data, corrects bounds if the slot count has changed, and resolves overlaps.
 
 ```dart
-// To allow free positioning:
-controller.setCompactionType(CompactType.none);
+// 1. Export to JSON-ready list of maps
+final List<Map<String, dynamic>> layoutData = controller.exportLayout();
+// Save to your DB...
+await myDatabase.save('dashboard_layout', layoutData);
 
-// To re-enable push behavior:
-controller.setCompactionType(CompactType.vertical);
+// 2. Import from JSON
+final List<dynamic> loadedData = await myDatabase.get('dashboard_layout');
+controller.importLayout(loadedData);
 ```
+
+## Drag & Drop
+
+Everything about moving items: external sources, deletion, gestures, feedback, and multi-item drags.
 
 ### Dragging From Outside
 
@@ -573,21 +445,6 @@ Dashboard(
 )
 ```
 
-### Interaction Callbacks
-
-Hook into the lifecycle of drag and resize events.
-
-```dart
-Dashboard(
-  controller: controller,
-  onItemDragStart: (item) => print('Started dragging ${item.id}'),
-  onItemDragUpdate: (item, offset) => print('Dragging at $offset'), // Useful for custom hit-testing
-  onItemDragEnd: (item) => print('Stopped dragging ${item.id}'),
-  onItemResizeStart: (item) => print('Started resizing ${item.id}'),
-  onItemResizeEnd: (item) => print('Stopped resizing ${item.id}'),
-)
-```
-
 ### Haptic Feedback
 
 On mobile platforms, you may want to use haptic feedback for drag and resize start events.
@@ -603,23 +460,215 @@ final controller = DashboardController(
 );
 ```
 
-### Guidance Messages
+### Multi Selection and Cluster Drag
 
-Display contextual help messages to users during interactions. This feature is enabled by providing a `DashboardGuidance` object. If the `guidance` parameter is `null`, the feature is disabled.
-You can also use DashboardGuidance.byDefault for default English guidance, or set your custom translated guidance as below:
+Users can select multiple items by holding `Shift` (or `Ctrl`/`Cmd`) while clicking.
+Dragging any item in the selection moves the entire group ("Cluster Drag").
+
+**Programmatic Selection:**
+```dart
+// Select multiple items
+controller.toggleSelection('item_1', multi: true);
+controller.toggleSelection('item_2', multi: true);
+
+// Clear selection
+controller.clearSelection();
+
+// Check selection
+print(controller.selectedItemIds.value);
+
+// 2. Customize Multi-Selection Keys
+controller.shortcuts = DashboardShortcuts(
+  multiSelectKeys: [LogicalKeyboardKey.altLeft],
+);
+```
+
+### Adaptive Neighbor Shrinking (Auto-Shrink on Drag)
+
+When dragging a large widget over smaller items, the default behavior pushes everything downwards, which can cause significant layout shifts. You can enable **Auto-Shrink on Drag** to dynamically contract neighboring items' heights down to their `minH` limits to clear room first :
+
+```dart
+// Enable auto-shrink dynamically via the controller
+controller.setAllowAutoShrink(allow: true)
+```
+Note: If neighbors hit their minH limit and still cannot fit, the engine gracefully falls back to pushing them downwards, keeping your layout.
+
+## Layout & Structure
+
+Shaping the grid itself: sections, axis, free placement, bulk placement, breakpoints, and automatic optimization.
+
+### Segmented Grids & Section Barriers
+
+You can organize your widgets into distinct, visually separated groups (e.g. "Overview", "Analytics") within a single `DashboardController` . Simply add a static section barrier item spanning the full width of the grid :
+
+```dart
+final controller = DashboardController(
+  initialSlotCount: 8,
+  initialLayout: [
+    // 1. Define a Section Barrier spanning full width (8 columns)
+    const LayoutItem(
+      id: 'section_1',
+      x: 0,
+      y: 0,
+      w: 8,
+      h: 1,
+      isSectionBarrier: true,
+      sectionTitle: '📌 System Performance',
+    ),
+    // Dynamic items inside Section 1
+    const LayoutItem(id: '9', x: 0, y: 1, w: 2, h: 2),
+
+    // 2. Define a second Section Barrier
+    const LayoutItem(
+      id: 'section_2',
+      x: 0,
+      y: 3,
+      w: 8,
+      h: 1,
+      isSectionBarrier: true,
+      sectionTitle: '📊 User Analytics',
+    ),
+    const LayoutItem(id: '15', x: 0, y: 4, w: 2, h: 2),
+  ],
+);
+```
+
+### Custom Section Headers
+
+By default, the package renders a clean text header using your active Theme's primary color . You can fully customize this using the sectionHeaderBuilder callback
 
 ```dart
 Dashboard(
   controller: controller,
-  // Provide a DashboardGuidance object to enable the feature.
-  // You can override default messages for translation or customization.
-  guidance: const DashboardGuidance(
-    move: InteractionGuidance(SystemMouseCursors.grab, 'Click/Drag to move'),
-    tapToResize: 'Tap and hold to change size',
-  ),
-  itemBuilder: (context, item) { /* ... */ },
+  // Custom section header builder
+  sectionHeaderBuilder: (context, item) {
+    return Container(
+      color: Colors.blue.shade50,
+      padding: const EdgeInsets.all(12),
+      child: Row(
+        children: [
+          const Icon(Icons.bookmark, color: Colors.blue),
+          const SizedBox(width: 8),
+          Text(
+            item.sectionTitle ?? '',
+            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+          ),
+        ],
+      ),
+    );
+  },
+  itemBuilder: (context, item) => MyCard(item),
 )
 ```
+
+### Scroll direction
+
+Simply change the `scrollDirection`. The dashboard and all interactions will adapt.
+
+```dart
+Dashboard(
+    scrollDirection: Axis.horizontal,
+    controller: controller,
+    itemBuilder: (context, item) { /* ... */ },
+)
+```
+
+### Allowing free positioning
+
+By default, items push each other. You can disable this to allow free positioning items without compaction.
+
+```dart
+// To allow free positioning:
+controller.setCompactionType(CompactType.none);
+
+// To re-enable push behavior:
+controller.setCompactionType(CompactType.vertical);
+```
+
+### Auto Layout bulk add
+
+Generate a layout automatically or add items without specifying coordinates (set `x: -1, y: -1`). By default, the engine appends them below the current layout. You can configure this using the `strategy` parameter:
+
+```dart
+// Create fresh new page with auto placement
+final items = placeNewItems(
+  existingLayout: [],
+  newItems: ['A', 'B', 'C'].map((id) => LayoutItem(
+    id: id,
+    x: -1, y: -1, // auto-placement
+    w: 2, h: 2,
+  )).toList(),
+  cols: 8,
+);
+controller.layout.value = items;
+
+// You can add items at a specific position, or let the controller place them automatically by using `-1`.
+
+// Add item at a specific position (x: 2, y: 0)
+controller.addItem(
+  LayoutItem(id: 'fixed', x: 2, y: 0, w: 2, h: 2),
+);
+
+// 1. Tetris-style "First Fit" Placement (Fills gaps from top-left)
+controller.addItem(
+  LayoutItem(id: 'new_item', x: -1, y: -1, w: 2, h: 2),
+  strategy: AutoPlacementStrategy.firstFit,
+);
+
+// 2. Default "Append Bottom" Placement (Appends strictly below existing content)
+controller.addItems(
+  [
+    LayoutItem(id: 'a', x: -1, y: -1, w: 2, h: 2),
+    LayoutItem(id: 'b', x: -1, y: -1, w: 1, h: 1),
+  ],
+  strategy: AutoPlacementStrategy.appendBottom, // Default behavior
+);
+```
+
+### Responsive Layouts
+
+You can automatically adapt the number of columns (`slotCount`) based on the available width by passing a `breakpoints` map.
+
+**Smart Layout Memory:** The controller remembers the specific arrangement of items for each column count. If a user organizes their dashboard on Desktop (8 cols), switches to Mobile (4 cols), and comes back to Desktop, their original Desktop arrangement is restored.
+
+```dart
+// 1. Create your controller and register the layout changed callback
+final controller = DashboardController(
+  initialSlotCount: 8,
+  initialLayout: [ ... ],
+  onLayoutChanged: (items, slotCount) {
+    // Save layout specifically for this screen size (persistence)
+    final key = 'layout_$slotCount';
+    myStorage.save(key, items);
+  },
+);
+Dashboard(
+  controller: controller,
+  // Define breakpoints:
+  // Mobile: 0-599px -> 4 cols
+  // Tablet: 600-1199px -> 8 cols
+  // Desktop: 1200px+ -> 12 cols
+  breakpoints: {
+    0: 4,
+    600: 8,
+    1200: 12
+  },
+)
+```
+
+### Layout Optimizer
+
+If your dashboard becomes fragmented (full of gaps) after many moves, you can use the optimizer to compact the layout.
+It uses a "Visual Bin Packing" algorithm that fills gaps while preserving the visual order (top-left to bottom-right) of your items. Static items act as obstacles and are not moved.
+
+```dart
+// Call this when you want to compact the grid
+controller.optimizeLayout();
+```
+
+## Appearance & Accessibility
+
+Visual configuration, user guidance, and inclusive interaction.
 
 ### Configuration & Styles
 
@@ -670,99 +719,21 @@ DashboardOverlay(
 )
 ```
 
-### Adaptive Neighbor Shrinking (Auto-Shrink on Drag)
+### Guidance Messages
 
-When dragging a large widget over smaller items, the default behavior pushes everything downwards, which can cause significant layout shifts. You can enable **Auto-Shrink on Drag** to dynamically contract neighboring items' heights down to their `minH` limits to clear room first :
-
-```dart
-// Enable auto-shrink dynamically via the controller
-controller.setAllowAutoShrink(allow: true)
-```
-Note: If neighbors hit their minH limit and still cannot fit, the engine gracefully falls back to pushing them downwards, keeping your layout.
-
-### Import / Export (Persistence)
-
-Easily save and restore layouts using JSON-compatible Maps. Can be used for persisting the user's dashboard configuration to a database or shared preferences.
-**Note:** importLayout automatically validates the data, corrects bounds if the slot count has changed, and resolves overlaps.
+Display contextual help messages to users during interactions. This feature is enabled by providing a `DashboardGuidance` object. If the `guidance` parameter is `null`, the feature is disabled.
+You can also use DashboardGuidance.byDefault for default English guidance, or set your custom translated guidance as below:
 
 ```dart
-// 1. Export to JSON-ready list of maps
-final List<Map<String, dynamic>> layoutData = controller.exportLayout();
-// Save to your DB...
-await myDatabase.save('dashboard_layout', layoutData);
-
-// 2. Import from JSON
-final List<dynamic> loadedData = await myDatabase.get('dashboard_layout');
-controller.importLayout(loadedData);
-```
-
-### Responsive Layouts
-
-You can automatically adapt the number of columns (`slotCount`) based on the available width by passing a `breakpoints` map.
-
-**Smart Layout Memory:** The controller remembers the specific arrangement of items for each column count. If a user organizes their dashboard on Desktop (8 cols), switches to Mobile (4 cols), and comes back to Desktop, their original Desktop arrangement is restored.
-
-```dart
-// 1. Create your controller and register the layout changed callback
-final controller = DashboardController(
-  initialSlotCount: 8,
-  initialLayout: [ ... ],
-  onLayoutChanged: (items, slotCount) {
-    // Save layout specifically for this screen size (persistence)
-    final key = 'layout_$slotCount';
-    myStorage.save(key, items);
-  },
-);
 Dashboard(
   controller: controller,
-  // Define breakpoints:
-  // Mobile: 0-599px -> 4 cols
-  // Tablet: 600-1199px -> 8 cols
-  // Desktop: 1200px+ -> 12 cols
-  breakpoints: {
-    0: 4,
-    600: 8,
-    1200: 12
-  },
-)
-```
-
-### Pixel Based Responsive Layouts
-
-By default, the standard `DashboardItemBuilder` is optimized to never rebuild during desktop window resizing as long as an item's grid coordinates remain unchanged.
-
-If your widgets must adapt to their actual physical dimensions (e.g. adjusting font scales or toggling sub-components), you can opt-in to the alternative responsive builders.
-
-#### 1. Live Pixel Responsiveness (`DashboardItemLayoutBuilder`)
-Using `DashboardItemLayoutBuilder` provides live physical pixel dimensions and the grid's `slotCount` calculated analytically during the build phase with $O(1)$ constant time complexity. This avoids the double-pass rendering and deferred build callbacks of Flutter's native `LayoutBuilder`.
-
-#### 2. Selective Breakpoint Caching (`DashboardItemBreakpointBuilder`)
-To prevent performance degradation from rebuilding complex widget subtrees on every single pixel changed during window resizing, use `DashboardItemBreakpointBuilder` paired with a **`DashboardBreakpointResolver`**.
-
-This configuration evaluates your resolver continuously at runtime and only reconstructs the child widget subtree when the resolved state (e.g. an enum, int, or string) actually transitions. The resolver and builder both receive the logical dimensions (via `item`) and `slotCount` to enable hybrid responsive rules.
-
-```dart
-// 1. Define your custom structural layout states (can be an enum, int, or string)
-enum MyTileLayout { compact, row, column }
-
-Dashboard(
-  controller: controller,
-  // 2. Define a resolver mapping raw pixel sizes, logical layout items, and slotCount to your layout state
-  breakpointResolver: (width, height, item, slotCount) {
-    if (item.w == slotCount) return MyTileLayout.column; // Full-width logical check
-    if (width < 150) return MyTileLayout.compact;          // Physical pixel check
-    if (width > height * 1.5) return MyTileLayout.row;
-      return MyTileLayout.column;
-    },
-    // 3. Opt-in to the state-driven breakpoint builder with full layout context
-    itemBreakpointBuilder: (context, item, layout, width, height, slotCount) {
-      final tileLayout = layout as MyTileLayout;
-      return switch (tileLayout) {
-        case MyTileLayout.compact => const MyCompactWidget();
-        case MyTileLayout.row => MyRowWidget(width: width);
-        case MyTileLayout.column => MyColumnCard(id: item.id);
-    }
-  },
+  // Provide a DashboardGuidance object to enable the feature.
+  // You can override default messages for translation or customization.
+  guidance: const DashboardGuidance(
+    move: InteractionGuidance(SystemMouseCursors.grab, 'Click/Drag to move'),
+    tapToResize: 'Tap and hold to change size',
+  ),
+  itemBuilder: (context, item) { /* ... */ },
 )
 ```
 
@@ -819,46 +790,6 @@ Stack(
 )
 ```
 
-### Auto Layout bulk add
-
-Generate a layout automatically or add items without specifying coordinates (set `x: -1, y: -1`). By default, the engine appends them below the current layout. You can configure this using the `strategy` parameter:
-
-```dart
-// Create fresh new page with auto placement
-final items = placeNewItems(
-  existingLayout: [],
-  newItems: ['A', 'B', 'C'].map((id) => LayoutItem(
-    id: id,
-    x: -1, y: -1, // auto-placement
-    w: 2, h: 2,
-  )).toList(),
-  cols: 8,
-);
-controller.layout.value = items;
-
-// You can add items at a specific position, or let the controller place them automatically by using `-1`.
-
-// Add item at a specific position (x: 2, y: 0)
-controller.addItem(
-  LayoutItem(id: 'fixed', x: 2, y: 0, w: 2, h: 2),
-);
-
-// 1. Tetris-style "First Fit" Placement (Fills gaps from top-left)
-controller.addItem(
-  LayoutItem(id: 'new_item', x: -1, y: -1, w: 2, h: 2),
-  strategy: AutoPlacementStrategy.firstFit,
-);
-
-// 2. Default "Append Bottom" Placement (Appends strictly below existing content)
-controller.addItems(
-  [
-    LayoutItem(id: 'a', x: -1, y: -1, w: 2, h: 2),
-    LayoutItem(id: 'b', x: -1, y: -1, w: 1, h: 1),
-  ],
-  strategy: AutoPlacementStrategy.appendBottom, // Default behavior
-);
-```
-
 ### Accessibility and Keyboard Navigation
 
 The dashboard is fully accessible out of the box. When **Edit Mode** is enabled, users can navigate and manipulate the grid using only the keyboard.
@@ -908,27 +839,82 @@ controller.shortcuts = DashboardShortcuts(
 );
 ```
 
-### Multi Selection and Cluster Drag
+## Advanced & Extensibility
 
-Users can select multiple items by holding `Shift` (or `Ctrl`/`Cmd`) while clicking.
-Dragging any item in the selection moves the entire group ("Cluster Drag").
+Deeper integrations: sliver composition, nested dashboards, and custom engine strategies.
 
-**Programmatic Selection:**
+### Advanced Sliver Composition
+
+For advanced layouts (e.g., collapsing app bars, mixed lists and grids), use `DashboardOverlay` and `SliverDashboard`.
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/scalz/sliver_dashboard/main/img/demo_sliver.gif" alt="Native SliverDashboard" width="400"/>
+</p>
+
+
+1.  **`DashboardOverlay`**: Wraps your `CustomScrollView`. It handles gestures, auto-scrolling, the background grid, and the trash bin.
+2.  **`SliverDashboard`**: Renders the grid items inside the scroll view.
+
+- **Grid Clipping behavior:**
+  - When using `SliverDashboard` to compose with others slivers, the grid stops precisely at the content end (allowing subsequent slivers to be visible).
+    If no subsequent slivers to be visible (eg. `SliverAppBar` + `SliverDashboard`), you can set `fillViewport` to true to extend grid in viewport.
+  - While using `Dashboard` widget, in an `Expanded`, the grid fills the viewport, and `fillViewport` has no action.
+
 ```dart
-// Select multiple items
-controller.toggleSelection('item_1', multi: true);
-controller.toggleSelection('item_2', multi: true);
+  // You must provide the same ScrollController to both the Overlay and the ScrollView
+final scrollController = ScrollController();
 
-// Clear selection
-controller.clearSelection();
-
-// Check selection
-print(controller.selectedItemIds.value);
-
-// 2. Customize Multi-Selection Keys
-controller.shortcuts = DashboardShortcuts(
-  multiSelectKeys: [LogicalKeyboardKey.altLeft],
-);
+@override
+Widget build(BuildContext context) {
+  return Scaffold(
+    // 1. Wrap with DashboardOverlay
+    body: DashboardOverlay(
+      controller: controller,
+      scrollController: scrollController,
+      
+      // Define grid styling here so it renders behind the slivers
+      gridStyle: const GridStyle(lineColor: Colors.red), 
+      padding: const EdgeInsets.all(8),
+      // grid stops precisely at the content of the dashboard
+      // to not draw grid behind subsequent slivers
+      fillViewport: false, 
+      
+      // Handle external drops here
+      onDrop: (data, item) => 'new_id', 
+      
+      // Used for drag feedback rendering
+      itemBuilder: (ctx, item) => MyCard(item), 
+      
+      // 2. Your CustomScrollView
+      child: CustomScrollView(
+        controller: scrollController,
+        slivers: [
+          const SliverAppBar(
+            title: Text('My Dashboard'),
+            floating: true,
+            expandedHeight: 200,
+          ),
+          
+          // 3. The Dashboard Sliver
+          SliverPadding(
+            padding: const EdgeInsets.all(8),
+            sliver: SliverDashboard(
+              itemBuilder: (ctx, item) => MyCard(item),
+            ),
+          ),
+          
+          // 4. Other Slivers
+          SliverList(
+            delegate: SliverChildBuilderDelegate(
+              (ctx, index) => ListTile(title: Text('Item $index')),
+              childCount: 20,
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
 ```
 
 ### Nested Grids & Cross-Grid Drag
@@ -973,8 +959,8 @@ Key options:
 - `DashboardNestedScope.subGridDynamic` + `onNestedGridRequested`: holding a
   dragged item over a plain item highlights it and, after `nestHoverDelay`,
   asks your app to convert it into a nested grid.
-- `DashboardNestedScope.probe`: whether the pointer or the dragged tile's
-  visual center decides which grid it enters, independent of the grab point.
+- `DashboardNestedScope.probe`: whether the pointer or the dragged tile's visual center
+  decides which grid it enters, independent of the grab point.
 - Auto-scroll: fixed-size nested grids (`sizeToContent: false`) scroll
   internally with edge auto-scroll; `sizeToContent: true` grids delegate edge
   auto-scroll to the parent grid, which scrolls to follow the growing content.
@@ -1008,16 +994,6 @@ Notes: cross-grid drags carry a single item (multi-selection drags stay in
 their grid), and item ids must be unique across the tree. See
 [`README_NESTED_GRID.md`](README_NESTED_GRID.md) for the full guide and
 documented behaviors.
-
-### Layout Optimizer
-
-If your dashboard becomes fragmented (full of gaps) after many moves, you can use the optimizer to compact the layout.
-It uses a "Visual Bin Packing" algorithm that fills gaps while preserving the visual order (top-left to bottom-right) of your items. Static items act as obstacles and are not moved.
-
-```dart
-// Call this when you want to compact the grid
-controller.optimizeLayout();
-```
 
 ### Custom Compaction Strategy
 
@@ -1182,12 +1158,12 @@ This package tries to maintain strict code quality standards with high test cove
 
 Before submitting your pull request, it’s important to run the tests locally to verify everything works as expected. To run the tests and check the coverage:
 
-  1. Run the following command to execute the tests and collect coverage:
+1. Run the following command to execute the tests and collect coverage:
 ```bash
 flutter test --coverage
 ```
-  
-  2. If you have `lcov` installed, you can generate a human-readable coverage report:
+
+2. If you have `lcov` installed, you can generate a human-readable coverage report:
 ```bash
 genhtml coverage/lcov.info -o coverage/html
 ```
@@ -1212,14 +1188,4 @@ The CI pipeline will fail if:
 - **Linting violations** are detected.
 - **Static analysis** reveals warnings or errors.
 - **Tests fail**, or the code coverage decreases below the required threshold.
-
-Pull requests should pass all checks before they can be merged into the `main` branch.
-
-## Roadmap
-- ✅ **SliverDashboard:** Compose a dashboard with others slivers in your `CustomScrollView`.
-- ✅ **Accessibility:** Enhanced screen reader support and keyboard navigation with configurable keys and messages.
-- ✅ **Layout Optimizer:** Visual Bin Packing.
-- ✅ **Mini-map:** Display and navigate via a minimap.
-- ✅ **Multi-Selection:** Multi item selection and dragging.
-- ✅ **Sticky Headers:** Special item to create "barrier" for defining sections in layout.
-- ✅ **Nested dashboard:** Special item/nested grid with cross-drag.
+  Pull requests should pass all checks before they can be merged into the `main` branch.
