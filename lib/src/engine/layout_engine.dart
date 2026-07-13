@@ -1311,8 +1311,6 @@ Layout moveCluster(
   final cluster = layout
       .where((i) => clusterIds.contains(i.id) && !(i.isStatic && !i.isSectionBarrier))
       .toList();
-  final staticClusterItems =
-      layout.where((i) => clusterIds.contains(i.id) && i.isStatic && !i.isSectionBarrier).toList();
   final obstacles = layout
       .where((i) => !clusterIds.contains(i.id) || (i.isStatic && !i.isSectionBarrier))
       .toList();
@@ -1379,7 +1377,6 @@ Layout moveCluster(
       .where((i) => i.id != bbox.id) // Remove virtual bbox
       .toList()
     ..addAll(movedCluster)
-    ..addAll(staticClusterItems)
     // ID-based Index Stability: without this sort the dragged cluster is
     // appended at the tail, its sliver index changes on the first drag frame
     // and again on drop, and Flutter's child manager reorders/deactivates

@@ -1702,7 +1702,11 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
       grabOffset: _dragGrabOffset ?? Offset.zero,
       itemPixelSize: itemPixelSize,
     );
-    final reg = coordinator.targetAt(probePoint);
+    final reg = coordinator.targetAt(
+      probePoint,
+      excludeSourceController: widget.controller,
+      excludeItemId: itemId,
+    );
     if (reg == null || identical(reg.target, this)) return false;
 
     _stopScrollTimer();

@@ -390,6 +390,28 @@ class DashboardNestedCoordinator {
           if (identical(reg.parentController, parent)) reg,
       ];
 
+  /// Returns true if the grid of [reg] lives inside [parentItemId] of [parentController],
+  /// either directly or nested deeply within its descendant subtree.
+  ///
+  /// Uses the persistent [_childLinks] authoritative registry to guarantee correctness
+  /// even when portions of the parent grid hierarchy are virtualized/unmounted.
+  bool isDescendantOf(
+    NestedGridRegistration reg,
+    DashboardController parentController,
+    String parentItemId,
+  ) {
+    var currentController = reg.target.controller;
+    while (true) {
+      final link = _childLinks[currentController];
+      if (link == null) break;
+      if (identical(link.parent, parentController) && link.itemId == parentItemId) {
+        return true;
+      }
+      currentController = link.parent;
+    }
+    return false;
+  }
+
   /// Resolves the deepest registered grid whose interactive area contains
   /// [globalPosition]. Grids that do not [CrossGridDragTarget.canAcceptCrossGridItems]
   /// are skipped when [acceptingOnly] is true.
@@ -399,10 +421,23 @@ class DashboardNestedCoordinator {
   NestedGridRegistration? targetAt(
     Offset globalPosition, {
     bool acceptingOnly = true,
+    DashboardController? excludeSourceController,
+    String? excludeItemId,
   }) {
     NestedGridRegistration? best;
     for (final reg in _registrations) {
       if (acceptingOnly && !reg.target.canAcceptCrossGridItems) continue;
+
+      // Prevent a parent item from being dragged into its own child grid or deep descendants,
+      // which is a recursive layout paradox and causes visual glitches/crashes.
+      // We do NOT exclude the excludeSourceController itself, as items must be allowed to be dragged
+      // within their own source grid without triggering a cross-grid exit session.
+      if (excludeSourceController != null && excludeItemId != null) {
+        if (isDescendantOf(reg, excludeSourceController, excludeItemId)) {
+          continue;
+        }
+      }
+
       final box = reg.target.overlayRenderBox;
       if (box == null || !box.attached) continue;
       final local = box.globalToLocal(globalPosition);
@@ -494,7 +529,11 @@ class DashboardNestedCoordinator {
       itemPixelSize: session.itemPixelSize,
     );
 
-    var reg = targetAt(probePoint);
+    var reg = targetAt(
+      probePoint,
+      excludeSourceController: session.origin.controller,
+      excludeItemId: session.item.id,
+    );
     // Depth limit: dropping a *host* item (one that carries its own nested
     // grid) into a target adds a level below that target. Reject targets that
     // are already at the maximum nesting depth for such items. A plain leaf

@@ -58,6 +58,8 @@ graph TD
     style D fill:#d5e8d4,color:#000000
     style M fill:#fff2cc,color:#000000
     style P fill:#ffe6cc,color:#000000
+    
+    linkStyle default stroke:#555555,stroke-width:2px;
 ```
 
 ### 1. The State Layer (DashboardController)
@@ -91,6 +93,7 @@ graph TD
     - **Overlap-Free Invariant:** `moveElement` uses a **monotonic re-push cascade** (items may be re-queued when pushed again, instead of a one-shot `processed` set) followed by an O(N·k) verification pass over a row index (`_RowIndex`). The unconditional O(N²) all-pairs `resolveCollisions` safety net was removed from the per-crossing hot path (499,500 pair checks at N=1000 → ~16,000 indexed checks, 31× fewer). Property (fuzz-tested, 200 seeded dense layouts): **the returned layout contains zero overlapping non-static items.**
     - **Static-Jump Correctness:** When the moved item jumps over a static obstacle, collision resolution restarts from the item's **new** position; stale collision lists computed for the pre-jump position must never be consumed (`break` after re-queue).
     - **Index Stability Invariant:** Every engine function that returns a layout preserves **ascending ID order**, including `moveCluster` (which previously appended the dragged cluster at the tail). Element/widget identity in the sliver depends on this ordering; violating it causes full remount churn (`finalizeTree` / `_InactiveElements._unmount`).
+    - **INVARIANT — No Cluster Duplication:** `moveCluster` must guarantee that selecting pure static items alongside dynamic items does not result in duplicated elements in the final layout. Static items are treated as immovable obstacles within the collision path and are naturally returned by the coordinate solver; they must never be appended a second time (avoiding `ValueKey` crashes in the sliver).
 
 ### 3. The View Layer (Overlay & Slivers)
 
@@ -109,7 +112,7 @@ The view layer has been refactored to support native Sliver composition. It is c
     - **Web Throttle Flush:** The 16 ms pointer-event throttle used on web keeps the freshest position and flushes it on a short timer, so the item never settles one event behind the cursor at the end of a burst.
     - **`CrossGridDragTarget`:** the overlay state implements this interface so the nested-grid coordinator can drive it (`foreignDragOver`/`foreignDragLeave`/`foreignDrop`, `itemAtGlobal`, `currentSlotMetrics`, highlight). It registers with the nearest `DashboardNestedScope` in `didChangeDependencies` (depth = number of enclosing dashboards) and unregisters on dispose.
     - **Hit-Test Ownership:** `_hitTest` filters hit-path entries by **sliver ownership**. The hit-test path is deepest-first, so with nested grids the first `SliverDashboardParentData` under the pointer may belong to an *inner* grid; without the filter the outer overlay would start a drag on a foreign item id (StateError). Entries from foreign slivers are skipped and the walk naturally reaches the overlay's own host item.
-    - **Pointer Claim:** on pointer-down, the deepest overlay that actually starts an operation claims the pointer at the coordinator; ancestor overlays check `isPointerClaimedByOther` first and skip (Flutter dispatches pointer events deepest-first, so the claim is always set before ancestors run).
+    - **Pointer Claim & Target Exclusions:** on pointer-down, the deepest overlay that actually starts an operation claims the pointer at the coordinator; ancestor overlays check `isPointerClaimedByOther` first and skip (Flutter dispatches pointer events deepest-first, so the claim is always set before ancestors run).
     - **Placeholder Refactor:** `_updatePlaceholderPosition` (the `DragTarget` external-drop path) now delegates to `_gridPointAtGlobal` + `_showPlaceholderAt(w:, h:)`, shared with cross-grid drags so both flows use the exact same geometry and clamping.
 
 #### B. `SliverDashboard` (The Rendering Layer)
@@ -290,10 +293,9 @@ and a drag can travel continuously between any grids sharing a
   `onNestedGridRequested`, `subGridDynamic`, `nestHoverDelay`) are the single
   source of truth and are synced onto the coordinator.
 - **`DashboardNestedCoordinator`** — the control plane:
-    - **Registry:** every `DashboardOverlay` under the scope registers with its
-      nesting **depth**. `targetAt(globalPosition)` resolves the deepest
-      registered grid containing the point — O(G) point-in-rect tests per
-      pointer event (G = live grids), never per item.
+    - **Registry & Target Resolution (INVARIANT):** Every `DashboardOverlay` under the scope registers with its nesting **depth**. `targetAt(globalPosition)` resolves the deepest registered grid containing the point — O(G) point-in-rect tests per pointer event (G = live grids), never per item.
+      - **Recursive Nesting Safeguard:** `targetAt` prevents a parent grid item from being dragged inside its own child grid or deep descendant subtrees. This lookup uses the authoritative link-registry `_childLinks` (persistent walk-up check `isDescendantOf`) instead of unmounted/virtualized overlay states.
+      - **Same-Grid Drag Session Isolation:** Dragging within the source grid remains valid without triggering cross-grid sessions. The source controller itself is not excluded, allowing fluid local movements.
     - **Pointer claim:** `claimPointer` / `isPointerClaimedByOther` prevents
       ancestor grids from stealing drags started in nested grids.
     - **Cross-grid session:** the state machine driving an item's move between grids — temporary 
@@ -390,6 +392,10 @@ Key properties:
   deliberately survives `beginSession`: the handoff into the freshly created
   child grid happens *through* a session, and only the drop that ends it can
   confirm the request.
+- **`maxNestingDepth` gates level *creation*, not item movement:** the cap is checked in `updateSession` (only when the dragged item `hasNestedGrid`, i.e. it would add a level) and in `subGridDynamic` arming (via `canHostAtDepth(reg.depth)`). Do not add a blanket depth filter to `targetAt` — that would wrongly block plain leaf moves into deep grids. `moveItemToGrid` stays unconstrained (explicit caller).
+- **`hasNestedGrid` is declarative, links are authoritative:** the flag marks intent (builders, persistence, policies) and is self-healed by the codec (set on export for linked hosts, normalized on import from `subGrid` payloads); runtime decisions (`hasChildGrid`, export recursion, delivery) must keep reading the coordinator's persistent `_childLinks` map. The flag participates in `==`/`hashCode`/`contentSignature` — any change to it must keep the equality-law tests green.
+- **`updateItem` is the single-item mutation entry point:** never rewrite `layout.value` by hand to change one item. `updateItem` enforces id identity, corrects bounds, no-ops on unknown id / equal result, and emits one `onLayoutChanged`. New per-item mutations should go through it (or a thin wrapper over it), not around it.
+- **Id uniqueness:** cross-grid moves and the tree codec assume item ids are unique across the whole tree (debug-asserted in `moveItemToGrid`). Document this on any new cross-grid API.
 
 ### Performance contract
 
