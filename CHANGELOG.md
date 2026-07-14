@@ -81,7 +81,10 @@ tree, the new code paths reduce to a few null-checks per pointer event.
   through bound correction so invalid `w`/`h`/position cannot corrupt the
   layout, and exactly one `onLayoutChanged` fires per effective change.
   `recompact: false` skips pulling items back for metadata-only edits.
-- **`DashboardController.replaceItem`**: A new public API to swap/replace an existing grid item in-place. Automatically enforces ascending ID order, corrects bounds, and performs write-through updates to active pre-drag snapshots. Designed to support clean dynamic nested grid group/folder conversions on hover.
+- **`DashboardController.replaceItem`**: A new public API to swap/replace an existing 
+  grid item in-place. Automatically enforces ascending ID order, corrects bounds, 
+  and performs write-through updates to active pre-drag snapshots. Designed to support 
+  clean dynamic nested grid group/folder conversions on hover.
 - New controller capabilities (internal API): temporary cross-grid removal
   with three-way resolution (`movedAway` / `returned` / `canceled`),
   template-preserving external drop (`onDropExternalItem`), programmatic
@@ -100,16 +103,17 @@ tree, the new code paths reduce to a few null-checks per pointer event.
   layouts is an item of the *inner* grid — crashing the outer grid's drag
   start on an unknown id. Hit-test entries are now filtered by sliver
   ownership, so the outer grid correctly resolves to its own host item.
+- **Placeholder Collision Policies**: Fixed an issue where the drag-over 
+  placeholder ignored `DashboardPolicy` rules (specifically custom `canCollide` exclusions), 
+  causing protected items (like folders/panels) to be pushed during external 
+  or cross-grid hover events.
 
 ### Documentation & Tooling
 
 - `README_NESTED_GRID.md`: feature guide.
 - New example entry point `example/lib/nested_example.dart` and a demo
   launcher in `example/lib/main.dart`.
-- 14 new tests (cross-grid controller protocol, pointer claiming, hit-test
-  ownership, A→B drag with constraint preservation, cancel/restore,
-  multi-selection containment, `autoSlotCount`, programmatic moves, codec
-  round-trip).
+- New tests.
 
 ### Bug Fixes
 

@@ -27,6 +27,17 @@ class DefaultTestPolicy extends DashboardPolicy {
   const DefaultTestPolicy();
 }
 
+class NoFolderCollisionPolicy extends DashboardPolicy {
+  const NoFolderCollisionPolicy();
+
+  @override
+  bool canCollide(LayoutItem itemA, LayoutItem itemB) {
+    // Prevent collisions with items that have hasNestedGrid enabled
+    if (itemB.hasNestedGrid) return false;
+    return true;
+  }
+}
+
 void main() {
   group('DashboardPolicy Integration', () {
     late DashboardControllerImpl controller;
@@ -110,6 +121,30 @@ void main() {
       expect(policy.canResize(item), isTrue);
       expect(policy.canMoveTo(item, 0, 0, []), isTrue);
       expect(policy.canCollide(item, item), isTrue);
+    });
+  });
+
+  group('DashboardController - showPlaceholder Policy', () {
+    test('showPlaceholder must respect DashboardPolicy when resolving collisions', () {
+      final controller = DashboardController(
+        initialSlotCount: 8,
+        initialLayout: const [
+          LayoutItem(id: 'folder_item', x: 2, y: 0, w: 2, h: 2, hasNestedGrid: true),
+        ],
+      ) as DashboardControllerImpl
+
+        // Set the policy that prevents collisions with folder_item
+        ..policy = const NoFolderCollisionPolicy()
+
+        // Show placeholder directly overlapping folder_item at x: 2, y: 0
+        ..showPlaceholder(x: 2, y: 0, w: 2, h: 2);
+
+      final result = controller.layout.value;
+
+      // Verify the folder_item was NOT pushed (x and y remain unchanged)
+      final folder = result.firstWhere((i) => i.id == 'folder_item');
+      expect(folder.x, equals(2));
+      expect(folder.y, equals(0));
     });
   });
 }

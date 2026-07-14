@@ -635,6 +635,8 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
       // 3. CRUCIAL : Force calculation even if item is already at x,y in baseLayout
       // Without it, engine returns immediately.
       force: true,
+
+      policy: policy,
     );
 
     // If compaction is enabled, run it to fill gaps.
