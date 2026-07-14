@@ -180,6 +180,15 @@ abstract class DashboardController {
     bool recompact = true,
   });
 
+  /// Replaces the item [oldItemId] in place with [newItem], maintaining
+  /// layout stability, index order, and writing through to in-flight drag snapshots.
+  ///
+  /// No-op on unknown id — if no item matches [oldItemId], nothing happens.
+  /// Bounds are corrected — [newItem] is corrected to fit slot columns.
+  /// Ascending ID order is preserved — the returned layout is sorted by ID.
+  /// Write-through invariant is satisfied — updates the pre-drag snapshot.
+  void replaceItem(String oldItemId, LayoutItem newItem);
+
   /// Selects or deselects an item.
   ///
   /// [itemId]: The item to toggle.

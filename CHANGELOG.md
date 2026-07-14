@@ -81,6 +81,7 @@ tree, the new code paths reduce to a few null-checks per pointer event.
   through bound correction so invalid `w`/`h`/position cannot corrupt the
   layout, and exactly one `onLayoutChanged` fires per effective change.
   `recompact: false` skips pulling items back for metadata-only edits.
+- **`DashboardController.replaceItem`**: A new public API to swap/replace an existing grid item in-place. Automatically enforces ascending ID order, corrects bounds, and performs write-through updates to active pre-drag snapshots. Designed to support clean dynamic nested grid group/folder conversions on hover.
 - New controller capabilities (internal API): temporary cross-grid removal
   with three-way resolution (`movedAway` / `returned` / `canceled`),
   template-preserving external drop (`onDropExternalItem`), programmatic

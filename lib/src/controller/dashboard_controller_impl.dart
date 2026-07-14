@@ -448,6 +448,54 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
   }
 
   @override
+  void replaceItem(String oldItemId, LayoutItem newItem) {
+    final current = layout.value;
+
+    // 1. Locate the old item to ensure it exists
+    LayoutItem? oldItem;
+    for (final i in current) {
+      if (i.id == oldItemId) {
+        oldItem = i;
+        break;
+      }
+    }
+    if (oldItem == null) return;
+
+    // 2. Correct bounds of the new item to match target columns
+    final correctedNewItem = engine.correctBounds([newItem], slotCount.value).first;
+
+    // 3. Build and sort the new layout (Index Stability Invariant)
+    final nextLayout = [
+      for (final i in current)
+        if (i.id == oldItemId) correctedNewItem else i,
+    ]..sort((a, b) => a.id.compareTo(b.id));
+
+    layout.value = nextLayout;
+
+    // 4. Invariant: Write-through to in-flight pre-drag snapshots to avoid erasing on pointer updates
+    final snapshot = originalLayoutOnStart.peek();
+    if (snapshot.isNotEmpty) {
+      final nextSnapshot = [
+        for (final i in snapshot)
+          if (i.id == oldItemId) correctedNewItem else i,
+      ]..sort((a, b) => a.id.compareTo(b.id));
+      originalLayoutOnStart.value = nextSnapshot;
+    }
+
+    final exitSnapshot = _crossGridExitSnapshot;
+    if (exitSnapshot != null) {
+      final nextExitSnapshot = [
+        for (final i in exitSnapshot)
+          if (i.id == oldItemId) correctedNewItem else i,
+      ]..sort((a, b) => a.id.compareTo(b.id));
+      _crossGridExitSnapshot = nextExitSnapshot;
+    }
+
+    // 5. Notify layout changes
+    onLayoutChanged?.call(layout.value, slotCount.value);
+  }
+
+  @override
   void toggleSelection(String itemId, {bool multi = false}) {
     final currentSet = selectedItemIds.value.toSet();
     if (multi) {
