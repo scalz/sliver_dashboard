@@ -57,6 +57,8 @@ void main() {
         ..policy = policy;
     });
 
+    tearDown(() => controller.dispose());
+
     test('canDrag policy blocks drag start', () {
       controller.onDragStart('no-drag');
       // Drag should have been blocked
@@ -131,9 +133,11 @@ void main() {
         initialLayout: const [
           LayoutItem(id: 'folder_item', x: 2, y: 0, w: 2, h: 2, hasNestedGrid: true),
         ],
-      ) as DashboardControllerImpl
+      ) as DashboardControllerImpl;
 
-        // Set the policy that prevents collisions with folder_item
+      addTearDown(controller.dispose);
+
+      controller
         ..policy = const NoFolderCollisionPolicy()
 
         // Show placeholder directly overlapping folder_item at x: 2, y: 0

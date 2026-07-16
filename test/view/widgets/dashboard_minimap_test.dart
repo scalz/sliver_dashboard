@@ -19,6 +19,11 @@ void main() {
       scrollController = ScrollController();
     });
 
+    tearDown(() {
+      controller.dispose();
+      scrollController.dispose();
+    });
+
     testWidgets('renders correctly with finite size', (tester) async {
       await tester.pumpWidget(
         MaterialApp(
@@ -204,6 +209,7 @@ void main() {
 
     testWidgets('renders without error even if scroll view has no dimensions yet', (tester) async {
       final emptyController = ScrollController();
+      addTearDown(emptyController.dispose);
 
       await tester.pumpWidget(
         MaterialApp(

@@ -114,6 +114,7 @@ tree, the new code paths reduce to a few null-checks per pointer event.
 - `README_NESTED_GRID.md`: feature guide.
 - New example entry point `example/lib/nested_example.dart` and a demo
   launcher in `example/lib/main.dart`.
+- **Test Suite Consolidation & Reorganization**: Reorganized, added and improved test files.  
 
 ### Bug Fixes
 

@@ -1321,14 +1321,12 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     Curve curve = Curves.easeInOut,
   }) async {
     if (!layout.value.any((i) => i.id == itemId)) {
-      debugPrint('SliverDashboard: Cannot scroll to item $itemId (not found)');
       return;
     }
 
     if (!_scrollToItemController.hasListener) {
       // No DashboardOverlay is attached (detached controller scenario):
       // completing immediately avoids a Future that never resolves.
-      debugPrint('SliverDashboard: Cannot scroll to item $itemId (no overlay attached)');
       return;
     }
 

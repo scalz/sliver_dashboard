@@ -42,6 +42,8 @@ void main() {
       );
     });
 
+    tearDown(() => controller.dispose());
+
     // Helper to build the dashboard with the tracker
     Widget buildTestApp() {
       return MaterialApp(
@@ -122,20 +124,19 @@ void main() {
       expect(buildCounts['C'] ?? 0, 0, reason: 'Item C should not rebuild on add');
     });
 
-    // fix this test + add another one on edit mode switch
-    // testWidgets('Items should NOT rebuild when deleting an item', (tester) async {
-    //   await tester.pumpWidget(buildTestApp());
-    //   buildCounts.clear();
-    //
-    //   // Action: Remove Item A
-    //   controller.removeItem('A');
-    //   await tester.pump();
-    //
-    //   // Verification
-    //   expect(buildCounts.containsKey('A'), false, reason: "A shouldn't be built anymore");
-    //   expect(buildCounts['B'] ?? 0, 0, reason: 'Item B should not rebuild on delete');
-    //   expect(buildCounts['C'] ?? 0, 0, reason: 'Item C should not rebuild on delete');
-    // });
+    testWidgets('Items should NOT rebuild when deleting an item', (tester) async {
+      await tester.pumpWidget(buildTestApp());
+      buildCounts.clear();
+
+      // Action: Remove Item A
+      controller.removeItem('A');
+      await tester.pump();
+
+      // Verification: A is gone, B and C must NOT rebuild (firewall cache holds)
+      expect(buildCounts.containsKey('A'), false, reason: "A shouldn't be built anymore");
+      expect(buildCounts['B'] ?? 0, 0, reason: 'Item B should not rebuild on delete');
+      expect(buildCounts['C'] ?? 0, 0, reason: 'Item C should not rebuild on delete');
+    });
 
     testWidgets('Items should NOT rebuild when dragging external item (Placeholder)',
         (tester) async {

@@ -42,7 +42,15 @@ Ideal for analytics platforms, IoT control panels, project management tools, no-
 
 ## Try the Demo
 
-[Launch Demo](https://scalz.github.io/sliver_dashboard_web_demo/)
+[Launch Live Demo](https://scalz.github.io/sliver_dashboard_web_demo/)
+
+*Note on Web Performance:*
+This playground is built using standard JavaScript compilation:
+```bash
+flutter build web --base-href ... --release
+```
+This intentionally showcase the demo in non-WASM mode to verify efficiency.
+The package is WebAssembly (WASM) compatible. Building your production application with the --wasm flag will yield even greater execution speedups.
 
 ## Table of Contents
 
@@ -1132,13 +1140,17 @@ if (spotInLastRow != null) {
 
 Contributions are welcome! To ensure the project remains high-quality, reliable, and consistent, please follow the guidelines below when contributing code.
 
-### How to Contribute
+### Architecture & AI-Assisted Contributions
 
-Before submitting a pull request, make sure to familiarize yourself with the following resources:
+The development of `sliver_dashboard` can be assisted using AI coding assistants under a disciplined, structured framework to ensure code quality and performance:
 
-#### Resources
-- **[Architecture Guide](https://github.com/scalz/sliver_dashboard/blob/main/architecture.md):** A deep dive into the State, Logic, and View layers, including the caching strategy and Sliver protocol.
-- **[AI Context & Rules](https://github.com/scalz/sliver_dashboard/blob/main/AGENTS.md):** Coding standards, architectural constraints, and specific patterns (useful for AI assistants).
+*   **Strict Architectural Constraints:** All contributions must align with the State, Logic, and View layers detailed in [architecture.md](architecture.md). AI assistants are further guided by the rules in [AGENTS.md](AGENTS.md) file, which dictates core invariants (such as avoiding allocations during layout phases, enforcing proper tree isolation via `RepaintBoundary`, and maintaining row-index consistency).
+*   **Systematic Human Review:** No generated code is merged without manual review to verify algorithmic efficiency, readability, and overall design cohesion.
+*   **CI Test Verification:** The suite of 370+ regression tests running in CI serves as the final validator. Every contribution, whether handwritten or co-authored with an AI, must pass all tests and respect documented performance budgets.
+
+#### How to Contribute:
+1. **Understand the System:** Read [architecture.md](architecture.md) to familiarize yourself with the declarative UI, reactive state management, and nested grids protocol.
+2. **Setup your AI Assistant:** If you plan to contribute using AI tools (such as Cursor, Copilot, or custom LLM prompts), please ensure you point your assistant to the instructions in [AGENTS.md](AGENTS.md) before writing any code.
 
 #### Quality Standards
 
