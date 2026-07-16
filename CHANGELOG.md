@@ -107,13 +107,13 @@ tree, the new code paths reduce to a few null-checks per pointer event.
   placeholder ignored `DashboardPolicy` rules (specifically custom `canCollide` exclusions), 
   causing protected items (like folders/panels) to be pushed during external 
   or cross-grid hover events.
+- **Sliver Layout Caching**: Resolved an issue where programmatic slot count updates on empty or unmodified grids were ignored due to constraint-caching optimization.
 
 ### Documentation & Tooling
 
 - `README_NESTED_GRID.md`: feature guide.
 - New example entry point `example/lib/nested_example.dart` and a demo
   launcher in `example/lib/main.dart`.
-- New tests.
 
 ### Bug Fixes
 

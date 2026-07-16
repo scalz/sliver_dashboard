@@ -174,11 +174,17 @@ class _SliverDashboardState extends State<SliverDashboard> {
     final isEditing = _controller.isEditing.watch(context);
     _controller.isDragging.watch(context);
 
+    final ctrlSlotCount = _controller.slotCount.watch(context);
+
     final layout = _controller.layout.value;
     final keyToIndex = _getOrUpdateKeyToIndex(layout);
 
     // Use SliverLayoutBuilder instead of LayoutBuilder to return a RenderSliver
     return SliverLayoutBuilder(
+      // Bind the widget key directly to the active slotCount.
+      // Changing the key forces Flutter to unmount the old sub-grid and perform
+      // a clean layout pass, ensuring correct slot size calculations even on empty grids.
+      key: ValueKey('sliver-layout-builder-$ctrlSlotCount'),
       builder: (context, constraints) {
         // --- RESPONSIVE LOGIC ---
         if (widget.breakpoints != null) {
