@@ -255,6 +255,12 @@ To efficiently render large grids (1000+ items) in a small widget:
 - **Pure Painting:** Items are batched into a single `Path` per style and drawn behind a `RepaintBoundary`; the viewport indicator is a separate painter bound to the `ScrollController` via the `repaint` listenable.
 - **Viewport Sync:** The indicator repaints at scroll rate without touching the items layer.
 
+### Resizing Anchors & Handle Constraints (Anti-Drift)
+To prevent counter-intuitive layout expansions during resize gestures (e.g., dragging the top edge upwards against a barrier causing the bottom edge to grow downwards), the controller enforces strict handle-based geometric anchoring inside `onResizeUpdate` before calling `resizeItem`:
+- **Top Resizes (`top`, `topLeft`, `topRight`):** The bottom edge of the item is treated as an absolute physical anchor (`originalBottom = originalY + originalH`). The candidate `newY` is clamped against static barriers (section headers, static cards above) and `minH`/`maxH` constraints, ensuring the height `newH` is derived directly as `originalBottom - newY`.
+- **Left Resizes (`left`, `topLeft`, `bottomLeft`):** The right edge of the item is treated as an absolute physical anchor (`originalRight = originalX + originalW`). The candidate `newX` is clamped against static barriers on its left, ensuring `newW` is derived as `originalRight - newX`.
+- **Bottom & Right Resizes:** These retain their behaviors, letting the layout engine's collision solver resolve overlaps via pushes or jumping below obstacles.
+
 #### Data Flow during a Drag Operation
 
 ```mermaid
