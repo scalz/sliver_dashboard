@@ -1142,26 +1142,81 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
         newW = (originalItem.w + dW).round();
     }
 
+    // Anchored constraints resolver
+    // Prevent counter-intuitive layout expansions when resizing top/left edges
+    // against static obstacles, while preserving collision/jump behaviors
+    // for bottom/right edge resizes.
+    final statics = originalLayoutOnStart.value.where((i) => i.isStatic && i.id != itemId).toList();
+
+    final isLeftResize = handle == ResizeHandle.left ||
+        handle == ResizeHandle.topLeft ||
+        handle == ResizeHandle.bottomLeft;
+
+    final isTopResize = handle == ResizeHandle.top ||
+        handle == ResizeHandle.topLeft ||
+        handle == ResizeHandle.topRight;
+
     final maxW = originalItem.maxW.isFinite ? originalItem.maxW.toInt() : 10000;
     final maxH = originalItem.maxH.isFinite ? originalItem.maxH.toInt() : 10000;
+
+    // Apply preliminary clamps to ensure minimum and maximum item constraints
+    // are respected before applying geometric anchor boundaries.
     newW = newW.clamp(originalItem.minW, maxW);
     newH = newH.clamp(originalItem.minH, maxH);
 
-    if (scrollDirection.value == Axis.vertical) {
-      if (newX < 0) {
-        newW += newX;
-        newX = 0;
+    // Constrain Vertical Axis (Y, H)
+    if (isTopResize) {
+      final originalBottom = originalItem.y + originalItem.h;
+      var limitY = 0;
+      for (final s in statics) {
+        if (s.x < (newX + newW) && (s.x + s.w) > newX) {
+          if ((s.y + s.h) <= originalBottom) {
+            limitY = max(limitY, s.y + s.h);
+          }
+        }
       }
-      if (newX + newW > slotCount.value) {
-        newW = slotCount.value - newX;
-      }
+      final minYClamp = max(limitY, originalBottom - maxH);
+      final maxYClamp = originalBottom - originalItem.minH;
+      newY = newY.clamp(minYClamp, maxYClamp);
+      newH = originalBottom - newY;
     } else {
+      // allows jumping/pushing obstacles below
       if (newY < 0) {
         newH += newY;
         newY = 0;
       }
-      if (newY + newH > slotCount.value) {
-        newH = slotCount.value - newY;
+      if (scrollDirection.value == Axis.horizontal) {
+        if (newY + newH > slotCount.value) {
+          newH = slotCount.value - newY;
+        }
+      }
+    }
+
+    // Constrain Horizontal Axis (X, W)
+    if (isLeftResize) {
+      final originalRight = originalItem.x + originalItem.w;
+      var limitX = 0;
+      for (final s in statics) {
+        if (s.y < (newY + newH) && (s.y + s.h) > newY) {
+          if ((s.x + s.w) <= originalRight) {
+            limitX = max(limitX, s.x + s.w);
+          }
+        }
+      }
+      final minXClamp = max(limitX, originalRight - maxW);
+      final maxXClamp = originalRight - originalItem.minW;
+      newX = newX.clamp(minXClamp, maxXClamp);
+      newW = originalRight - newX;
+    } else {
+      // allows jumping/pushing obstacles on the right
+      if (newX < 0) {
+        newW += newX;
+        newX = 0;
+      }
+      if (scrollDirection.value == Axis.vertical) {
+        if (newX + newW > slotCount.value) {
+          newW = slotCount.value - newX;
+        }
       }
     }
 

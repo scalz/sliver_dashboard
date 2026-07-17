@@ -640,6 +640,54 @@ void main() {
           // So new width should be 6.
           expect(resizedItem.w, 6);
         });
+
+        test(
+          'Resizing top edge against a static barrier does not push bottom edge downwards',
+          () {
+            final controller = DashboardController(
+              initialSlotCount: 8,
+              initialLayout: [
+                const LayoutItem(
+                  id: 'barrier',
+                  x: 0,
+                  y: 0,
+                  w: 8,
+                  h: 1,
+                  isStatic: true,
+                ),
+                const LayoutItem(
+                  id: 'item',
+                  x: 0,
+                  y: 1,
+                  w: 2,
+                  h: 2,
+                  minH: 1,
+                ),
+              ],
+            );
+            addTearDown(controller.dispose);
+
+            controller.setEditMode(true);
+
+            controller.internal
+              ..onResizeStart('item')
+              ..onResizeUpdate(
+                'item',
+                ResizeHandle.top,
+                const Offset(0, -200),
+                slotWidth: 100,
+                slotHeight: 100,
+                crossAxisSpacing: 8,
+                mainAxisSpacing: 8,
+              );
+
+            final updatedItem = controller.layout.value.firstWhere((i) => i.id == 'item');
+
+            expect(updatedItem.y, equals(1));
+            expect(updatedItem.h, equals(2));
+            expect(updatedItem.y + updatedItem.h, equals(3));
+          },
+        );
       });
 
       group('with horizontal scroll', () {

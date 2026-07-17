@@ -108,6 +108,7 @@ tree, the new code paths reduce to a few null-checks per pointer event.
   causing protected items (like folders/panels) to be pushed during external 
   or cross-grid hover events.
 - **Sliver Layout Caching**: Resolved an issue where programmatic slot count updates on empty or unmodified grids were ignored due to constraint-caching optimization.
+- **Intuitive Resizing Anchors:** Fixed a layout defect where resizing an item's top or left edge against a static obstacle, section barrier, or grid boundary caused the item to expand downwards or rightwards. The layout engine now strictly respects the opposite edge as a fixed anchor during resize operations, stopping the resize interaction immediately when a static boundary is reached.
 
 ### Documentation & Tooling
 
