@@ -92,7 +92,7 @@ The fix required two interventions: allowing slivers to bypass the ancestor look
 
 ## The point I actually wanted to make about Flutter
 
-For years, the "Flutter-vs-JS debate" has been argued with CRUD apps and hello-world benchmarks. Yes, the web ecosystem has a historical headstart in library density for complex tools—rich like dashboard builders. But that is because a decade of library investment landed there.
+For years, the "Flutter vs. JS-based stacks debate" has been argued with CRUD apps and hello-world benchmarks. Yes, the web ecosystem has a historical headstart in library density for complex tools—rich like dashboard builders. But that is because a decade of library investment landed there.
 
 That's the gap `sliver_dashboard` is aimed at. Nothing in this article required heroics from the framework — slivers, repaint boundaries, and a pure Dart engine are all ordinary Flutter and ordinary software engineering. Flutter, gives us a raw, native graphics engine (Skia/Impeller) and sliver virtualization out of the box. We aren't negotiating with a browser's layout engine; we are painting directly to the GPU. The performance ceiling was never the framework's.  When you combine Flutter’s direct metal painting with a disciplined, allocation-free Dart engine, you don't just match JS performance—you easily surpass it. So the performance ceiling was ours to claim, one hard component at a time — cross-platform, from a single codebase.
 
