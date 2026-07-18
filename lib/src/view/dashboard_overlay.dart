@@ -286,6 +286,11 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
   Timer? _sameGridPauseTimer;
   Timer? _sameGridArmTimer;
   String? _sameGridArmedHostId;
+
+  /// The id of the child-grid host the pointer is currently traveling over
+  /// during an in-grid drag, while collision pushes are frozen (see the
+  /// existing-host approach freeze in the drag branch of _performUpdate).
+  String? _frozenOverChildHostId;
   Offset? _sameGridFreezePosition;
   Offset? _sameGridPauseAnchor;
   StreamSubscription<ScrollRequest>? _scrollSubscription;
@@ -1093,6 +1098,56 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
         relativePos -= _dragGrabOffset!;
       }
 
+      // Existing-host approach freeze. While the pointer travels over an
+      // item that ALREADY hosts a child grid, revert the collision pushes so
+      // the host — and the child grid mounted inside it — stays put long
+      // enough for the pointer to actually enter the child's sliver bounds
+      // and hand the drag over (_maybeStartCrossGridSession above). Without
+      // this, the in-grid push preview shoves the host away from the
+      // approaching pointer, and reaching the child grid takes several
+      // attempts of luck and speed. Complements the cross-grid exit hole,
+      // which only protects the window AFTER the session has started.
+      // Disjoint from the subGridDynamic arm flow, which only handles hosts
+      // WITHOUT a grid.
+      final approachCoordinator = _nestedCoordinator;
+      if (approachCoordinator != null) {
+        final impl = widget.controller.internal;
+        final snapshot = impl.dragOriginSnapshot;
+        final host =
+            snapshot == null ? null : _itemAtGlobalIn(snapshot, position, excludeId: _activeItemId);
+        final hostsGrid = host != null &&
+            !host.isStatic &&
+            (host.hasNestedGrid || approachCoordinator.hasChildGrid(widget.controller, host.id));
+        if (hostsGrid) {
+          if (_frozenOverChildHostId != host.id) {
+            _frozenOverChildHostId = host.id;
+            impl.freezeDragPushes();
+          }
+          // Keep the dragged tile glued to the pointer: with the pushes
+          // frozen, the pivot sits at its snapshot position, so the visual
+          // offset is relative to that.
+          final pivot = snapshot!.firstWhereOrNull((i) => i.id == _activeItemId);
+          if (pivot != null) {
+            // Mirrors onDragUpdate's own offset convention exactly
+            // (x stride uses crossAxisSpacing, y stride uses mainAxisSpacing,
+            // in both scroll directions).
+            impl.setDragOffset(
+              relativePos -
+                  Offset(
+                    pivot.x * (metrics.slotWidth + metrics.crossAxisSpacing),
+                    pivot.y * (metrics.slotHeight + metrics.mainAxisSpacing),
+                  ),
+            );
+          }
+          _checkTrash(position);
+          return; // hold: no pushes while approaching a child grid
+        }
+        // Left the host without entering its grid: resume normal pushes
+        // (freezeDragPushes reset the bbox cache, so the next onDragUpdate
+        // re-applies them).
+        _frozenOverChildHostId = null;
+      }
+
       widget.controller.internal.onDragUpdate(
         _activeItemId!,
         relativePos,
@@ -1258,6 +1313,7 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
   void _resetOperationState() {
     if (!mounted) return;
     _activeItemId = null;
+    _frozenOverChildHostId = null;
     _activeItemInitialLayout = null;
     _operationStartPosition = Offset.zero;
     _activeResizeHandle = null;

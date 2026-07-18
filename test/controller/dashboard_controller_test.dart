@@ -1835,4 +1835,148 @@ void main() {
       expect(layoutChangedCalls, 0);
     });
   });
+
+  // Regressions for two cross-grid UX defects:
+  //
+  //    `beginCrossGridExit` compacted the source grid immediately, shifting
+  //    everything under the pointer while the session was still targeting
+  //    grids whose geometry depends on the source layout (a nested child
+  //    inside a sibling item "ran away" from the drag). The source now keeps
+  //    a frozen hole; compaction runs once at `finishCrossGridExit`.
+  group('beginCrossGridExit — frozen hole', () {
+    test('the source layout keeps its geometry during the exit window', () {
+      final controller = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: const [
+          LayoutItem(id: 'a', x: 0, y: 0, w: 2, h: 2),
+          LayoutItem(id: 'b', x: 0, y: 2, w: 2, h: 2),
+          LayoutItem(id: 'c', x: 2, y: 0, w: 2, h: 2),
+        ],
+      )..setCompactionType(CompactType.vertical);
+      addTearDown(controller.dispose);
+
+      final removed = controller.internal.beginCrossGridExit({'a'});
+      expect(removed.single.id, 'a');
+
+      // 'b' sat below 'a': with the old immediate compaction it was pulled
+      // up to (0,0), moving under the pointer mid-session. It must stay put.
+      final b = controller.layout.value.firstWhere((i) => i.id == 'b');
+      expect(b.y, 2, reason: 'the exit hole must freeze the source geometry');
+      expect(controller.layout.value.length, 2);
+    });
+
+    test('movedAway collapses the hole exactly once, firing onLayoutChanged', () {
+      var events = 0;
+      final controller = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: const [
+          LayoutItem(id: 'a', x: 0, y: 0, w: 2, h: 2),
+          LayoutItem(id: 'b', x: 0, y: 2, w: 2, h: 2),
+        ],
+        onLayoutChanged: (_, __) => events++,
+      );
+      // NOTE: vertical compaction is the default. Do NOT call
+      // setCompactionType here: it has no same-value guard and fires
+      // onLayoutChanged unconditionally, which would offset the count below.
+      addTearDown(controller.dispose);
+
+      controller.internal
+        ..beginCrossGridExit({'a'})
+        ..finishCrossGridExit(outcome: CrossGridExitOutcome.movedAway);
+
+      final b = controller.layout.value.single;
+      expect(b.id, 'b');
+      expect(b.y, 0, reason: 'compaction is deferred to the commit');
+      expect(events, 1);
+    });
+
+    test('canceled restores the pre-drag snapshot silently', () {
+      var events = 0;
+      final controller = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: const [
+          LayoutItem(id: 'a', x: 0, y: 0, w: 2, h: 2),
+          LayoutItem(id: 'b', x: 0, y: 2, w: 2, h: 2),
+        ],
+        onLayoutChanged: (_, __) => events++,
+      );
+      // Same note as above: vertical is already the default.
+      addTearDown(controller.dispose);
+
+      controller.internal
+        ..beginCrossGridExit({'a'})
+        ..finishCrossGridExit(outcome: CrossGridExitOutcome.canceled);
+
+      expect(controller.layout.value.length, 2);
+      final a = controller.layout.value.firstWhere((i) => i.id == 'a');
+      expect((a.x, a.y), (0, 0));
+      expect(events, 0);
+    });
+  });
+
+  //    `onDragUpdate` let the drag target grow the grid one row per row
+  //    crossed below the content, making the sliver's extent chase the
+  //    pointer (a sibling grid below became unreachable). Under main-axis
+  //    compaction the target is now capped to the first free row past the
+  //    other items.
+  group('onDragUpdate — main-axis growth cap', () {
+    test('under vertical compaction the drag target is capped past content', () {
+      final controller = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: const [
+          LayoutItem(id: 'a', x: 0, y: 0, w: 1, h: 1),
+          LayoutItem(id: 'b', x: 1, y: 0, w: 1, h: 1),
+        ],
+      )
+        ..setCompactionType(CompactType.vertical)
+        ..setEditMode(true);
+      addTearDown(controller.dispose);
+
+      controller.internal
+        ..onDragStart('a')
+        // Pointer 8 rows below the content (100 px slots, no spacing).
+        ..onDragUpdate(
+          'a',
+          const Offset(0, 800),
+          slotWidth: 100,
+          slotHeight: 100,
+          mainAxisSpacing: 0,
+          crossAxisSpacing: 0,
+        );
+
+      final a = controller.layout.value.firstWhere((i) => i.id == 'a');
+      // maxMainOthers = 1 ('b' ends at y=1): the target is capped there
+      // instead of y=8, so the grid extent stops chasing the pointer.
+      expect(a.y, lessThanOrEqualTo(1));
+      controller.internal.cancelInteraction();
+    });
+
+    test('CompactType.none keeps free positioning unbounded', () {
+      final controller = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: const [
+          LayoutItem(id: 'a', x: 0, y: 0, w: 1, h: 1),
+          LayoutItem(id: 'b', x: 1, y: 0, w: 1, h: 1),
+        ],
+      )
+        ..setCompactionType(CompactType.none)
+        ..setEditMode(true);
+      addTearDown(controller.dispose);
+
+      controller.internal
+        ..onDragStart('a')
+        ..onDragUpdate(
+          'a',
+          const Offset(0, 800),
+          slotWidth: 100,
+          slotHeight: 100,
+          mainAxisSpacing: 0,
+          crossAxisSpacing: 0,
+        );
+
+      final a = controller.layout.value.firstWhere((i) => i.id == 'a');
+      expect(a.y, 8, reason: 'free positioning is a feature of CompactType.none');
+      controller.internal.cancelInteraction();
+    });
+  });
 }

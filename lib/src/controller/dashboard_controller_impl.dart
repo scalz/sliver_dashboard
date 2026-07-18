@@ -787,9 +787,16 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     clearSelection();
 
     final remaining = base.where((i) => !itemIds.contains(i.id)).toList();
-    layout.value = compactionType.value == engine.CompactType.none
-        ? _compactor.resolveCollisions(remaining, slotCount.value)
-        : _compactor.compact(remaining, slotCount.value);
+    // Deliberately NOT compacted: removing items can never introduce an
+    // overlap, so `remaining` is a valid layout as-is, and compacting here
+    // shifts the source grid *while the pointer is still hovering targets
+    // whose geometry depends on it* — a nested child grid inside a sibling
+    // item, or sibling slivers below. Concrete failure: the dragged item sat
+    // above its target's host, exit-compaction pulled the host up under the
+    // pointer, the target escaped, the session flip-flopped ("the grid runs
+    // away"). The hole is kept frozen for the whole session; compaction runs
+    // once in [finishCrossGridExit] when the move is committed.
+    layout.value = remaining;
     return removed;
   }
 
@@ -808,6 +815,12 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     _crossGridExitSnapshot = null;
     switch (outcome) {
       case CrossGridExitOutcome.movedAway:
+        // The exit hole (see [beginCrossGridExit]) is only collapsed now
+        // that the move is definitive.
+        final current = layout.value;
+        layout.value = compactionType.value == engine.CompactType.none
+            ? _compactor.resolveCollisions(current, slotCount.value)
+            : _compactor.compact(current, slotCount.value);
         onLayoutChanged?.call(layout.value, slotCount.value);
       case CrossGridExitOutcome.returned:
         break;
@@ -915,6 +928,14 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
   LayoutItem? _dragOriginalBBox;
   LayoutItem? _lastMovedPivot;
 
+  /// Main-axis edge (exclusive) of every NON-dragged item, cached at drag
+  /// start. When main-axis compaction is active, the drag target position is
+  /// capped to this row/column: any deeper drop compacts straight back, so
+  /// an uncapped target only makes the grid grow one row per row crossed —
+  /// the sliver's extent then chases the pointer and anything below it
+  /// (e.g. a sibling grid in the same scroll view) becomes unreachable.
+  int _dragMaxMainOthers = 0;
+
   // --- View-published layout metrics (backchannel, plain fields) ---
   // Written by RenderSliverDashboard at the end of every performLayout and
   // read by DashboardMinimap on its scroll-driven rebuilds. Deliberately NOT
@@ -968,6 +989,15 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     _dragClusterItems = snapshot.where((i) => ids.contains(i.id)).toList();
     _dragOriginalBBox = engine.calculateBoundingBox(_dragClusterItems);
     _lastMovedPivot = _dragPivotOriginal;
+
+    final isVertical = scrollDirection.value == Axis.vertical;
+    var maxMain = 0;
+    for (final i in snapshot) {
+      if (ids.contains(i.id)) continue;
+      final edge = isVertical ? i.y + i.h : i.x + i.w;
+      if (edge > maxMain) maxMain = edge;
+    }
+    _dragMaxMainOthers = maxMain;
   }
 
   /// Call continuously while a drag gesture is updated.
@@ -1004,12 +1034,25 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     var targetBBoxY = originalBBox.y + dy;
 
     // 4. Clamping
+    // Along the main axis, when main-axis compaction is active, cap the
+    // target to the first free row/column past the other items
+    // (_dragMaxMainOthers): dropping deeper compacts straight back, so the
+    // uncapped value only grew the grid under the pointer indefinitely.
+    // Free positioning (CompactType.none) and custom compactors keep the
+    // unbounded behavior — placing an item at an arbitrary offset is a
+    // feature there.
     if (scrollDirection.value == Axis.vertical) {
       targetBBoxX = targetBBoxX.clamp(0, slotCount.value - originalBBox.w);
       targetBBoxY = max(0, targetBBoxY);
+      if (compactionType.value == engine.CompactType.vertical) {
+        targetBBoxY = min(targetBBoxY, _dragMaxMainOthers);
+      }
     } else {
       targetBBoxX = max(0, targetBBoxX);
       targetBBoxY = targetBBoxY.clamp(0, slotCount.value - originalBBox.h);
+      if (compactionType.value == engine.CompactType.horizontal) {
+        targetBBoxX = min(targetBBoxX, _dragMaxMainOthers);
+      }
     }
 
     // Boundary Bypass.

@@ -1819,6 +1819,87 @@ void main() {
 
       expect(controller.selectedItemIds.value, isEmpty);
     });
+
+    /// While an in-grid drag travels over an item that already hosts a child
+    /// grid, the collision pushes must be frozen: otherwise the push preview
+    /// shoves the host — and the child grid mounted inside it — away from the
+    /// approaching pointer, and entering the child grid is a matter of luck.
+    /// (The cross-grid exit hole only protects the window AFTER the session has
+    /// started; this covers the approach BEFORE it.)
+    testWidgets(
+        'dragging over an item flagged hasNestedGrid freezes the pushes: '
+        'the host keeps its pre-drag position while hovered', (tester) async {
+      final coordinator = DashboardNestedCoordinator();
+      final controller = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: const [
+          // 'drag' sits above 'host' in the same columns: with pushes active,
+          // moving 'drag' downward would shove 'host' further down.
+          LayoutItem(id: 'drag', x: 0, y: 0, w: 2, h: 1),
+          LayoutItem(id: 'host', x: 0, y: 1, w: 2, h: 2, hasNestedGrid: true),
+          LayoutItem(id: 'other', x: 2, y: 0, w: 2, h: 1),
+        ],
+      )..setEditMode(true);
+      addTearDown(controller.dispose);
+      final scrollController = ScrollController();
+      addTearDown(scrollController.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: DashboardNestedScope(
+              coordinator: coordinator,
+              child: DashboardOverlay<String>(
+                controller: controller,
+                scrollController: scrollController,
+                itemBuilder: (context, item) => Text(item.id),
+                child: CustomScrollView(
+                  controller: scrollController,
+                  slivers: [
+                    SliverDashboard(
+                      itemBuilder: (context, item) => Text(item.id),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final hostBefore = controller.layout.value.firstWhere((i) => i.id == 'host');
+      expect(hostBefore.y, 1);
+
+      // Long-press 'drag', then move the pointer down INTO the host's area.
+      final dragCenter = tester.getCenter(find.text('drag'));
+      final hostCenter = tester.getCenter(find.text('host'));
+      final gesture = await tester.startGesture(dragCenter);
+      await tester.pump(kLongPressTimeout + const Duration(milliseconds: 100));
+      await tester.pump();
+
+      await gesture.moveTo(hostCenter);
+      await tester.pump();
+      await gesture.moveTo(hostCenter + const Offset(0, 10));
+      await tester.pump();
+
+      // Frozen: the host must still sit at its pre-drag slot — not pushed to
+      // make room for the dragged tile.
+      final hostDuring = controller.layout.value.firstWhere((i) => i.id == 'host');
+      expect(
+        hostDuring.y,
+        1,
+        reason: 'approaching a child-grid host must not shove it away',
+      );
+
+      // Moving away from the host resumes the pushes.
+      final otherArea = tester.getCenter(find.text('other'));
+      await gesture.moveTo(otherArea);
+      await tester.pump();
+
+      await gesture.up();
+      await tester.pumpAndSettle();
+    });
   });
 
   group('Desktop hover — spatial bucket index', () {
