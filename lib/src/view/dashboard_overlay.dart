@@ -378,6 +378,7 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
     }
     if (widget.controller != oldWidget.controller) {
       _renderSliver = null;
+      _hoverIndex = null; // Reason: retains a layout list of the old controller.
       _scrollSubscription?.cancel().ignore();
       _setupScrollListener();
     }
@@ -1642,6 +1643,22 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
     final cy = (point.dy / strideY).floor();
     if (cx < 0 || cy < 0) return null;
 
+    // Dense-layout fast path: above the threshold, hover resolution goes
+    // through a coordinate-bucket index (O(1) per event) instead of the
+    // linear scan (O(N) per event). At 100+ small items under a fast desktop
+    // pointer (120 Hz), the linear scan costs 12k+ rect tests per second;
+    // the bucket lookup costs one hash probe. The index is built once per
+    // *base list instance*: the hot callers (nest-hover, same-grid pause)
+    // resolve against stable snapshots, so a whole gesture reuses one index.
+    if (base.length >= _kHoverIndexThreshold) {
+      final index = _hoverIndexFor(base);
+      final hit = index.buckets[_hoverCellKey(cx, cy)];
+      if (hit == null || hit.id == '__placeholder__' || hit.id == excludeId) {
+        return null;
+      }
+      return hit;
+    }
+
     for (final candidate in base) {
       if (candidate.id == '__placeholder__' || candidate.id == excludeId) continue;
       if (cx >= candidate.x &&
@@ -1652,6 +1669,44 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
       }
     }
     return null;
+  }
+
+  /// Below this item count the plain linear scan wins (no index build, no
+  /// map memory); above it, the bucket index amortizes within a few events.
+  static const int _kHoverIndexThreshold = 16;
+
+  _HoverGridIndex? _hoverIndex;
+
+  /// Packs a grid cell into one int key. `x` is bounded by the slot count
+  /// (< 2^20 by construction); `y` grows with content but stays far below
+  /// 2^32, keeping the packed key inside the 2^53 safe-integer range on
+  /// dart2js.
+  static int _hoverCellKey(int cx, int cy) => (cy << 20) | cx;
+
+  /// Returns the bucket index for [base], rebuilding it only when the list
+  /// *instance* changed. Build cost is O(total covered cells); the
+  /// overlap-free invariant guarantees at most one non-static item per cell,
+  /// and first-in-list wins on any residual collision — matching the linear
+  /// scan's semantics exactly.
+  _HoverGridIndex _hoverIndexFor(List<LayoutItem> base) {
+    final cached = _hoverIndex;
+    if (cached != null && identical(cached.source, base)) return cached;
+
+    final buckets = <int, LayoutItem>{};
+    for (final item in base) {
+      if (item.id == '__placeholder__') continue;
+      for (var dy = 0; dy < item.h; dy++) {
+        final rowBase = (item.y + dy) << 20;
+        for (var dx = 0; dx < item.w; dx++) {
+          final key = rowBase | (item.x + dx);
+          // First-in-list wins, like the linear scan (no closure allocation).
+          buckets[key] ??= item;
+        }
+      }
+    }
+    final built = _HoverGridIndex(source: base, buckets: buckets);
+    _hoverIndex = built;
+    return built;
   }
 
   // ===========================================================================
@@ -1923,4 +1978,16 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
       slotCount: slotCount,
     );
   }
+}
+
+/// Immutable coordinate-bucket index over one layout list instance, mapping a
+/// packed grid cell to the item covering it. See `_hoverIndexFor`.
+class _HoverGridIndex {
+  const _HoverGridIndex({required this.source, required this.buckets});
+
+  /// The exact list instance this index was built from (identity-cached).
+  final List<LayoutItem> source;
+
+  /// Packed cell key -> covering item.
+  final Map<int, LayoutItem> buckets;
 }

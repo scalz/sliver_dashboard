@@ -600,6 +600,72 @@ void main() {
         ..unregister(destTarget);
     });
 
+    testWidgets(
+        'hover jitter filter: sub-tolerance host flips at a tile border '
+        'neither flicker the highlight nor restart the nest timer', (tester) async {
+      final boxKey = GlobalKey();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Align(
+            alignment: Alignment.topLeft,
+            child: SizedBox(key: boxKey, width: 200, height: 200),
+          ),
+        ),
+      );
+
+      final sourceTarget = _FakeTarget(origin);
+      final destTarget = _FakeTarget(other)..boxProvider = boxOf(boxKey);
+      coordinator
+        ..subGridDynamic = true
+        ..nestHoverDelay = const Duration(milliseconds: 100)
+        ..hoverJitterTolerance = 4.0
+        ..register(sourceTarget, depth: 0)
+        ..register(destTarget, depth: 0);
+      var fired = 0;
+      coordinator.onNestedGridRequested = (host, dragged, hostGrid) => fired++;
+
+      const leafA = LayoutItem(id: 'leafA', x: 0, y: 0, w: 2, h: 2);
+      const leafB = LayoutItem(id: 'leafB', x: 2, y: 0, w: 2, h: 2);
+      destTarget.hoverItem = leafA;
+
+      coordinator
+        ..beginSession(
+          source: sourceTarget,
+          item: origin.layout.value.first,
+          globalPosition: const Offset(50, 50),
+          grabOffset: Offset.zero,
+          itemPixelSize: const Size(10, 10),
+          overlayContext: boxKey.currentContext!,
+          proxyChild: const SizedBox(),
+        )
+        ..updateSession(const Offset(50, 50));
+      expect(destTarget.highlight, 'leafA');
+
+      // Border noise: the resolved host flips to the neighbor at +2 px
+      // (<= 4 px tolerance) and back. Without the filter this would clear the
+      // highlight and cancel the timer twice per oscillation.
+      destTarget.hoverItem = leafB;
+      coordinator.updateSession(const Offset(52, 50));
+      expect(destTarget.highlight, 'leafA'); // debounced: freeze untouched
+      destTarget.hoverItem = leafA;
+      coordinator.updateSession(const Offset(50, 50));
+      expect(destTarget.highlight, 'leafA');
+
+      // The timer was never restarted: it fires 100 ms after the FIRST arm.
+      await tester.pump(const Duration(milliseconds: 150));
+      expect(fired, 1);
+
+      // A genuine move (> tolerance) switches immediately.
+      destTarget.hoverItem = leafB;
+      coordinator.updateSession(const Offset(80, 50));
+      expect(destTarget.highlight, 'leafB');
+
+      coordinator
+        ..cancelSession()
+        ..unregister(sourceTarget)
+        ..unregister(destTarget);
+    });
+
     testWidgets('subGridDynamic does not arm on an item that already hosts a grid', (tester) async {
       final boxKey = GlobalKey();
       await tester.pumpWidget(

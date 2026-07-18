@@ -463,3 +463,28 @@ Invariant-preserving design:
   `flutter_test`.
 - **Allocation budget:** at most one mutable `_ReflowTransition` per pushed
   tile per gesture (retargets mutate in place); the placeholder never animates.
+
+### Minimap markers & multi-viewport
+
+The minimap now has up to three isolated raster layers: items (repaints on
+layout identity change), markers (repaints on `listEquals` of the marker
+list; one batched `Path` per distinct color, one mutated `Paint`), and the
+viewport layer (bound via `repaint:` to every indicator's controller —
+`Listenable.merge` only when there are 2+). `MinimapStyle`, `MinimapMarker`
+and `ViewportIndicator` all implement value equality (painter-parameter rule).
+Each `ViewportIndicator` maps the visible window onto its own scroll segment
+[`mainAxisLeadingExtent`, `+ mainAxisContentExtent`], enabling one minimap
+per grid in multi-sliver scroll views.
+
+### Desktop hover — spatial index & jitter filter
+
+- `itemAtGlobal` uses a coordinate-bucket index (packed key `(cy << 20) | cx`,
+  dart2js-safe) above 16 items, identity-cached per layout list instance:
+  O(1) per pointer event vs O(N) linear scan; first-in-list wins on residual
+  collisions, preserving the scan's semantics under the overlap-free invariant.
+- Nest-hover host switching is debounced by `hoverJitterTolerance` (4 px
+  default): any hover state change (gain, loss, switch) within the tolerance
+  radius of the last accepted switch is ignored, so border micro-noise cannot
+  flicker the highlight or restart the `nestHoverDelay` timer. The anchor
+  survives `_clearNestHover` deliberately — it anchors the filter across the
+  very transition it debounces.

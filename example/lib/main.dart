@@ -474,7 +474,7 @@ class _DashboardPageState extends State<DashboardPage> {
               controller: controller,
               scrollController: standardScrollController,
               scrollDirection: controller.scrollDirection.value,
-              animateReflow: true,
+              animateReflow: false,
               slotAspectRatio: 1.0,
               mainAxisSpacing: 8.0,
               crossAxisSpacing: 8.0,
@@ -727,12 +727,35 @@ class _DashboardPageState extends State<DashboardPage> {
                 controller: controller,
                 scrollController: activeScrollController,
                 width: 120,
+                // Must mirror the dashboard's layout config: the minimap has
+                // no other way to know the real spacing/aspect/padding, and
+                // defaults (0 spacing) skew the item proportions.
+                slotAspectRatio: 1.0,
+                mainAxisSpacing: 8.0,
+                crossAxisSpacing: 8.0,
+                padding: const EdgeInsets.all(8.0),
                 style: const MinimapStyle(
                   backgroundColor: Colors.black54,
                   itemColor: Colors.indigo,
                   staticItemColor: Colors.grey,
                   viewportColor: Color(0x332196F3),
                 ),
+                markers: const [
+                  MinimapMarker(
+                    itemId: 'sec_sys',
+                    color: Colors.red,
+                    size: 10,
+                    shape: MinimapMarkerShape.circle,
+                    alignment: Alignment.centerRight,
+                  ),
+                  MinimapMarker(
+                    itemId: 'sec_usr',
+                    color: Colors.amber,
+                    size: 12,
+                    shape: MinimapMarkerShape.triangle,
+                    alignment: Alignment.centerLeft,
+                  ),
+                ],
               ),
             ),
           ),

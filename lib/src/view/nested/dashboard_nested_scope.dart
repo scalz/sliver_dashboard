@@ -190,6 +190,7 @@ class DashboardNestedCoordinator {
     this.maxNestingDepth,
     this.projectionPolicy = DimensionProjectionPolicy.preserveLogicalSize,
     this.customProjectionCallback,
+    this.hoverJitterTolerance = 4.0,
   });
 
   /// Fired after a successful cross-grid move (drag & drop or programmatic).
@@ -276,6 +277,17 @@ class DashboardNestedCoordinator {
 
   /// A custom callback to project item dimensions when [projectionPolicy] is set to [DimensionProjectionPolicy.custom].
   DimensionProjectionCallback? customProjectionCallback;
+
+  /// Low-pass jitter filter for nest-hover host switching, in logical pixels.
+  ///
+  /// When the probe point sits on a tile border, sub-pixel pointer noise
+  /// (high-DPI mice, trackpad micro-drift) makes the resolved host flip
+  /// between the two adjacent tiles every event, flickering the highlight
+  /// and endlessly restarting the [nestHoverDelay] timer. A host switch is
+  /// therefore only accepted once the probe has moved more than this
+  /// distance away from the position of the last accepted switch. Set to 0
+  /// to disable.
+  double hoverJitterTolerance;
 
   /// Projects an item's width and height based on the active [projectionPolicy]
   /// and the column ratio between the source and target grids.
@@ -729,12 +741,31 @@ class DashboardNestedCoordinator {
           !host.hasNestedGrid &&
           !hasChildGrid(over.controller, host.id) &&
           (overReg == null || canHostAtDepth(overReg.depth));
-      if (hostable) {
+
+      // Low-pass jitter filter: when the probe sits on a tile border, pointer
+      // micro-noise resolves alternating hosts on consecutive events, which
+      // flickers the highlight and endlessly restarts the nest timer. As long
+      // as the probe stays within [hoverJitterTolerance] of the last accepted
+      // switch, the current hover state is kept as-is (host change, host loss
+      // and host gain are all debounced identically).
+      final currentHoverId = session.nestHoverId;
+      final anchor = session.nestHoverAnchor;
+      final hoverStateWouldChange = (hostable ? host.id : null) != currentHoverId;
+      if (hoverStateWouldChange &&
+          anchor != null &&
+          hoverJitterTolerance > 0 &&
+          (probePoint - anchor).distance <= hoverJitterTolerance) {
+        if (currentHoverId != null) {
+          return; // keep the freeze exactly as it is
+        }
+        // No hover held: fall through to the regular placeholder update.
+      } else if (hostable) {
         if (session.nestHoverId != host.id) {
           _clearNestHover(session);
           session
             ..nestHoverId = host.id
-            ..nestHoverTarget = over;
+            ..nestHoverTarget = over
+            ..nestHoverAnchor = probePoint;
           over
             ..foreignDragLeave() // freeze: revert pushes so the host stays put
             ..setNestHoverHighlight(host.id);
@@ -747,7 +778,10 @@ class DashboardNestedCoordinator {
         }
         return; // frozen: no placeholder while arming
       }
-      if (session.nestHoverId != null) _clearNestHover(session);
+      if (session.nestHoverId != null) {
+        _clearNestHover(session);
+        session.nestHoverAnchor = probePoint;
+      }
     }
 
     over.foreignDragOver(projectedItem, probePoint);
@@ -810,6 +844,8 @@ class DashboardNestedCoordinator {
     session
       ..nestHoverTarget = null
       ..nestHoverId = null;
+    // Note: nestHoverAnchor is deliberately kept — it anchors the jitter
+    // filter across the very transition it debounces.
   }
 
   void _clearSession({required bool restoreOrigin}) {
@@ -937,6 +973,11 @@ class _CrossGridSession {
   CrossGridDragTarget? nestHoverTarget;
   Timer? nestTimer;
 
+  /// Probe position at the last accepted nest-hover host switch — the anchor
+  /// of the hover jitter filter (see
+  /// [DashboardNestedCoordinator.hoverJitterTolerance]).
+  Offset? nestHoverAnchor;
+
   // Projection memo: the dragged item is immutable for the whole session, so
   // the projected copy only changes when the hovered grid (or its live slot
   // count) changes. Caching it removes one LayoutItem allocation per pointer
@@ -977,6 +1018,7 @@ class DashboardNestedScope extends StatefulWidget {
     this.maxNestingDepth,
     this.projectionPolicy = DimensionProjectionPolicy.preserveLogicalSize,
     this.customProjectionCallback,
+    this.hoverJitterTolerance = 4.0,
   });
 
   /// The subtree containing the dashboards.
@@ -1025,6 +1067,10 @@ class DashboardNestedScope extends StatefulWidget {
   /// A custom callback to project item dimensions when [projectionPolicy] is set to [DimensionProjectionPolicy.custom].
   final DimensionProjectionCallback? customProjectionCallback;
 
+  /// Low-pass jitter filter for nest-hover host switching. See
+  /// [DashboardNestedCoordinator.hoverJitterTolerance].
+  final double hoverJitterTolerance;
+
   /// The coordinator of the nearest enclosing scope, or null.
   static DashboardNestedCoordinator? maybeOf(BuildContext context) =>
       context.dependOnInheritedWidgetOfExactType<_DashboardNestedScopeProvider>()?.coordinator;
@@ -1062,7 +1108,8 @@ class _DashboardNestedScopeState extends State<DashboardNestedScope> {
       ..probe = widget.probe
       ..maxNestingDepth = widget.maxNestingDepth
       ..projectionPolicy = widget.projectionPolicy
-      ..customProjectionCallback = widget.customProjectionCallback;
+      ..customProjectionCallback = widget.customProjectionCallback
+      ..hoverJitterTolerance = widget.hoverJitterTolerance;
   }
 
   @override

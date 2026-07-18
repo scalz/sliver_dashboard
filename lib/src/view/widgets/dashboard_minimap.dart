@@ -1,7 +1,9 @@
 import 'dart:math';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:sliver_dashboard/src/controller/dashboard_controller_interface.dart';
+import 'package:sliver_dashboard/src/controller/utility.dart';
 import 'package:sliver_dashboard/src/models/layout_item.dart';
 import 'package:sliver_dashboard/src/view/widgets/minimap_style.dart';
 import 'package:state_beacon/state_beacon.dart';
@@ -22,6 +24,10 @@ class DashboardMinimap extends StatelessWidget {
     this.mainAxisSpacing = 0.0,
     this.crossAxisSpacing = 0.0,
     this.padding = EdgeInsets.zero,
+    this.markers = const <MinimapMarker>[],
+    this.viewportIndicators,
+    this.mainAxisLeadingExtent,
+    this.mainAxisContentExtent,
   });
 
   /// The dashboard controller containing the layout data.
@@ -50,6 +56,45 @@ class DashboardMinimap extends StatelessWidget {
 
   /// The padding used in the real dashboard.
   final EdgeInsets padding;
+
+  /// Custom overlay markers (status dots, selection badges…) rendered over
+  /// specific items. Painted in a dedicated cached layer: all markers are
+  /// batched into one [Path] per distinct color, and the layer only
+  /// re-rasterizes when this list changes by value (`listEquals`), never on
+  /// scroll.
+  final List<MinimapMarker> markers;
+
+  /// The scroll offset at which the grid's segment starts inside the
+  /// scrollable (extent of every sliver before it: app bars, headers…).
+  /// When null (default), the exact `precedingScrollExtent` published by the
+  /// grid sliver at each layout pass is used. Used by the default viewport
+  /// indicator and by tap/drag-to-scroll.
+  /// Ignored when [viewportIndicators] is provided.
+  final double? mainAxisLeadingExtent;
+
+  /// The scroll extent of the grid's segment. When null (default), it is
+  /// derived from the layout and the live slot metrics — an approximation
+  /// that excludes any `SliverPadding` wrapped around the grid sliver; pass
+  /// the exact extent here if that approximation is off for your tree.
+  /// Ignored when [viewportIndicators] is provided.
+  final double? mainAxisContentExtent;
+
+  /// The viewport indicators to paint. When null (default), one indicator is
+  /// derived from [scrollController], mapped onto the *grid's own scroll
+  /// segment* ([mainAxisLeadingExtent] / [mainAxisContentExtent]) rather
+  /// than the whole scrollable. The two spaces only coincide for a bare grid
+  /// alone in its scroll view; with section headers, a `fillViewport`
+  /// filler, or preceding slivers, mapping the whole scrollable draws the
+  /// indicator at the wrong place/size (degenerate case: a non-scrolling
+  /// scrollable covers the entire minimap).
+  ///
+  /// Provide several [ViewportIndicator]s when multiple sibling
+  /// `SliverDashboard`s share the scroll view: each indicator maps the
+  /// visible window onto its own scroll segment. All indicators are painted
+  /// by the single viewport layer, whose `repaint` listenable merges every
+  /// indicator's controller — scroll ticks still never touch the item or
+  /// marker layers.
+  final List<ViewportIndicator>? viewportIndicators;
 
   @override
   Widget build(BuildContext context) {
@@ -82,7 +127,34 @@ class DashboardMinimap extends StatelessWidget {
         var spacingRatioMain = 0.0;
         var spacingRatioCross = 0.0;
 
-        if (scrollController.hasClients && scrollController.position.haveDimensions) {
+        // Main-axis pixel extent of the grid content (rows/columns +
+        // spacings), derived from the live slot metrics. Drives the default
+        // viewport-indicator segment and tap-to-scroll so both live in the
+        // SAME coordinate space as the painted items — not the whole
+        // scrollable. 0 when metrics are unavailable (no clients yet).
+        var derivedGridExtent = 0.0;
+
+        // Exact metrics published by RenderSliverDashboard at each layout
+        // pass (preceding extent, own scroll extent, real slot sizes).
+        // Preferred over any local derivation: the historical approximation
+        // used position.viewportDimension — the SCROLL-axis size — as the
+        // cross-axis width, which skews every derived pixel value.
+        final internal = controller.internal;
+        final pubSlotW = internal.viewSlotWidth;
+        final pubSlotH = internal.viewSlotHeight;
+        final pubExtent = internal.viewMainAxisContentExtent;
+        final pubLeading = internal.viewMainAxisLeadingExtent;
+
+        if (pubSlotW != null && pubSlotH != null && pubSlotW > 0 && pubSlotH > 0) {
+          if (isVertical) {
+            spacingRatioCross = crossAxisSpacing / pubSlotW;
+            spacingRatioMain = mainAxisSpacing / pubSlotH;
+          } else {
+            spacingRatioCross = crossAxisSpacing / pubSlotH;
+            spacingRatioMain = mainAxisSpacing / pubSlotW;
+          }
+        } else if (scrollController.hasClients && scrollController.position.haveDimensions) {
+          // Fallback before the first layout: legacy approximation.
           final viewportSize = scrollController.position.viewportDimension;
           if (isVertical) {
             // Real Width of 1 slot in pixels
@@ -94,6 +166,7 @@ class DashboardMinimap extends StatelessWidget {
               // Ratio = SpacingPx / SlotWidthPx
               spacingRatioCross = crossAxisSpacing / realSlotWidth;
               spacingRatioMain = mainAxisSpacing / realSlotHeight;
+              derivedGridExtent = maxY * realSlotHeight + max(0, maxY - 1) * mainAxisSpacing;
             }
           } else {
             // Horizontal logic
@@ -102,9 +175,18 @@ class DashboardMinimap extends StatelessWidget {
               final realSlotWidth = realSlotHeight * slotAspectRatio;
               spacingRatioCross = crossAxisSpacing / realSlotHeight;
               spacingRatioMain = mainAxisSpacing / realSlotWidth;
+              derivedGridExtent = maxX * realSlotWidth + max(0, maxX - 1) * mainAxisSpacing;
             }
           }
         }
+
+        // Segment of the scrollable depicted by this minimap. Precedence:
+        // explicit widget values > exact published metrics > legacy
+        // approximation (which excludes any SliverPadding around the grid).
+        final segmentExtent = mainAxisContentExtent ??
+            pubExtent ??
+            (derivedGridExtent > 0 ? derivedGridExtent : null);
+        final segmentLeading = mainAxisLeadingExtent ?? pubLeading ?? 0.0;
 
         double logicalGridWidth;
         double logicalGridHeight;
@@ -151,11 +233,15 @@ class DashboardMinimap extends StatelessWidget {
                 details.localPosition,
                 isVertical ? drawnHeight : drawnWidth,
                 isVertical,
+                segmentExtent: segmentExtent,
+                segmentLeading: segmentLeading,
               ),
               onPanUpdate: (details) => _handleInteraction(
                 details.localPosition,
                 isVertical ? drawnHeight : drawnWidth,
                 isVertical,
+                segmentExtent: segmentExtent,
+                segmentLeading: segmentLeading,
               ),
               child: SizedBox(
                 width: drawnWidth,
@@ -183,10 +269,33 @@ class DashboardMinimap extends StatelessWidget {
                     // Viewport layer: repaints on every scroll tick via the
                     // `repaint` listenable (fixes the stale indicator bug —
                     // the old shouldRepaint ignored scroll entirely).
+                    if (markers.isNotEmpty)
+                      RepaintBoundary(
+                        child: CustomPaint(
+                          size: Size(drawnWidth, drawnHeight),
+                          painter: _MinimapMarkersPainter(
+                            layout: layout,
+                            markers: markers,
+                            scale: scale,
+                            unitWidth: unitWidth,
+                            unitHeight: unitHeight,
+                            spacingRatioMain: spacingRatioMain,
+                            spacingRatioCross: spacingRatioCross,
+                            isVertical: isVertical,
+                          ),
+                        ),
+                      ),
                     CustomPaint(
                       size: Size(drawnWidth, drawnHeight),
                       painter: _MinimapViewportPainter(
-                        scrollController: scrollController,
+                        indicators: viewportIndicators ??
+                            <ViewportIndicator>[
+                              ViewportIndicator(
+                                scrollController: scrollController,
+                                mainAxisLeadingExtent: segmentLeading,
+                                mainAxisContentExtent: segmentExtent,
+                              ),
+                            ],
                         style: style,
                         isVertical: isVertical,
                         minimapContentMainAxis: isVertical ? drawnHeight : drawnWidth,
@@ -205,8 +314,10 @@ class DashboardMinimap extends StatelessWidget {
   void _handleInteraction(
     Offset localPosition,
     double minimapMainAxisSize,
-    bool isVertical,
-  ) {
+    bool isVertical, {
+    double? segmentExtent,
+    double? segmentLeading,
+  }) {
     if (!scrollController.hasClients || !scrollController.position.haveDimensions) return;
 
     final position = scrollController.position;
@@ -216,9 +327,16 @@ class DashboardMinimap extends StatelessWidget {
 
     if (totalContentSize <= 0 || minimapMainAxisSize <= 0) return;
 
-    final ratio = totalContentSize / minimapMainAxisSize;
+    // Same coordinate space as the painted items and the default viewport
+    // indicator: the minimap depicts the grid's scroll segment
+    // [leading, leading + segmentLen], not the whole scrollable.
+    final leading = segmentLeading ?? mainAxisLeadingExtent ?? 0.0;
+    final segmentLen = segmentExtent ?? (totalContentSize - leading);
+    if (segmentLen <= 0) return;
+
+    final ratio = segmentLen / minimapMainAxisSize;
     final touchPos = isVertical ? localPosition.dy : localPosition.dx;
-    final targetCenter = touchPos * ratio;
+    final targetCenter = leading + touchPos * ratio;
     final targetStart = targetCenter - (viewportDimension / 2);
 
     final clampedOffset = targetStart.clamp(
@@ -302,55 +420,237 @@ class _MinimapItemsPainter extends CustomPainter {
   }
 }
 
+/// Paints one or several viewport indicators.
+///
+/// Bound via `super(repaint: ...)` to every indicator's scroll controller, so
+/// scroll ticks repaint only this thin layer — never the item or marker
+/// layers (the two-layer invariant, extended).
 class _MinimapViewportPainter extends CustomPainter {
   _MinimapViewportPainter({
-    required this.scrollController,
+    required this.indicators,
     required this.style,
     required this.isVertical,
     required this.minimapContentMainAxis,
     // Repaint automatically on every scroll notification without rebuilding
-    // or re-rasterizing the item layer.
-  }) : super(repaint: scrollController);
+    // or re-rasterizing the item layer. A single indicator listens to its
+    // controller directly (no merge allocation on the common path).
+  }) : super(
+          repaint: indicators.length == 1
+              ? indicators.first.scrollController
+              : Listenable.merge(
+                  <Listenable>[for (final i in indicators) i.scrollController],
+                ),
+        );
 
-  final ScrollController scrollController;
+  final List<ViewportIndicator> indicators;
   final MinimapStyle style;
   final bool isVertical;
   final double minimapContentMainAxis;
 
   @override
   void paint(Canvas canvas, Size size) {
-    if (!scrollController.hasClients || !scrollController.position.haveDimensions) return;
+    // Reason: two Paint objects for the whole layer regardless of the number
+    // of indicators; fill/stroke settings are mutated per indicator.
+    final fill = Paint();
+    final stroke = Paint()..style = PaintingStyle.stroke;
 
-    final position = scrollController.position;
-    final viewportSize = position.viewportDimension;
-    final totalContentSize = position.maxScrollExtent + viewportSize;
-    if (totalContentSize <= 0) return;
+    for (final indicator in indicators) {
+      final controller = indicator.scrollController;
+      if (!controller.hasClients || !controller.position.haveDimensions) continue;
 
-    final ratio = minimapContentMainAxis / totalContentSize;
-    final viewportStart = position.pixels * ratio;
-    final viewportLength = viewportSize * ratio;
-    final clampedStart = viewportStart.clamp(0.0, minimapContentMainAxis);
+      final position = controller.position;
+      final viewportSize = position.viewportDimension;
+      final totalContentSize = position.maxScrollExtent + viewportSize;
+      if (totalContentSize <= 0) continue;
 
-    final viewportRect = isVertical
-        ? Rect.fromLTWH(0, clampedStart, size.width, viewportLength)
-        : Rect.fromLTWH(clampedStart, 0, viewportLength, size.height);
+      // Map the visible window [pixels, pixels + viewport] onto this
+      // indicator's segment [leading, leading + segmentLen].
+      final segmentStart = indicator.mainAxisLeadingExtent;
+      final segmentLen = indicator.mainAxisContentExtent ?? (totalContentSize - segmentStart);
 
-    canvas
-      ..drawRect(viewportRect, Paint()..color = style.viewportColor)
-      ..drawRect(
-        viewportRect,
-        Paint()
-          ..color = style.viewportBorderColor
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = style.viewportBorderWidth,
+      final mapped = mapViewportToSegment(
+        pixels: position.pixels,
+        viewportDimension: viewportSize,
+        segmentLeading: segmentStart,
+        segmentExtent: segmentLen,
+        minimapMainAxis: minimapContentMainAxis,
       );
+      if (mapped == null) continue; // segment empty or fully off-screen
+
+      final indicatorStart = mapped.$1;
+      final indicatorLength = mapped.$2;
+
+      final viewportRect = isVertical
+          ? Rect.fromLTWH(0, indicatorStart, size.width, indicatorLength)
+          : Rect.fromLTWH(indicatorStart, 0, indicatorLength, size.height);
+
+      fill.color = indicator.color ?? style.viewportColor;
+      stroke
+        ..color = indicator.borderColor ?? style.viewportBorderColor
+        ..strokeWidth = indicator.borderWidth ?? style.viewportBorderWidth;
+
+      canvas
+        ..drawRect(viewportRect, fill)
+        ..drawRect(viewportRect, stroke);
+    }
   }
 
   @override
   bool shouldRepaint(covariant _MinimapViewportPainter oldDelegate) {
-    return oldDelegate.scrollController != scrollController ||
+    return !listEquals(oldDelegate.indicators, indicators) ||
         oldDelegate.style != style ||
         oldDelegate.isVertical != isVertical ||
         oldDelegate.minimapContentMainAxis != minimapContentMainAxis;
+  }
+}
+
+/// Maps the scrollable's visible window onto a minimap of one scroll
+/// segment. Returns `(indicatorStart, indicatorLength)` in minimap logical
+/// pixels, or null when nothing of the segment is visible.
+///
+/// Contract (unit-tested — the anti-"gauge" invariant): as long as the
+/// window stays strictly inside the segment, the indicator LENGTH is the
+/// constant `viewportDimension / segmentExtent * minimapMainAxis` and only
+/// its START moves with `pixels`. Length may only shrink by clamping at the
+/// segment's edges.
+@visibleForTesting
+(double, double)? mapViewportToSegment({
+  required double pixels,
+  required double viewportDimension,
+  required double segmentLeading,
+  required double segmentExtent,
+  required double minimapMainAxis,
+}) {
+  if (segmentExtent <= 0 || minimapMainAxis <= 0) return null;
+  final visibleStart = (pixels - segmentLeading).clamp(0.0, segmentExtent);
+  final visibleEnd = (pixels + viewportDimension - segmentLeading).clamp(0.0, segmentExtent);
+  if (visibleEnd <= visibleStart) return null;
+  final ratio = minimapMainAxis / segmentExtent;
+  return (visibleStart * ratio, (visibleEnd - visibleStart) * ratio);
+}
+
+/// Paints the custom overlay markers in an isolated cached layer.
+///
+/// Performance contract:
+///  * all markers of a given color are batched into ONE [Path] — the number
+///    of canvas commands is the number of distinct colors, not of markers;
+///  * one reusable [Paint] for the whole layer, mutated per color group;
+///  * the layer is behind its own `RepaintBoundary` and `shouldRepaint`
+///    short-circuits on value equality, so scroll ticks and unrelated
+///    rebuilds cost zero raster work here.
+class _MinimapMarkersPainter extends CustomPainter {
+  _MinimapMarkersPainter({
+    required this.layout,
+    required this.markers,
+    required this.scale,
+    required this.unitWidth,
+    required this.unitHeight,
+    required this.spacingRatioMain,
+    required this.spacingRatioCross,
+    required this.isVertical,
+  });
+
+  final List<LayoutItem> layout;
+  final List<MinimapMarker> markers;
+  final double scale;
+  final double unitWidth;
+  final double unitHeight;
+  final double spacingRatioMain;
+  final double spacingRatioCross;
+  final bool isVertical;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (markers.isEmpty || layout.isEmpty) return;
+
+    // One path per distinct color; typical marker sets use 1-3 colors so the
+    // map stays tiny. Built only when the layer actually re-rasterizes
+    // (markers or layout changed) — never on scroll.
+    final pathsByColor = <Color, Path>{};
+
+    for (final marker in markers) {
+      LayoutItem? item;
+      for (final candidate in layout) {
+        if (candidate.id == marker.itemId) {
+          item = candidate;
+          break;
+        }
+      }
+      if (item == null) continue; // unknown id: ignore silently
+
+      final double x;
+      final double y;
+      final double w;
+      final double h;
+      if (isVertical) {
+        x = (item.x * unitWidth + item.x * spacingRatioCross) * scale;
+        y = (item.y * unitHeight + item.y * spacingRatioMain) * scale;
+        w = (item.w * unitWidth + (max(0, item.w - 1) * spacingRatioCross)) * scale;
+        h = (item.h * unitHeight + (max(0, item.h - 1) * spacingRatioMain)) * scale;
+      } else {
+        x = (item.x * unitWidth + item.x * spacingRatioMain) * scale;
+        y = (item.y * unitHeight + item.y * spacingRatioCross) * scale;
+        w = (item.w * unitWidth + (max(0, item.w - 1) * spacingRatioMain)) * scale;
+        h = (item.h * unitHeight + (max(0, item.h - 1) * spacingRatioCross)) * scale;
+      }
+
+      // Cap the marker to the item's minimap rectangle: a 24 px marker on a
+      // 15 px 1x1 tile would otherwise invert the clamp bounds below
+      // (min > max throws ArgumentError). The declared size is a maximum.
+      final effSize = min(marker.size, min(w, h));
+      if (effSize <= 0) continue;
+      final half = effSize / 2;
+      // Resolve the alignment inside the item's rect, keeping the marker
+      // fully inside it.
+      final cx = x + (marker.alignment.x + 1) / 2 * w;
+      final cy = y + (marker.alignment.y + 1) / 2 * h;
+      final mx = cx.clamp(x + half, x + w - half);
+      final my = cy.clamp(y + half, y + h - half);
+
+      final path = pathsByColor.putIfAbsent(marker.color, Path.new);
+      switch (marker.shape) {
+        case MinimapMarkerShape.circle:
+          path.addOval(Rect.fromCircle(center: Offset(mx, my), radius: half));
+        case MinimapMarkerShape.square:
+          path.addRect(
+            Rect.fromCenter(
+              center: Offset(mx, my),
+              width: effSize,
+              height: effSize,
+            ),
+          );
+        case MinimapMarkerShape.diamond:
+          path
+            ..moveTo(mx, my - half)
+            ..lineTo(mx + half, my)
+            ..lineTo(mx, my + half)
+            ..lineTo(mx - half, my)
+            ..close();
+        case MinimapMarkerShape.triangle:
+          path
+            ..moveTo(mx, my - half)
+            ..lineTo(mx + half, my + half)
+            ..lineTo(mx - half, my + half)
+            ..close();
+      }
+    }
+
+    final paint = Paint();
+    pathsByColor.forEach((color, path) {
+      paint.color = color;
+      canvas.drawPath(path, paint);
+    });
+  }
+
+  @override
+  bool shouldRepaint(covariant _MinimapMarkersPainter oldDelegate) {
+    return !identical(oldDelegate.layout, layout) ||
+        !listEquals(oldDelegate.markers, markers) ||
+        oldDelegate.scale != scale ||
+        oldDelegate.unitWidth != unitWidth ||
+        oldDelegate.unitHeight != unitHeight ||
+        oldDelegate.spacingRatioMain != spacingRatioMain ||
+        oldDelegate.spacingRatioCross != spacingRatioCross ||
+        oldDelegate.isVertical != isVertical;
   }
 }

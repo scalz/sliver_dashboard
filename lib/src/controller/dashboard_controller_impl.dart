@@ -915,6 +915,25 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
   LayoutItem? _dragOriginalBBox;
   LayoutItem? _lastMovedPivot;
 
+  // --- View-published layout metrics (backchannel, plain fields) ---
+  // Written by RenderSliverDashboard at the end of every performLayout and
+  // read by DashboardMinimap on its scroll-driven rebuilds. Deliberately NOT
+  // beacons: they are written during the layout phase, where notifying
+  // listeners is illegal. Freshness is guaranteed by ordering: any scroll
+  // tick relayouts the sliver before the minimap's AnimatedBuilder repaints.
+
+  /// Scroll extent of every sliver before the grid (exact
+  /// `precedingScrollExtent`), or null before the first layout.
+  double? viewMainAxisLeadingExtent;
+
+  /// The grid sliver's own scroll extent (exact `geometry.scrollExtent`),
+  /// or null before the first layout.
+  double? viewMainAxisContentExtent;
+
+  /// Live slot width/height in pixels, or null before the first layout.
+  double? viewSlotWidth;
+  double? viewSlotHeight;
+
   /// Call when a drag gesture starts on a dashboard item.
   void onDragStart(String itemId) {
     final item = layout.value.firstWhere((i) => i.id == itemId);

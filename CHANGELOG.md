@@ -103,6 +103,23 @@ tree, the new code paths reduce to a few null-checks per pointer event.
   zero re-rasterization, zero allocation per paint pass. Slot-metric changes
   (viewport resize, breakpoints, slot count) snap by design; hit-testing and
   semantics use the final position immediately.
+- **Minimap markers** (`DashboardMinimap.markers`): custom overlay markers
+  (status dots, badges — circle/square/diamond/triangle, per-item alignment)
+  rendered in a dedicated cached layer. All markers are batched into one
+  `Path` per distinct color; the layer re-rasterizes only when the marker
+  list changes by value, never on scroll.
+- **Multiple viewport indicators** (`DashboardMinimap.viewportIndicators`):
+  several `ViewportIndicator`s (one per scroll segment / sibling grid), each
+  with its own segment mapping (`mainAxisLeadingExtent` /
+  `mainAxisContentExtent`) and style overrides. Painted by the single
+  scroll-bound viewport layer.
+- **Hover spatial index**: `itemAtGlobal` resolves through an O(1)
+  coordinate-bucket index above 16 items (identity-cached per layout list
+  instance) instead of an O(N) scan per pointer event.
+- **Hover jitter filter** (`hoverJitterTolerance`, default 4 px): low-pass on
+  nest-hover host switching — sub-tolerance pointer noise at tile borders no
+  longer flickers the highlight or restarts the nest-hover timer.
+
 ### Bug Fixes
 
 - **Auto-scroll tick placeholder re-anchoring**: while auto-scrolling under a
@@ -122,16 +139,8 @@ tree, the new code paths reduce to a few null-checks per pointer event.
   or cross-grid hover events.
 - **Sliver Layout Caching**: Resolved an issue where programmatic slot count updates on empty or unmodified grids were ignored due to constraint-caching optimization.
 - **Intuitive Resizing Anchors:** Fixed a layout defect where resizing an item's top or left edge against a static obstacle, section barrier, or grid boundary caused the item to expand downwards or rightwards. The layout engine now strictly respects the opposite edge as a fixed anchor during resize operations, stopping the resize interaction immediately when a static boundary is reached.
-
-### Documentation & Tooling
-
-- `README_NESTED_GRID.md`: feature guide.
-- New example entry point `example/lib/nested_example.dart` and a demo
-  launcher in `example/lib/main.dart`.
-- Test Suite Consolidation & Reorganization: Reorganized, added and improved test files.  
-
-### Bug Fixes
-
+- `MinimapStyle` now implements value equality (`==`/`hashCode`), so painter
+  `shouldRepaint` short-circuits even when a style is constructed inline.
 - **Auto-scroll tick placeholder re-anchoring**: while auto-scrolling under a
   stationary pointer, the tick re-anchored any active placeholder with the
   `DragTarget` size (`placeholderWidth/Height`) and could resurrect a
@@ -142,16 +151,14 @@ tree, the new code paths reduce to a few null-checks per pointer event.
   returned the first grid item found on the hit-test path, which for nested
   layouts is an item of the *inner* grid — crashing the outer grid's drag
   start on an unknown id. Hit-test entries are now filtered by sliver
-  ownership, so the outer grid correctly resolves to its own host item.
+  ownership, so the outer grid correctly resolves to its own host item..
 
 ### Documentation & Tooling
 
+- `README_NESTED_GRID.md`: feature guide.
 - New example entry point `example/lib/nested_example.dart` and a demo
   launcher in `example/lib/main.dart`.
-- 14 new tests (cross-grid controller protocol, pointer claiming, hit-test
-  ownership, A→B drag with constraint preservation, cancel/restore,
-  multi-selection containment, `autoSlotCount`, programmatic moves, codec
-  round-trip).
+- Test Suite Consolidation & Reorganization: Reorganized, added and improved test files.  
 
 ## 1.2.0
 

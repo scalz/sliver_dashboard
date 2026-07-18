@@ -1820,4 +1820,60 @@ void main() {
       expect(controller.selectedItemIds.value, isEmpty);
     });
   });
+
+  group('Desktop hover — spatial bucket index', () {
+    testWidgets(
+        'itemAtGlobal resolves via the bucket index on dense layouts '
+        '(>= threshold) with identical semantics', (tester) async {
+      // 40 items >= threshold (16): the bucket path is exercised.
+      final controller = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: [
+          for (var i = 0; i < 40; i++) LayoutItem(id: 'i$i', x: i % 4, y: i ~/ 4, w: 1, h: 1),
+        ],
+      )..setEditMode(true);
+      addTearDown(controller.dispose);
+      final scrollController = ScrollController();
+      addTearDown(scrollController.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: DashboardOverlay<String>(
+              controller: controller,
+              scrollController: scrollController,
+              itemBuilder: (context, item) => Text(item.id),
+              child: CustomScrollView(
+                controller: scrollController,
+                slivers: [
+                  SliverDashboard(
+                    itemBuilder: (context, item) => Text(item.id),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final state = tester.state<State<DashboardOverlay<String>>>(
+        find.byType(DashboardOverlay<String>),
+      );
+      final target = state as CrossGridDragTarget;
+
+      // 800 px viewport, 4 columns, 8 px spacing: slot ~194 px, stride 202.
+      // (100, 100) lies inside cell (0, 0) -> 'i0'.
+      expect(target.itemAtGlobal(const Offset(100, 100))?.id, 'i0');
+      // (300, 100) lies inside cell (1, 0) -> 'i1'.
+      expect(target.itemAtGlobal(const Offset(300, 100))?.id, 'i1');
+      // Excluding the hit id yields null (overlap-free invariant).
+      expect(
+        target.itemAtGlobal(const Offset(100, 100), excludeId: 'i0'),
+        isNull,
+      );
+      // Far outside any cell: null.
+      expect(target.itemAtGlobal(const Offset(-50, -50)), isNull);
+    });
+  });
 }

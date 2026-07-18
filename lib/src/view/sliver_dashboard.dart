@@ -6,6 +6,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:sliver_dashboard/src/controller/dashboard_controller_interface.dart';
 import 'package:sliver_dashboard/src/controller/dashboard_controller_provider.dart';
+import 'package:sliver_dashboard/src/controller/utility.dart';
 import 'package:sliver_dashboard/src/models/layout_item.dart';
 import 'package:sliver_dashboard/src/view/dashboard_configuration.dart';
 import 'package:sliver_dashboard/src/view/dashboard_item_widget.dart';
@@ -159,6 +160,23 @@ class SliverDashboard extends StatefulWidget {
 }
 
 class _SliverDashboardState extends State<SliverDashboard> with TickerProviderStateMixin {
+  /// Publishes the sliver's exact layout metrics onto the controller (plain
+  /// fields — written during layout, so no beacon/notify is allowed here).
+  /// Consumed by DashboardMinimap to map its viewport indicator and
+  /// tap-to-scroll onto the grid's real scroll segment.
+  void _publishLayoutMetrics(
+    double leadingExtent,
+    double contentExtent,
+    double slotWidth,
+    double slotHeight,
+  ) {
+    _controller.internal
+      ..viewMainAxisLeadingExtent = leadingExtent
+      ..viewMainAxisContentExtent = contentExtent
+      ..viewSlotWidth = slotWidth
+      ..viewSlotHeight = slotHeight;
+  }
+
   late DashboardController _controller;
 
   // Cache variables to avoid GC churn and string allocations
@@ -275,6 +293,7 @@ class _SliverDashboardState extends State<SliverDashboard> with TickerProviderSt
           animateReflow: widget.animateReflow,
           reflowDuration: widget.reflowDuration,
           vsync: this,
+          onLayoutMetrics: _publishLayoutMetrics,
           delegate: SliverChildBuilderDelegate(
             (context, index) {
               final item = _controller.layout.value[index];
@@ -395,6 +414,7 @@ class SliverDashboardLayout extends SliverMultiBoxAdaptorWidget {
     this.isEditing = false,
     this.animateReflow = false,
     this.reflowDuration = const Duration(milliseconds: 150),
+    this.onLayoutMetrics,
     super.key,
   });
 
@@ -428,6 +448,10 @@ class SliverDashboardLayout extends SliverMultiBoxAdaptorWidget {
   /// See [SliverDashboard.reflowDuration].
   final Duration reflowDuration;
 
+  /// Sink for the sliver's exact layout metrics (preceding extent, own
+  /// scroll extent, slot sizes), invoked at the end of every layout pass.
+  final void Function(double leading, double extent, double slotW, double slotH)? onLayoutMetrics;
+
   /// Ticker provider driving the paint-phase reflow interpolation.
   ///
   /// A [Ticker] (rather than raw `SchedulerBinding` frame callbacks) keeps
@@ -451,6 +475,7 @@ class SliverDashboardLayout extends SliverMultiBoxAdaptorWidget {
       animateReflow: animateReflow,
       reflowDuration: reflowDuration,
       vsync: vsync,
+      onLayoutMetrics: onLayoutMetrics,
     );
   }
 
@@ -468,6 +493,7 @@ class SliverDashboardLayout extends SliverMultiBoxAdaptorWidget {
       ..animateReflow = animateReflow
       ..reflowDuration = reflowDuration
       ..vsync = vsync
+      ..onLayoutMetrics = onLayoutMetrics
 
       // Force a layout pass on structural widget updates to ensure child parentData offsets are aligned
       ..markNeedsLayout();
@@ -487,6 +513,7 @@ class RenderSliverDashboard extends RenderSliverMultiBoxAdaptor {
     required double crossAxisSpacing,
     required TickerProvider vsync,
     this.onPerformLayout,
+    this.onLayoutMetrics,
     bool isEditing = false,
     bool animateReflow = false,
     Duration reflowDuration = const Duration(milliseconds: 150),
@@ -580,6 +607,10 @@ class RenderSliverDashboard extends RenderSliverMultiBoxAdaptor {
   /// Callback for testing/profiling layout performance.
   LayoutProfileCallback? onPerformLayout;
 
+  /// Sink invoked at the end of every layout pass with the sliver's exact
+  /// metrics. Plain function call, no allocation, no notify — safe in layout.
+  void Function(double leading, double extent, double slotW, double slotH)? onLayoutMetrics;
+
   // ==========================================================================
   // Paint-phase reflow animations
   // ==========================================================================
@@ -655,6 +686,11 @@ class RenderSliverDashboard extends RenderSliverMultiBoxAdaptor {
 
   void _startReflowTicker() {
     final ticker = _ticker ??= _vsync.createTicker(_onReflowTick);
+    // The TickerFuture is deliberately discarded: it only completes when the
+    // ticker is stopped with `canceled: false` and NEVER completes on cancel
+    // or dispose, so awaiting it could suspend forever — and this is
+    // synchronous render-object code anyway. Lifecycle is owned by
+    // _onReflowTick (time-based pruning) and _stopReflowTicker.
     if (!ticker.isActive) ticker.start().ignore();
   }
 
@@ -1071,6 +1107,16 @@ class RenderSliverDashboard extends RenderSliverMultiBoxAdaptor {
     );
 
     childManager.didFinishLayout();
+
+    // Publish exact metrics for consumers outside the render tree (minimap
+    // viewport segment). Plain field writes on the controller — never a
+    // beacon: we are inside the layout phase.
+    onLayoutMetrics?.call(
+      constraints.precedingScrollExtent,
+      geometry!.scrollExtent,
+      slotWidth,
+      slotHeight,
+    );
 
     if (_animateReflow && _transitions.isNotEmpty) {
       _startReflowTicker();

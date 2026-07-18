@@ -17,6 +17,7 @@ Ideal for analytics platforms, IoT control panels, project management tools, no-
 - 🚀 **High Performance:** Built on Flutter's `Sliver` protocol with **smart caching**. It only renders visible items and prevents unnecessary rebuilds of children during drag/resize operations.
 - 🧩 **Sliver Composition:** Integrate the dashboard's grid seamlessly with other slivers like `SliverAppBar` and `SliverList` within a single `CustomScrollView`.
 - 🪆 **Nested Grids:** Embed full dashboards inside grid items (`NestedDashboard`) at any depth, and **drag items between grids** (parent ↔ child ↔ siblings) with a live push-preview placeholder. Supports auto-sizing hosts, dynamic sub-grid creation, and one-call recursive save/load.
+- 🔀 **Cross-Sliver Drag & Drop:** drag tiles between independent sibling `SliverDashboard`s sharing one `CustomScrollView`, with **dimension projection policies** (`preserveLogicalSize`, `preserveVisualProportion`, or a custom callback) translating item sizes between grids of different column counts.
 - 🎨 **Fully Customizable:** Control the number of columns, aspect ratio, spacing, grid and handles style. Items can be draggable, resizable, and static. Support for dedicated **Drag Handles** (`DashboardDragStartListener`) and configurable mobile drag start gestures (long-press, tap, or handle-only).
 - 🛡️ **Declarative Interaction Policies (`DashboardPolicy`):** Inject granular business rules (e.g., "charts cannot push system KPIs", "block dragging on Row 0") on-the-fly without having to write custom compaction delegates.
 - 📌 **Segmented Grids (Section Barriers):** Divide your grid into organized visual sections using static section barriers with custom header builders while maintaining strict collision boundaries.
@@ -32,11 +33,12 @@ Ideal for analytics platforms, IoT control panels, project management tools, no-
   - **Custom:** Implement `CompactorDelegate` to define custom rules (e.g., specific gravity, fixed zones).
 - 🗑️ **Built-in Trash:** Easy-to-implement drag-to-delete functionality. Or implement your own using available callbacks.
 - ✨ **Custom Feedback:** Customize the appearance of items while they are being dragged. Use onInteractionStart callback for haptic feedback...
+- 🎞️ **Reflow Animations:** pushed/compacted tiles slide to their new slot.
 - 📥 **Drag From Outside:** Drop new items from external sources directly into the grid with auto-scrolling support.
 - 💡 **Guidance:** Optional contextual tooltips/guidance messages.
 - 📱 **Responsive Layouts:** Automatically adapt the number of columns (`slotCount`) based on the screen width using the built-in `breakpoints` property.
 - ♿ **Accessibility:** Full keyboard navigation support (Tab, Arrows, Space, Enter, customizable keys) and Screen Reader announcements (TalkBack/VoiceOver).
-- 🗺️ **Mini-Map:** A customizable widget to visualize the entire dashboard layout and current viewport, perfect for large grids.
+- 🗺️ **Mini-Map:** A customizable widget to visualize the entire dashboard layout and current viewport, perfect for large grids. Supports **overlay markers** (status dots/badges per item) and **multiple viewport indicators** for multi-sliver scroll views.
 - 🖱️ **Multi-Selection:** Select and move multiple items at once using `Shift` + Click (customizable keys).
 - 💾 **Utilities**: Import/Export, find free cells, get last row, Auto Layout & Bulk Add.
 
@@ -85,6 +87,8 @@ The package is WebAssembly (WASM) compatible. Building your production applicati
 - [Advanced & Extensibility](#advanced--extensibility)
   - [Advanced Sliver Composition](#advanced-sliver-composition)
   - [Nested Grids & Cross-Grid Drag](#nested-grids--cross-grid-drag)
+  - [Minimap Markers & Multiple Viewports](#minimap-markers--multiple-viewports)
+  - [Reflow Animations](#reflow-animations)
   - [Custom Compaction Strategy](#custom-compaction-strategy)
   - [Interaction & Collision Policies (Custom Rules)](#interaction--collision-policies-custom-rules)
   - [Utilities](#utilities)
@@ -1057,6 +1061,57 @@ Widget build(BuildContext context) {
   );
 }
 ```
+
+### Minimap Markers & Multiple Viewports
+
+```dart
+DashboardMinimap(
+  controller: controller,
+  scrollController: scrollController,
+  markers: const [
+    MinimapMarker(itemId: 'sales', color: Colors.red), // status dot
+    MinimapMarker(
+      itemId: 'alerts',
+      color: Colors.amber,
+      shape: MinimapMarkerShape.triangle,
+      alignment: Alignment.bottomLeft,
+    ),
+  ],
+)
+```
+
+For a single grid, do NOT pass `viewportIndicators`: the default indicator
+maps itself onto the grid's exact scroll segment automatically (the sliver
+publishes its real `precedingScrollExtent`, scroll extent and slot sizes at
+every layout pass). Hardcoding a `mainAxisContentExtent` that doesn't match
+the real segment will clamp the indicator against a fictional boundary and
+make it look like a gauge.
+
+`viewportIndicators` is for the advanced case of drawing SEVERAL indicators
+on one minimap (e.g. sibling grids sharing a scroll view). Even then, feed
+each indicator the values its grid publishes rather than constants:
+
+```dart
+viewportIndicators: [
+  for (final grid in [grid1, grid2])
+    ViewportIndicator(
+      scrollController: scrollController,
+      mainAxisLeadingExtent: grid.internal.viewMainAxisLeadingExtent ?? 0,
+      mainAxisContentExtent: grid.internal.viewMainAxisContentExtent,
+    ),
+],
+```
+
+Markers live in their own cached layer (one batched `Path` per distinct
+color) and only re-rasterize when the marker list changes by value — scroll
+ticks still repaint nothing but the thin viewport layer.
+
+### Desktop Hover Fine-Tuning
+
+On dense layouts (>= 16 items) pointer-to-item resolution uses an O(1)
+coordinate-bucket index instead of a linear scan, and a low-pass jitter
+filter (`DashboardNestedScope(hoverJitterTolerance: 4)`) stops the
+nest-hover highlight from flickering when the cursor rests on a tile border.
 
 ### Reflow Animations
 
