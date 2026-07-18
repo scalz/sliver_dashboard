@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sliver_dashboard/sliver_dashboard.dart';
 import 'package:sliver_dashboard/src/controller/dashboard_controller_impl.dart';
+import 'package:sliver_dashboard/src/controller/utility.dart';
 
 void main() {
   group('DashboardMinimap', () {
@@ -532,6 +533,79 @@ void main() {
     });
   });
 
+  group('Viewport indicator mapping — numeric contract', () {
+    // Canonical numbers: grid segment 4500 px starting at 0, viewport
+    // 900 px, minimap 270 px. Expected window length: 900/4500*270 = 54 px.
+    test('at top: window starts at 0 with length V/L * minimap', () {
+      final m = mapViewportToSegment(
+        pixels: 0,
+        viewportDimension: 900,
+        segmentLeading: 0,
+        segmentExtent: 4500,
+        minimapMainAxis: 270,
+      );
+      expect(m, isNotNull);
+      expect(m!.$1, 0);
+      expect(m.$2, closeTo(54, 0.001));
+    });
+
+    test(
+        'anti-gauge invariant: scrolling moves the window start, '
+        'the length stays constant inside the segment', () {
+      final atTop = mapViewportToSegment(
+        pixels: 0,
+        viewportDimension: 900,
+        segmentLeading: 0,
+        segmentExtent: 4500,
+        minimapMainAxis: 270,
+      )!;
+      final scrolled = mapViewportToSegment(
+        pixels: 1800,
+        viewportDimension: 900,
+        segmentLeading: 0,
+        segmentExtent: 4500,
+        minimapMainAxis: 270,
+      )!;
+      expect(scrolled.$2, closeTo(atTop.$2, 0.001)); // same length
+      expect(scrolled.$1, closeTo(1800 / 4500 * 270, 0.001)); // moved start
+    });
+
+    test('a preceding app bar shifts the mapping via segmentLeading', () {
+      final m = mapViewportToSegment(
+        pixels: 200, // exactly the app bar extent scrolled away
+        viewportDimension: 900,
+        segmentLeading: 200,
+        segmentExtent: 4500,
+        minimapMainAxis: 270,
+      )!;
+      expect(m.$1, 0); // grid top aligns with minimap top
+      expect(m.$2, closeTo(54, 0.001));
+    });
+
+    test('a segment shorter than the viewport clamps to the segment', () {
+      final m = mapViewportToSegment(
+        pixels: 0,
+        viewportDimension: 900,
+        segmentLeading: 0,
+        segmentExtent: 600,
+        minimapMainAxis: 270,
+      )!;
+      expect(m.$1, 0);
+      expect(m.$2, closeTo(270, 0.001)); // full minimap: honest, not a bug
+    });
+
+    test('a segment fully scrolled past yields no indicator', () {
+      final m = mapViewportToSegment(
+        pixels: 5000,
+        viewportDimension: 900,
+        segmentLeading: 0,
+        segmentExtent: 4500,
+        minimapMainAxis: 270,
+      );
+      expect(m, isNull);
+    });
+  });
+
   group('Minimap widget — regression fixes', () {
     testWidgets(
         'a marker larger than its tile is capped, not crashing '
@@ -637,6 +711,275 @@ void main() {
         scrollController.offset,
         lessThanOrEqualTo(scrollController.position.maxScrollExtent),
       );
+    });
+  });
+
+  group('Minimap — painter branches', () {
+    testWidgets('all four marker shapes render, and marker changes repaint', (tester) async {
+      final controller = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: const [
+          LayoutItem(id: 'a', x: 0, y: 0, w: 2, h: 2),
+          LayoutItem(id: 'b', x: 2, y: 0, w: 2, h: 2),
+          LayoutItem(id: 'c', x: 0, y: 2, w: 2, h: 2),
+          LayoutItem(id: 'd', x: 2, y: 2, w: 2, h: 2),
+        ],
+      );
+      addTearDown(controller.dispose);
+      final scrollController = ScrollController();
+      addTearDown(scrollController.dispose);
+
+      Widget host(List<MinimapMarker> markers) => MaterialApp(
+            home: Scaffold(
+              body: Column(
+                children: [
+                  Expanded(
+                    child: Dashboard<String>(
+                      controller: controller,
+                      scrollController: scrollController,
+                      itemBuilder: (context, item) => Text(item.id),
+                    ),
+                  ),
+                  SizedBox(
+                    width: 120,
+                    height: 120,
+                    child: DashboardMinimap(
+                      controller: controller,
+                      scrollController: scrollController,
+                      markers: markers,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+
+      // Corner alignments + every shape: exercises each Path branch and the
+      // in-rect clamping on all four edges. Two markers share a color to
+      // exercise the per-color batching (putIfAbsent hit).
+      await tester.pumpWidget(
+        host(const [
+          MinimapMarker(itemId: 'a', color: Colors.red, alignment: Alignment.topLeft),
+          MinimapMarker(
+            itemId: 'b',
+            color: Colors.red,
+            shape: MinimapMarkerShape.square,
+            alignment: Alignment.topRight,
+          ),
+          MinimapMarker(
+            itemId: 'c',
+            color: Colors.green,
+            shape: MinimapMarkerShape.diamond,
+            alignment: Alignment.bottomLeft,
+          ),
+          MinimapMarker(
+            itemId: 'd',
+            color: Colors.blue,
+            shape: MinimapMarkerShape.triangle,
+            alignment: Alignment.bottomRight,
+          ),
+        ]),
+      );
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+
+      // Changing one marker by value exercises the shouldRepaint
+      // listEquals-false branch without tearing the layer down.
+      await tester.pumpWidget(
+        host(const [
+          MinimapMarker(itemId: 'a', color: Colors.purple, alignment: Alignment.topLeft),
+          MinimapMarker(
+            itemId: 'b',
+            color: Colors.red,
+            shape: MinimapMarkerShape.square,
+            alignment: Alignment.topRight,
+          ),
+          MinimapMarker(
+            itemId: 'c',
+            color: Colors.green,
+            shape: MinimapMarkerShape.diamond,
+            alignment: Alignment.bottomLeft,
+          ),
+          MinimapMarker(
+            itemId: 'd',
+            color: Colors.blue,
+            shape: MinimapMarkerShape.triangle,
+            alignment: Alignment.bottomRight,
+          ),
+        ]),
+      );
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'without a mounted grid the minimap falls back to the legacy '
+        'derivation (no published metrics) and still renders', (tester) async {
+      final controller = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: const [
+          LayoutItem(id: 'a', x: 0, y: 0, w: 2, h: 2),
+          LayoutItem(id: 'b', x: 2, y: 2, w: 2, h: 2),
+        ],
+      );
+      addTearDown(controller.dispose);
+      final scrollController = ScrollController();
+      addTearDown(scrollController.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Column(
+              children: [
+                Expanded(
+                  // A plain scrollable: nothing publishes grid metrics.
+                  child: ListView(
+                    controller: scrollController,
+                    children: [for (var i = 0; i < 40; i++) Text('row $i')],
+                  ),
+                ),
+                SizedBox(
+                  width: 120,
+                  height: 120,
+                  child: DashboardMinimap(
+                    controller: controller,
+                    scrollController: scrollController,
+                    markers: const [
+                      MinimapMarker(itemId: 'a', color: Colors.red),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byType(DashboardMinimap), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a horizontal-direction controller renders and accepts taps', (tester) async {
+      final controller = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: const [
+          LayoutItem(id: 'a', x: 0, y: 0, w: 2, h: 2),
+          LayoutItem(id: 'b', x: 4, y: 0, w: 2, h: 2),
+        ],
+      );
+      addTearDown(controller.dispose);
+      controller.internal.setScrollDirection(Axis.horizontal);
+      final scrollController = ScrollController();
+      addTearDown(scrollController.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Column(
+              children: [
+                Expanded(
+                  child: ListView(
+                    scrollDirection: Axis.horizontal,
+                    controller: scrollController,
+                    children: [for (var i = 0; i < 40; i++) Text(' col $i ')],
+                  ),
+                ),
+                SizedBox(
+                  width: 200,
+                  height: 80,
+                  child: DashboardMinimap(
+                    controller: controller,
+                    scrollController: scrollController,
+                    markers: const [
+                      MinimapMarker(itemId: 'b', color: Colors.amber),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+
+      // Tap-to-scroll through the horizontal mapping branch.
+      await tester.tapAt(
+        tester.getCenter(find.byType(DashboardMinimap)) + const Offset(40, 0),
+      );
+      await tester.pumpAndSettle();
+      expect(scrollController.offset, greaterThanOrEqualTo(0));
+    });
+
+    testWidgets('a never-attached scrollController is inert, not a crash', (tester) async {
+      final controller = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: const [LayoutItem(id: 'a', x: 0, y: 0, w: 2, h: 2)],
+      );
+      addTearDown(controller.dispose);
+      final detached = ScrollController();
+      addTearDown(detached.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Center(
+              child: SizedBox(
+                width: 120,
+                height: 120,
+                child: DashboardMinimap(
+                  controller: controller,
+                  scrollController: detached,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      // Tap: _handleInteraction must bail on !hasClients.
+      await tester.tapAt(tester.getCenter(find.byType(DashboardMinimap)));
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+    });
+  });
+
+  group('Minimap — exact published metrics', () {
+    testWidgets(
+        'the grid sliver publishes leading/content extents and slot sizes '
+        'onto the controller at layout time', (tester) async {
+      final controller = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: [
+          for (var i = 0; i < 12; i++) LayoutItem(id: 'i$i', x: i % 4, y: i ~/ 4, w: 1, h: 1),
+        ],
+      );
+      addTearDown(controller.dispose);
+      final scrollController = ScrollController();
+      addTearDown(scrollController.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Dashboard<String>(
+              controller: controller,
+              scrollController: scrollController,
+              itemBuilder: (context, item) => Text(item.id),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final internal = controller.internal;
+      // 800 px test viewport, 4 columns, 8 px spacing:
+      // slot = (800 - 3*8) / 4 = 194.
+      expect(internal.viewSlotWidth, isNotNull);
+      expect(internal.viewSlotWidth, closeTo(194, 1));
+      expect(internal.viewSlotHeight, closeTo(194, 1));
+      // 3 rows of 194 + 2 spacings of 8 = 598 (± edit-mode trailing row).
+      expect(internal.viewMainAxisContentExtent, greaterThanOrEqualTo(598 - 1));
+      expect(internal.viewMainAxisLeadingExtent, isNotNull);
     });
   });
 }

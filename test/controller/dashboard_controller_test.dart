@@ -8,6 +8,9 @@ import 'package:sliver_dashboard/src/engine/layout_engine.dart';
 import 'package:sliver_dashboard/src/models/layout_item.dart';
 import 'package:sliver_dashboard/src/view/resize_handle.dart';
 
+//
+// ignore_for_file: cascade_invocations
+
 class MockLayoutChangeListener extends Mock {
   void call(List<LayoutItem> items, int slotCount);
 }
@@ -1914,6 +1917,62 @@ void main() {
     });
   });
 
+  group('beginCrossGridExit — edge branches', () {
+    test('a second begin while an exit is pending is a no-op', () {
+      final controller = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: const [
+          LayoutItem(id: 'a', x: 0, y: 0, w: 2, h: 2),
+          LayoutItem(id: 'b', x: 2, y: 0, w: 2, h: 2),
+        ],
+      );
+      addTearDown(controller.dispose);
+
+      expect(controller.internal.beginCrossGridExit({'a'}).length, 1);
+      expect(controller.internal.beginCrossGridExit({'b'}), isEmpty);
+      // 'b' is still in the layout: the second call must not have removed it.
+      expect(controller.layout.value.any((i) => i.id == 'b'), isTrue);
+      controller.internal.finishCrossGridExit(outcome: CrossGridExitOutcome.canceled);
+    });
+
+    test('an unknown id removes nothing and opens no exit window', () {
+      var events = 0;
+      final controller = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: const [LayoutItem(id: 'a', x: 0, y: 0, w: 2, h: 2)],
+        onLayoutChanged: (_, __) => events++,
+      );
+      addTearDown(controller.dispose);
+
+      expect(controller.internal.beginCrossGridExit({'ghost'}), isEmpty);
+      expect(controller.layout.value.length, 1);
+      // No snapshot was opened: finishing must be a silent no-op.
+      controller.internal.finishCrossGridExit(outcome: CrossGridExitOutcome.movedAway);
+      expect(events, 0);
+    });
+
+    test('movedAway under CompactType.none resolves collisions, not gravity', () {
+      final controller = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: const [
+          LayoutItem(id: 'a', x: 0, y: 0, w: 2, h: 2),
+          LayoutItem(id: 'b', x: 0, y: 4, w: 2, h: 2), // floats below a hole
+        ],
+      )..setCompactionType(CompactType.none);
+      addTearDown(controller.dispose);
+
+      controller.internal
+        ..beginCrossGridExit({'a'})
+        ..finishCrossGridExit(outcome: CrossGridExitOutcome.movedAway);
+
+      final b = controller.layout.value.single;
+      expect(b.id, 'b');
+      // resolveCollisions must NOT pull the floating item up: free
+      // positioning is preserved on commit.
+      expect(b.y, 4);
+    });
+  });
+
   //    `onDragUpdate` let the drag target grow the grid one row per row
   //    crossed below the content, making the sliver's extent chase the
   //    pointer (a sibling grid below became unreachable). Under main-axis
@@ -1978,5 +2037,180 @@ void main() {
       expect(a.y, 8, reason: 'free positioning is a feature of CompactType.none');
       controller.internal.cancelInteraction();
     });
+
+    test(
+        'horizontal scroll + horizontal compaction caps the X target '
+        'symmetrically', () {
+      final controller = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: const [
+          LayoutItem(id: 'a', x: 0, y: 0, w: 1, h: 1),
+          LayoutItem(id: 'b', x: 1, y: 0, w: 1, h: 1),
+        ],
+      )
+        ..setEditMode(true)
+        ..setCompactionType(CompactType.horizontal);
+      addTearDown(controller.dispose);
+      controller.internal.setScrollDirection(Axis.horizontal);
+
+      controller.internal
+        ..onDragStart('a')
+        // Pointer 8 columns past the content.
+        ..onDragUpdate(
+          'a',
+          const Offset(800, 0),
+          slotWidth: 100,
+          slotHeight: 100,
+          mainAxisSpacing: 0,
+          crossAxisSpacing: 0,
+        );
+
+      final a = controller.layout.value.firstWhere((i) => i.id == 'a');
+      // maxMainOthers = 2 ('b' ends at x=2): capped there instead of x=8.
+      expect(a.x, lessThanOrEqualTo(2));
+      controller.internal.cancelInteraction();
+    });
+  });
+
+  //    `onDragUpdate` let the drag target grow the grid one row per row
+  //    crossed below the content, making the sliver's extent chase the
+  //    pointer (a sibling grid below became unreachable). Under main-axis
+  //    compaction the target is now capped to the first free row past the
+  //    other items.
+  /* group('onDragUpdate — main-axis growth cap', () {
+    test('under vertical compaction the drag target is capped past content', () {
+      final controller = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: const [
+          LayoutItem(id: 'a', x: 0, y: 0, w: 1, h: 1),
+          LayoutItem(id: 'b', x: 1, y: 0, w: 1, h: 1),
+        ],
+      )
+        ..setCompactionType(CompactType.vertical)
+        ..setEditMode(true);
+      addTearDown(controller.dispose);
+
+      controller.internal
+        ..onDragStart('a')
+        // Pointer 8 rows below the content (100 px slots, no spacing).
+        ..onDragUpdate(
+          'a',
+          const Offset(0, 800),
+          slotWidth: 100,
+          slotHeight: 100,
+          mainAxisSpacing: 0,
+          crossAxisSpacing: 0,
+        );
+
+      final a = controller.layout.value.firstWhere((i) => i.id == 'a');
+      // maxMainOthers = 1 ('b' ends at y=1): the target is capped there
+      // instead of y=8, so the grid extent stops chasing the pointer.
+      expect(a.y, lessThanOrEqualTo(1));
+      controller.internal.cancelInteraction();
+    });
+
+    test('CompactType.none keeps free positioning unbounded', () {
+      final controller = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: const [
+          LayoutItem(id: 'a', x: 0, y: 0, w: 1, h: 1),
+          LayoutItem(id: 'b', x: 1, y: 0, w: 1, h: 1),
+        ],
+      )
+        ..setCompactionType(CompactType.none)
+        ..setEditMode(true);
+      addTearDown(controller.dispose);
+
+      controller.internal
+        ..onDragStart('a')
+        ..onDragUpdate(
+          'a',
+          const Offset(0, 800),
+          slotWidth: 100,
+          slotHeight: 100,
+          mainAxisSpacing: 0,
+          crossAxisSpacing: 0,
+        );
+
+      final a = controller.layout.value.firstWhere((i) => i.id == 'a');
+      expect(a.y, 8, reason: 'free positioning is a feature of CompactType.none');
+      controller.internal.cancelInteraction();
+    });
+  });*/
+
+  test('updateItem preserves original itemId if transform function attempts to change it', () {
+    final controller = DashboardController(
+      initialLayout: const [LayoutItem(id: 'a', x: 0, y: 0, w: 1, h: 1)],
+    );
+    addTearDown(controller.dispose);
+
+    // Verify that the debug-time assert safeguards the item ID immutability by throwing
+    expect(
+      () => controller.updateItem('a', (item) => item.copyWith(id: 'b'), recompact: false),
+      throwsA(isA<AssertionError>()),
+    );
+  });
+
+  test('replaceItem writes through to the active cross-grid exit snapshot', () {
+    final controller = DashboardController(
+      initialLayout: const [
+        LayoutItem(id: 'a', x: 0, y: 0, w: 1, h: 1),
+        LayoutItem(id: 'b', x: 1, y: 0, w: 1, h: 1),
+      ],
+    );
+    addTearDown(controller.dispose);
+
+    final impl = controller.internal;
+    impl.beginCrossGridExit({'a'}); // Seeds active cross-grid exit snapshot
+
+    // Replace item 'b' (which is in the exit snapshot) with a mutated version
+    controller.replaceItem('b', const LayoutItem(id: 'b', x: 1, y: 0, w: 2, h: 2));
+
+    // Cancel the cross-grid exit (restores snapshot)
+    impl.finishCrossGridExit(outcome: CrossGridExitOutcome.canceled);
+
+    // Verify the restored item 'b' has the replaced dimensions (w: 2, h: 2)
+    final restoredB = controller.layout.value.firstWhere((i) => i.id == 'b');
+    expect(restoredB.w, equals(2));
+    expect(restoredB.h, equals(2));
+  });
+
+  test('onDropExternalItem falls back to current drag placeholder when not in layout', () {
+    final controller = DashboardController(
+      initialLayout: const [LayoutItem(id: 'a', x: 0, y: 0, w: 1, h: 1)],
+    );
+    addTearDown(controller.dispose);
+
+    final impl = controller.internal;
+
+    // Manually assign a placeholder without invoking the showPlaceholder pipeline
+    impl.placeholder.value = const LayoutItem(id: '__placeholder__', x: 1, y: 1, w: 1, h: 1);
+
+    final placed = impl.onDropExternalItem(
+      template: const LayoutItem(id: 'b', x: 0, y: 0, w: 1, h: 1),
+    );
+
+    expect(placed, isNotNull);
+    expect(placed!.x, equals(1));
+    expect(placed.y, equals(1));
+  });
+
+  test('setItemSize clamps height in horizontal scroll direction', () {
+    final controller = DashboardController(
+      initialSlotCount: 4,
+      initialLayout: const [
+        LayoutItem(id: 'a', x: 0, y: 0, w: 1, h: 1, minH: 1, maxH: 2),
+      ],
+    );
+    addTearDown(controller.dispose);
+
+    final impl = controller.internal;
+    impl.setScrollDirection(Axis.horizontal); // Horizontal scroll
+
+    // Resize height to 10 (exceeds slotCount=4 and maxH=2)
+    final resized = impl.setItemSize('a', h: 10);
+
+    // Should be clamped to maxH (2) since maxH < slotCount (4)
+    expect(resized!.h, equals(2));
   });
 }

@@ -1,20 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:sliver_dashboard/src/controller/dashboard_controller_interface.dart'
-    show DashboardController;
-import 'package:sliver_dashboard/src/models/layout_item.dart';
-import 'package:sliver_dashboard/src/view/sliver_dashboard.dart'
-    show RenderSliverDashboard, SliverDashboard, SliverDashboardLayout;
+import 'package:sliver_dashboard/sliver_dashboard.dart';
 
 /// Paint-phase reflow animations.
 ///
 /// Contract under test:
 ///  * layout stays instantaneous and deterministic (the controller's layout
 ///    beacon holds final coordinates immediately);
-///  * only the painted offset interpolates, over `reflowDuration`;
+///  * only the painted offset interpolates, over `reflowAnimationDuration`;
 ///  * transitions are seeded only by genuine layout mutations — never by
 ///    scroll passes or slot-metric changes (those snap);
-///  * everything is inert when `animateReflow` is false (default).
+///  * everything is inert when `enableReflowAnimations` is false (default).
 void main() {
   Widget host(
     DashboardController controller,
@@ -132,6 +128,138 @@ void main() {
     controller.setSlotCount(2);
     await tester.pumpAndSettle();
     expect(sliverOf(tester).debugActiveReflowTransitionCount, 0);
+  });
+
+  testWidgets('toggling animations off mid-flight clears the transitions', (tester) async {
+    final controller = DashboardController(
+      initialSlotCount: 4,
+      initialLayout: const [
+        LayoutItem(id: 'a', x: 0, y: 0, w: 1, h: 1),
+        LayoutItem(id: 'b', x: 1, y: 0, w: 1, h: 1),
+      ],
+    );
+    addTearDown(controller.dispose);
+    final scrollController = ScrollController();
+    addTearDown(scrollController.dispose);
+
+    await tester.pumpWidget(host(controller, scrollController));
+    await tester.pumpAndSettle();
+
+    controller.updateItem('b', (i) => i.copyWith(x: 3), recompact: false);
+    await tester.pump();
+    await tester.pump();
+    final sliver = sliverOf(tester);
+    expect(sliver.debugActiveReflowTransitionCount, 1);
+
+    // Rebuild with the feature disabled while the slide is in flight:
+    // the setter must clear the transitions and stop the ticker.
+    await tester.pumpWidget(host(controller, scrollController, animations: false));
+    await tester.pump();
+    expect(sliverOf(tester).debugActiveReflowTransitionCount, 0);
+  });
+
+  testWidgets('retargeting mid-flight mutates the transition in place', (tester) async {
+    final controller = DashboardController(
+      initialSlotCount: 4,
+      initialLayout: const [
+        LayoutItem(id: 'a', x: 0, y: 0, w: 1, h: 1),
+        LayoutItem(id: 'b', x: 1, y: 0, w: 1, h: 1),
+      ],
+    );
+    addTearDown(controller.dispose);
+    final scrollController = ScrollController();
+    addTearDown(scrollController.dispose);
+
+    await tester.pumpWidget(host(controller, scrollController));
+    await tester.pumpAndSettle();
+
+    controller.updateItem('b', (i) => i.copyWith(x: 3), recompact: false);
+    await tester.pump();
+    await tester.pump();
+    await tester.pump(Duration.zero); // ticker baseline
+    await tester.pump(const Duration(milliseconds: 40)); // mid-flight
+
+    // Retarget: 'b' turns back toward x=1 while still sliding.
+    controller.updateItem('b', (i) => i.copyWith(x: 1), recompact: false);
+    await tester.pump();
+    await tester.pump();
+    final sliver = sliverOf(tester);
+    // Allocation budget: retarget reuses the instance — still ONE transition.
+    expect(sliver.debugActiveReflowTransitionCount, 1);
+
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(sliver.debugActiveReflowTransitionCount, 0);
+  });
+
+  testWidgets('a zero reflow duration snaps: progress is complete instantly', (tester) async {
+    final controller = DashboardController(
+      initialSlotCount: 4,
+      initialLayout: const [
+        LayoutItem(id: 'a', x: 0, y: 0, w: 1, h: 1),
+        LayoutItem(id: 'b', x: 1, y: 0, w: 1, h: 1),
+      ],
+    );
+    addTearDown(controller.dispose);
+    final scrollController = ScrollController();
+    addTearDown(scrollController.dispose);
+
+    await tester.pumpWidget(
+      host(controller, scrollController, duration: Duration.zero),
+    );
+    await tester.pumpAndSettle();
+
+    controller.updateItem('b', (i) => i.copyWith(x: 3), recompact: false);
+    await tester.pump();
+    await tester.pump();
+    final sliver = sliverOf(tester);
+    // With durationUs <= 0, progress is 1 immediately: the painted offset
+    // never lags behind the final position.
+    expect(sliver.debugReflowPaintOffsetFor('b'), isNull);
+    await tester.pump(Duration.zero);
+    await tester.pump(const Duration(milliseconds: 16));
+    expect(sliver.debugActiveReflowTransitionCount, 0);
+  });
+
+  testWidgets('debug hooks: unknown id and settled item both yield null', (tester) async {
+    final controller = DashboardController(
+      initialSlotCount: 4,
+      initialLayout: const [LayoutItem(id: 'a', x: 0, y: 0, w: 1, h: 1)],
+    );
+    addTearDown(controller.dispose);
+    final scrollController = ScrollController();
+    addTearDown(scrollController.dispose);
+
+    await tester.pumpWidget(host(controller, scrollController));
+    await tester.pumpAndSettle();
+    final sliver = sliverOf(tester);
+    expect(sliver.debugReflowPaintOffsetFor('ghost'), isNull);
+    expect(sliver.debugReflowPaintOffsetFor('a'), isNull);
+  });
+
+  testWidgets('tearing the widget down mid-flight disposes cleanly', (tester) async {
+    final controller = DashboardController(
+      initialSlotCount: 4,
+      initialLayout: const [
+        LayoutItem(id: 'a', x: 0, y: 0, w: 1, h: 1),
+        LayoutItem(id: 'b', x: 1, y: 0, w: 1, h: 1),
+      ],
+    );
+    addTearDown(controller.dispose);
+    final scrollController = ScrollController();
+    addTearDown(scrollController.dispose);
+
+    await tester.pumpWidget(host(controller, scrollController));
+    await tester.pumpAndSettle();
+    controller.updateItem('b', (i) => i.copyWith(x: 3), recompact: false);
+    await tester.pump();
+    await tester.pump();
+    await tester.pump(Duration.zero);
+    await tester.pump(const Duration(milliseconds: 40)); // in flight
+
+    // Unmount while the ticker is active: detach + dispose must stop and
+    // release it without asserts ("Ticker was still active").
+    await tester.pumpWidget(const SizedBox());
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('scroll passes never seed transitions', (tester) async {
