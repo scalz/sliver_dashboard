@@ -63,6 +63,8 @@ class Dashboard<T extends Object> extends StatefulWidget {
     this.crossGridDragOut = true,
     this.acceptCrossGridItems = true,
     this.fillViewport = true,
+    this.animateReflow = false,
+    this.reflowDuration = const Duration(milliseconds: 150),
     super.key,
   }) : assert(
           (itemBuilder != null ? 1 : 0) +
@@ -219,6 +221,14 @@ class Dashboard<T extends Object> extends StatefulWidget {
   /// occupies, instead of empty trailing rows.
   final bool fillViewport;
 
+  /// Enables paint-phase slide transitions for tiles pushed or compacted by a
+  /// drag/resize. See [SliverDashboard.animateReflow]. Off by
+  /// default (lower-end web clients).
+  final bool animateReflow;
+
+  /// Duration of a single tile slide when [animateReflow] is true.
+  final Duration reflowDuration;
+
   @override
   State<Dashboard<T>> createState() => _DashboardState<T>();
 }
@@ -335,6 +345,8 @@ class _DashboardState<T extends Object> extends State<Dashboard<T>> {
               SliverPadding(
                 padding: widget.padding ?? EdgeInsets.zero,
                 sliver: SliverDashboard(
+                  animateReflow: widget.animateReflow,
+                  reflowDuration: widget.reflowDuration,
                   itemBuilder: widget.itemBuilder,
                   itemLayoutBuilder: widget.itemLayoutBuilder,
                   itemBreakpointBuilder: widget.itemBreakpointBuilder,

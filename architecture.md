@@ -307,7 +307,7 @@ sequenceDiagram
     end
 ```
 
-## 7. Nested Grids & Cross-Grid Drag (v2)
+## 7. Nested Grids & Cross-Grid Drag
 
 A grid item can host a full `Dashboard`,
 and a drag can travel continuously between any grids sharing a
@@ -324,8 +324,8 @@ and a drag can travel continuously between any grids sharing a
     - **Registry & Target Resolution (INVARIANT):** Every `DashboardOverlay` under the scope registers with its nesting **depth**. `targetAt(globalPosition)` resolves the deepest registered grid containing the point — O(G) point-in-rect tests per pointer event (G = live grids), never per item.
       - **Recursive Nesting Safeguard:** `targetAt` prevents a parent grid item from being dragged inside its own child grid or deep descendant subtrees. This lookup uses the authoritative link-registry `_childLinks` (persistent walk-up check `isDescendantOf`) instead of unmounted/virtualized overlay states.
       - **Same-Grid Drag Session Isolation:** Dragging within the source grid remains valid without triggering cross-grid sessions. The source controller itself is not excluded, allowing fluid local movements.
-      - **Sliver-precise containment (v2.0):** `targetAt` delegates containment to `CrossGridDragTarget.isPointInsideSliver`, which tests the sliver's *visible paint bounds* (constraints + geometry, allocation-free) instead of the overlay's render box. This is what allows several sibling `SliverDashboard`s to share one `CustomScrollView` (each overlay box covers the whole viewport and could not discriminate). Requirement: in multi-sliver trees, every overlay MUST receive a `sliverKey` matching its `SliverDashboard`, a `controller` must be passed to each `SliverDashboard` (provider shadowing), and the overlay `padding` must match the surrounding `SliverPadding`.
-      - **Dimension Projection (v2.0):** on grid enter and on drop, the coordinator projects the dragged item through `projectItem` (`preserveLogicalSize` | `preserveVisualProportion` | `custom`). The projection is memoized per (source, target) slot-count pair for the whole session, and its output is ALWAYS sanitized (`w` clamped to `[1, targetSlotCount]`, `minW`/`minH` capped) — including custom callback output — so a target grid can never receive an item violating `correctBounds` invariants.
+      - **Sliver-precise containment:** `targetAt` delegates containment to `CrossGridDragTarget.isPointInsideSliver`, which tests the sliver's *visible paint bounds* (constraints + geometry, allocation-free) instead of the overlay's render box. This is what allows several sibling `SliverDashboard`s to share one `CustomScrollView` (each overlay box covers the whole viewport and could not discriminate). Requirement: in multi-sliver trees, every overlay MUST receive a `sliverKey` matching its `SliverDashboard`, a `controller` must be passed to each `SliverDashboard` (provider shadowing), and the overlay `padding` must match the surrounding `SliverPadding`.
+      - **Dimension Projection:** on grid enter and on drop, the coordinator projects the dragged item through `projectItem` (`preserveLogicalSize` | `preserveVisualProportion` | `custom`). The projection is memoized per (source, target) slot-count pair for the whole session, and its output is ALWAYS sanitized (`w` clamped to `[1, targetSlotCount]`, `minW`/`minH` capped) — including custom callback output — so a target grid can never receive an item violating `correctBounds` invariants.
       - **Exit-by-void hysteresis:** a source overlay only opens a session into empty space when the pointer is outside the sliver bounds by more than half a slot (min 24 px), when at least one *other* accepting grid is registered, and when the pointer is not over the trash zone. Entering another registered grid remains immediate.
     - **Pointer claim:** `claimPointer` / `isPointerClaimedByOther` prevents
       ancestor grids from stealing drags started in nested grids.
@@ -438,3 +438,28 @@ Key properties:
   repositions via one `ValueNotifier` without rebuilding any grid.
 - Layering is preserved: the engine is untouched; controller additions are
   pure state/orchestration; all geometry stays in the view layer.
+
+### Paint-Phase Reflow Animations
+
+`RenderSliverDashboard` can interpolate the painted offset of tiles whose grid
+position changed (`animateReflow`, off by default; 150 ms easeOutCubic).
+Invariant-preserving design:
+
+- **Layout untouched:** `performLayout` still writes final coordinates in one
+  pass (order GC → Initial → Trailing → Leading unchanged); the transition
+  seeding is a per-child double comparison inside the existing offset
+  assignment (`_applyChildGeometry`) and costs one bool check when disabled.
+- **Seeding gate:** transitions are seeded only when the `items` *instance*
+  changed since the previous pass (genuine layout mutation) AND slot metrics
+  are unchanged. Scroll relayouts reuse the instance → zero cost; metric
+  changes (resize/breakpoint/slot count) snap and clear in-flight transitions.
+- **Paint-only interpolation:** the child (a `RepaintBoundary`) is painted at
+  the interpolated offset — a GPU layer translation, no `TransformLayer`
+  allocation, no rebuild. Hit-testing/semantics (`childMainAxisPosition`,
+  `applyPaintTransform`) keep the final position.
+- **Clock:** a `Ticker` (vsync from `_SliverDashboardState`) drives
+  `markNeedsPaint` and prunes finished transitions time-based (a tile GC'd
+  off-screen mid-slide cannot keep the ticker alive). Deterministic under
+  `flutter_test`.
+- **Allocation budget:** at most one mutable `_ReflowTransition` per pushed
+  tile per gesture (retargets mutate in place); the placeholder never animates.

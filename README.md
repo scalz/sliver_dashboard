@@ -16,7 +16,7 @@ Ideal for analytics platforms, IoT control panels, project management tools, no-
 
 - 🚀 **High Performance:** Built on Flutter's `Sliver` protocol with **smart caching**. It only renders visible items and prevents unnecessary rebuilds of children during drag/resize operations.
 - 🧩 **Sliver Composition:** Integrate the dashboard's grid seamlessly with other slivers like `SliverAppBar` and `SliverList` within a single `CustomScrollView`.
-- 🪆 **Nested Grids (v2):** Embed full dashboards inside grid items (`NestedDashboard`) at any depth, and **drag items between grids** (parent ↔ child ↔ siblings) with a live push-preview placeholder. Supports auto-sizing hosts, dynamic sub-grid creation, and one-call recursive save/load.
+- 🪆 **Nested Grids:** Embed full dashboards inside grid items (`NestedDashboard`) at any depth, and **drag items between grids** (parent ↔ child ↔ siblings) with a live push-preview placeholder. Supports auto-sizing hosts, dynamic sub-grid creation, and one-call recursive save/load.
 - 🎨 **Fully Customizable:** Control the number of columns, aspect ratio, spacing, grid and handles style. Items can be draggable, resizable, and static. Support for dedicated **Drag Handles** (`DashboardDragStartListener`) and configurable mobile drag start gestures (long-press, tap, or handle-only).
 - 🛡️ **Declarative Interaction Policies (`DashboardPolicy`):** Inject granular business rules (e.g., "charts cannot push system KPIs", "block dragging on Row 0") on-the-fly without having to write custom compaction delegates.
 - 📌 **Segmented Grids (Section Barriers):** Divide your grid into organized visual sections using static section barriers with custom header builders while maintaining strict collision boundaries.
@@ -1057,6 +1057,27 @@ Widget build(BuildContext context) {
   );
 }
 ```
+
+### Reflow Animations
+
+Tiles pushed or compacted during a drag/resize can slide smoothly to their new
+slot instead of snapping:
+
+```dart
+Dashboard(
+  animateReflow: true, // default: false
+  reflowDuration: const Duration(milliseconds: 150),
+  // ...
+)
+```
+
+Design notes: the layout itself stays instantaneous and deterministic (the
+engine and controller are untouched); only the *painted* position of a moved
+tile is interpolated during the paint phase of `RenderSliverDashboard`. Each
+tile's content is cached behind a `RepaintBoundary`, so the slide is a GPU
+translation of the cached layer — no widget rebuilds, no re-rasterization.
+Hit-testing and screen-reader focus use the final position immediately, and a
+slot-metric change (window resize, breakpoint, slot count) snaps by design.
 
 ### Custom Compaction Strategy
 

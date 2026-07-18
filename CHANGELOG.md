@@ -95,7 +95,14 @@ tree, the new code paths reduce to a few null-checks per pointer event.
   - `preserveVisualProportion`: Automatically scales tile dimensions proportionally based on the column count ratio between the source and target grids (e.g., a w:2 item in an 8-col grid scales down to w:1 in a 4-col grid, keeping its visual 25% width ratio).
   - `custom`: Delegates the scaling arithmetic to a developer-defined `customProjectionCallback`.
 - **Shadowing Decoupling:** Added the optional `controller` parameter to `SliverDashboard` and `sliverKey` to `DashboardOverlay` to safely support multiple concurrent sliver grids in the same viewport without context collision or shadowing.
-
+- **Paint-Phase Reflow Animations** (`animateReflow`, default `false`):
+  pushed/compacted tiles slide smoothly (150 ms, `reflowDuration`)
+  to their new slot during drags and resizes. Layout stays instantaneous and
+  deterministic — only the painted offset interpolates, translating each
+  tile's cached `RepaintBoundary` layer on the GPU: zero widget rebuilds,
+  zero re-rasterization, zero allocation per paint pass. Slot-metric changes
+  (viewport resize, breakpoints, slot count) snap by design; hit-testing and
+  semantics use the final position immediately.
 ### Bug Fixes
 
 - **Auto-scroll tick placeholder re-anchoring**: while auto-scrolling under a

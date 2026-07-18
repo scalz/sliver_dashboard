@@ -34,7 +34,7 @@ class MyApp extends StatelessWidget {
 }
 
 /// Launcher for the two demos: the classic single-grid playground and the
-/// v2 nested grids demo (cross-grid drag & drop, sizeToContent, save/load).
+/// nested grids demo (cross-grid drag & drop, sizeToContent, save/load).
 class ExampleHome extends StatelessWidget {
   const ExampleHome({super.key});
 
@@ -61,7 +61,7 @@ class ExampleHome extends StatelessWidget {
           Card(
             child: ListTile(
               leading: const Icon(Icons.grid_view),
-              title: const Text('Nested grids (v2)'),
+              title: const Text('Nested grids'),
               subtitle: const Text(
                 'Grids inside items, cross-grid drag & drop, sizeToContent, '
                 'save/load of the whole tree.',
@@ -77,7 +77,7 @@ class ExampleHome extends StatelessWidget {
           Card(
             child: ListTile(
               leading: const Icon(Icons.layers),
-              title: const Text('Multi-Sliver Drag & Drop (v2)'),
+              title: const Text('Multi-Sliver Drag & Drop'),
               subtitle: const Text(
                 'Asymmetric sliver grids, physical coordinate matrix translation, '
                 'custom proportional scaling projection policies.',
@@ -474,6 +474,7 @@ class _DashboardPageState extends State<DashboardPage> {
               controller: controller,
               scrollController: standardScrollController,
               scrollDirection: controller.scrollDirection.value,
+              animateReflow: true,
               slotAspectRatio: 1.0,
               mainAxisSpacing: 8.0,
               crossAxisSpacing: 8.0,

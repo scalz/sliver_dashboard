@@ -8,7 +8,7 @@ Launching the app opens a small home screen with two demos:
 
 - **Playground** — the full single-grid showcase (drag, resize, sections,
   mini-map, policies, JSON import/export, stress tests).
-- **Nested grids (v2)** — dashboards inside dashboard items, with drag & drop
+- **Nested grids** — dashboards inside dashboard items, with drag & drop
   between grids, `sizeToContent`, `subGridDynamic`, depth limiting, and
   save/load of the whole tree.
 

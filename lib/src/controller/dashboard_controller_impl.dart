@@ -697,7 +697,7 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
 
   /// Call when a drag gesture starts on a dashboard item.
   // ===========================================================================
-  // Nested grids / cross-grid drag & drop (v2)
+  // Nested grids / cross-grid drag & drop
   // ===========================================================================
 
   /// The item currently highlighted as a dynamic nested-grid host

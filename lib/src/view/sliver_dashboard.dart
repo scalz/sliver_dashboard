@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:sliver_dashboard/src/controller/dashboard_controller_interface.dart';
 import 'package:sliver_dashboard/src/controller/dashboard_controller_provider.dart';
 import 'package:sliver_dashboard/src/models/layout_item.dart';
@@ -19,8 +20,13 @@ typedef LayoutProfileCallback = void Function(Duration duration);
 ///
 /// Stores the calculated pixel offset for painting each child.
 class SliverDashboardParentData extends SliverMultiBoxAdaptorParentData {
-  /// The paint offset of the child.
-  late Offset paintOffset;
+  /// The paint offset of the child (full content coordinates, scroll-invariant).
+  Offset paintOffset = Offset.zero;
+
+  /// Whether [paintOffset] has been assigned at least once. Freshly created
+  /// children (scrolled into view) have no previous position: reflow
+  /// animations snap them instead of animating from `Offset.zero`.
+  bool hasPaintOffset = false;
 }
 
 /// A sliver that displays the dashboard grid.
@@ -51,6 +57,8 @@ class SliverDashboard extends StatefulWidget {
     this.itemGlobalKeySuffix = '',
     this.onPerformLayout,
     this.fillViewport = false,
+    this.animateReflow = false,
+    this.reflowDuration = const Duration(milliseconds: 150),
     super.key,
   }) : assert(
           (itemBuilder != null ? 1 : 0) +
@@ -119,6 +127,27 @@ class SliverDashboard extends StatefulWidget {
   /// A suffix to append to global keys for dashboard items.
   final String itemGlobalKeySuffix;
 
+  /// Enables paint-phase slide transitions for tiles pushed or compacted by a
+  /// drag/resize.
+  ///
+  /// Layout stays instantaneous and deterministic (the controller/engine are
+  /// untouched); only the *painted* position of a moved tile is interpolated
+  /// over [reflowDuration]. Each tile's content is already cached
+  /// behind a `RepaintBoundary`, so the interpolation translates the cached
+  /// layer on the GPU — zero widget rebuilds, zero re-rasterization.
+  ///
+  /// Disabled by default: on low-end web clients the extra paint pump
+  /// (markNeedsPaint per frame for 150 ms after each cell crossing) is a cost
+  /// some integrators prefer to avoid.
+  ///
+  /// Known limits (by design): hit-testing and semantics use the final
+  /// position immediately; a slot-metric change (viewport resize, breakpoint,
+  /// slot-count change) snaps instead of animating.
+  final bool animateReflow;
+
+  /// Duration of a single tile slide when [animateReflow] is true.
+  final Duration reflowDuration;
+
   /// Callback for testing/profiling layout performance.
   final LayoutProfileCallback? onPerformLayout;
 
@@ -129,7 +158,7 @@ class SliverDashboard extends StatefulWidget {
   State<SliverDashboard> createState() => _SliverDashboardState();
 }
 
-class _SliverDashboardState extends State<SliverDashboard> {
+class _SliverDashboardState extends State<SliverDashboard> with TickerProviderStateMixin {
   late DashboardController _controller;
 
   // Cache variables to avoid GC churn and string allocations
@@ -243,6 +272,9 @@ class _SliverDashboardState extends State<SliverDashboard> {
           crossAxisSpacing: widget.crossAxisSpacing,
           onPerformLayout: widget.onPerformLayout,
           isEditing: isEditing,
+          animateReflow: widget.animateReflow,
+          reflowDuration: widget.reflowDuration,
+          vsync: this,
           delegate: SliverChildBuilderDelegate(
             (context, index) {
               final item = _controller.layout.value[index];
@@ -354,12 +386,15 @@ class SliverDashboardLayout extends SliverMultiBoxAdaptorWidget {
     required this.items,
     required this.slotCount,
     required super.delegate,
+    required this.vsync,
     this.scrollDirection = Axis.vertical,
     this.slotAspectRatio = 1.0,
     this.mainAxisSpacing = 8.0,
     this.crossAxisSpacing = 8.0,
     this.onPerformLayout,
     this.isEditing = false,
+    this.animateReflow = false,
+    this.reflowDuration = const Duration(milliseconds: 150),
     super.key,
   });
 
@@ -387,6 +422,19 @@ class SliverDashboardLayout extends SliverMultiBoxAdaptorWidget {
   /// Whether the dashboard is in edit mode.
   final bool isEditing;
 
+  /// See [SliverDashboard.animateReflow].
+  final bool animateReflow;
+
+  /// See [SliverDashboard.reflowDuration].
+  final Duration reflowDuration;
+
+  /// Ticker provider driving the paint-phase reflow interpolation.
+  ///
+  /// A [Ticker] (rather than raw `SchedulerBinding` frame callbacks) keeps
+  /// the animation muted when the route is hidden and fully deterministic
+  /// under `flutter_test`'s fake frame clock.
+  final TickerProvider vsync;
+
   @override
   RenderSliverDashboard createRenderObject(BuildContext context) {
     final element = context as SliverMultiBoxAdaptorElement;
@@ -400,6 +448,9 @@ class SliverDashboardLayout extends SliverMultiBoxAdaptorWidget {
       crossAxisSpacing: crossAxisSpacing,
       onPerformLayout: onPerformLayout,
       isEditing: isEditing,
+      animateReflow: animateReflow,
+      reflowDuration: reflowDuration,
+      vsync: vsync,
     );
   }
 
@@ -414,6 +465,9 @@ class SliverDashboardLayout extends SliverMultiBoxAdaptorWidget {
       ..crossAxisSpacing = crossAxisSpacing
       ..onPerformLayout = onPerformLayout
       ..isEditing = isEditing
+      ..animateReflow = animateReflow
+      ..reflowDuration = reflowDuration
+      ..vsync = vsync
 
       // Force a layout pass on structural widget updates to ensure child parentData offsets are aligned
       ..markNeedsLayout();
@@ -431,15 +485,21 @@ class RenderSliverDashboard extends RenderSliverMultiBoxAdaptor {
     required double slotAspectRatio,
     required double mainAxisSpacing,
     required double crossAxisSpacing,
+    required TickerProvider vsync,
     this.onPerformLayout,
     bool isEditing = false,
+    bool animateReflow = false,
+    Duration reflowDuration = const Duration(milliseconds: 150),
   })  : _items = items,
         _slotCount = slotCount,
         _scrollDirection = scrollDirection,
         _slotAspectRatio = slotAspectRatio,
         _mainAxisSpacing = mainAxisSpacing,
         _crossAxisSpacing = crossAxisSpacing,
-        _isEditing = isEditing;
+        _isEditing = isEditing,
+        _animateReflow = animateReflow,
+        _reflowDurationUs = reflowDuration.inMicroseconds,
+        _vsync = vsync;
 
   List<LayoutItem> _items;
 
@@ -450,6 +510,10 @@ class RenderSliverDashboard extends RenderSliverMultiBoxAdaptor {
     // layout actually changed; identical instances mean identical geometry.
     if (identical(_items, value)) return;
     _items = value;
+    // Reason: reflow transitions must only be seeded by genuine layout
+    // mutations. Scroll-driven relayouts reuse the same list instance and
+    // therefore never pay the offset-comparison cost.
+    _reflowSeedPass = _animateReflow;
     markNeedsLayout();
   }
 
@@ -516,6 +580,190 @@ class RenderSliverDashboard extends RenderSliverMultiBoxAdaptor {
   /// Callback for testing/profiling layout performance.
   LayoutProfileCallback? onPerformLayout;
 
+  // ==========================================================================
+  // Paint-phase reflow animations
+  // ==========================================================================
+
+  bool _animateReflow;
+
+  /// Whether pushed/compacted tiles slide to their new slot during paint.
+  bool get animateReflow => _animateReflow;
+  set animateReflow(bool value) {
+    if (_animateReflow == value) return;
+    _animateReflow = value;
+    if (!value) {
+      _transitions.clear();
+      _stopReflowTicker();
+      markNeedsPaint();
+    }
+  }
+
+  int _reflowDurationUs;
+
+  /// Duration of a tile slide, stored in microseconds for hot-path math.
+  Duration get reflowDuration => Duration(microseconds: _reflowDurationUs);
+  set reflowDuration(Duration value) {
+    final us = value.inMicroseconds;
+    if (_reflowDurationUs == us) return;
+    _reflowDurationUs = us;
+  }
+
+  TickerProvider _vsync;
+
+  /// The ticker provider driving the reflow pump.
+  TickerProvider get vsync => _vsync;
+  set vsync(TickerProvider value) {
+    if (identical(_vsync, value)) return;
+    _vsync = value;
+    // Reason: an active ticker belongs to the old provider; recreate lazily.
+    _stopReflowTicker();
+    _ticker?.dispose();
+    _ticker = null;
+    if (_transitions.isNotEmpty) _startReflowTicker();
+  }
+
+  /// Active slide transitions, keyed by [LayoutItem.id]. Instances are
+  /// mutated in place on retarget, so steady dragging allocates at most one
+  /// small object per tile for the whole gesture.
+  final Map<String, _ReflowTransition> _transitions = <String, _ReflowTransition>{};
+
+  /// True for exactly one layout pass after the [items] instance changed.
+  bool _reflowSeedPass = false;
+
+  // Slot metrics of the previous pass: a metric change (viewport resize,
+  // breakpoint, slot-count) moves every tile at once — that reflow snaps.
+  double _reflowLastSlotW = -1;
+  double _reflowLastSlotH = -1;
+  int _reflowLastSlotCount = -1;
+
+  Ticker? _ticker;
+  // Monotonic animation clock in microseconds, advanced by the ticker. Using
+  // ticker elapsed (frame timestamps) keeps tests deterministic and avoids
+  // SchedulerBinding.currentFrameTimeStamp assertions outside frames.
+  int _animNowUs = 0;
+  int _animAccumulatedUs = 0;
+
+  void _onReflowTick(Duration elapsed) {
+    _animNowUs = _animAccumulatedUs + elapsed.inMicroseconds;
+    // Time-based pruning (not visibility-based): a tile GC'd out of the
+    // viewport mid-slide must not keep the ticker alive forever.
+    _transitions.removeWhere((_, t) => _animNowUs - t.startUs >= _reflowDurationUs);
+    if (_transitions.isEmpty) _stopReflowTicker();
+    // One more paint after emptying, so tiles settle on their rest position.
+    markNeedsPaint();
+  }
+
+  void _startReflowTicker() {
+    final ticker = _ticker ??= _vsync.createTicker(_onReflowTick);
+    if (!ticker.isActive) ticker.start().ignore();
+  }
+
+  void _stopReflowTicker() {
+    final ticker = _ticker;
+    if (ticker != null && ticker.isActive) {
+      _animAccumulatedUs = _animNowUs;
+      ticker.stop();
+    }
+  }
+
+  /// Seeds or retargets the slide of item [id] from its current *visual*
+  /// position toward ([toX], [toY]).
+  void _seedTransition(String id, double fromX, double fromY, double toX, double toY) {
+    final existing = _transitions[id];
+    if (existing != null) {
+      // Retarget mid-flight: continue from the interpolated position for a
+      // continuous motion instead of jumping back to the stale origin.
+      final p = _transitionProgress(existing);
+      existing
+        ..fromX = existing.fromX + (existing.toX - existing.fromX) * p
+        ..fromY = existing.fromY + (existing.toY - existing.fromY) * p
+        ..toX = toX
+        ..toY = toY
+        ..startUs = _animNowUs;
+      return;
+    }
+    _transitions[id] = _ReflowTransition(
+      fromX: fromX,
+      fromY: fromY,
+      toX: toX,
+      toY: toY,
+      startUs: _animNowUs,
+    );
+  }
+
+  /// Number of in-flight reflow transitions (test hook).
+  @visibleForTesting
+  int get debugActiveReflowTransitionCount => _transitions.length;
+
+  /// The *painted* (possibly interpolated) offset of item [id] right now, or
+  /// null when the item is unknown (test hook).
+  @visibleForTesting
+  Offset? debugReflowPaintOffsetFor(String id) {
+    for (var i = 0; i < _items.length; i++) {
+      if (_items[i].id != id) continue;
+      final t = _transitions[id];
+      if (t != null) {
+        final p = _transitionProgress(t);
+        if (p < 1) {
+          return Offset(
+            t.fromX + (t.toX - t.fromX) * p,
+            t.fromY + (t.toY - t.fromY) * p,
+          );
+        }
+      }
+      // Rest position: recompute from grid coordinates is unnecessary — every
+      // laid-out child stores it, but the child may be GC'd; fall back to the
+      // transition target if one existed, else null.
+      return null;
+    }
+    return null;
+  }
+
+  /// Eased progress of [t] at the current animation clock, in [0, 1]
+  /// (easeOutCubic — matches the platform reflow feel of gridstack/Muuri
+  /// without allocating a Curve object).
+  double _transitionProgress(_ReflowTransition t) {
+    if (_reflowDurationUs <= 0) return 1;
+    var p = (_animNowUs - t.startUs) / _reflowDurationUs;
+    if (p >= 1) return 1;
+    if (p < 0) p = 0;
+    final inv = 1 - p;
+    return 1 - inv * inv * inv;
+  }
+
+  /// Applies the computed geometry to a child's parent data, seeding a reflow
+  /// transition when this pass is an animatable layout mutation and the
+  /// tile's paint offset actually moved.
+  ///
+  /// Reason — placement in the hot path: this replaces the previous inline
+  /// double assignment. Cost when animations are disabled or on scroll
+  /// passes: one bool check. No allocation either way (transitions mutate in
+  /// place).
+  void _applyChildGeometry(
+    SliverDashboardParentData pd,
+    int index,
+    double x,
+    double y,
+    double layoutOffset, {
+    required bool animatePass,
+  }) {
+    if (animatePass && pd.hasPaintOffset) {
+      final old = pd.paintOffset;
+      if (old.dx != x || old.dy != y) {
+        final item = _items[index];
+        // The drag placeholder snaps: animating it would make the drop
+        // preview lag behind the pointer.
+        if (item.id != '__placeholder__') {
+          _seedTransition(item.id, old.dx, old.dy, x, y);
+        }
+      }
+    }
+    pd
+      ..layoutOffset = layoutOffset
+      ..paintOffset = Offset(x, y)
+      ..hasPaintOffset = true;
+  }
+
   // Reused geometry scratch buffer: [left, top, width, height] per item.
   // Replaces the per-layout-pass List<Rect>.filled(N) allocation (~60k
   // short-lived Rect objects per second during autoscroll drags at N=1000),
@@ -574,6 +822,26 @@ class RenderSliverDashboard extends RenderSliverMultiBoxAdaptor {
     } else {
       slotHeight = (crossAxisExtent - (_slotCount - 1) * _mainAxisSpacing) / _slotCount;
       slotWidth = slotHeight * _slotAspectRatio;
+    }
+
+    // 2bis. Reflow-animation gating.
+    // A pass may seed slide transitions only when (a) the feature is on,
+    // (b) the items *instance* changed since the previous pass (a genuine
+    // layout mutation — scroll relayouts reuse the instance) and (c) the slot
+    // metrics are unchanged. A metric change (viewport resize, breakpoint,
+    // slot count) moves every tile at once; that reflow snaps and any
+    // in-flight transition is dropped, because its from/to coordinates were
+    // expressed in the old metric space.
+    final metricsChanged = slotWidth != _reflowLastSlotW ||
+        slotHeight != _reflowLastSlotH ||
+        _slotCount != _reflowLastSlotCount;
+    final animatePass = _animateReflow && _reflowSeedPass && !metricsChanged;
+    _reflowLastSlotW = slotWidth;
+    _reflowLastSlotH = slotHeight;
+    _reflowLastSlotCount = _slotCount;
+    _reflowSeedPass = false;
+    if (metricsChanged && _transitions.isNotEmpty) {
+      _transitions.clear();
     }
 
     // 3. Pre-calculate item geometries and total scroll extent
@@ -674,7 +942,14 @@ class RenderSliverDashboard extends RenderSliverMultiBoxAdaptor {
         if (addInitialChild(index: minVisibleIndex, layoutOffset: initialOffset)) {
           final childParentData = firstChild?.parentData;
           if (childParentData is SliverDashboardParentData) {
-            childParentData.paintOffset = Offset(geom[base], geom[base + 1]);
+            _applyChildGeometry(
+              childParentData,
+              minVisibleIndex,
+              geom[base],
+              geom[base + 1],
+              initialOffset,
+              animatePass: animatePass,
+            );
           }
         }
       }
@@ -693,9 +968,14 @@ class RenderSliverDashboard extends RenderSliverMultiBoxAdaptor {
       final childParentData = newChild?.parentData;
       if (newChild == null || childParentData is! SliverDashboardParentData) break;
 
-      childParentData
-        ..layoutOffset = isVertical ? geom[base + 1] : geom[base]
-        ..paintOffset = Offset(geom[base], geom[base + 1]);
+      _applyChildGeometry(
+        childParentData,
+        index,
+        geom[base],
+        geom[base + 1],
+        isVertical ? geom[base + 1] : geom[base],
+        animatePass: animatePass,
+      );
 
       leadingChild = newChild;
     }
@@ -709,9 +989,14 @@ class RenderSliverDashboard extends RenderSliverMultiBoxAdaptor {
       final base = index * 4;
       final childParentData = child.parentData;
       if (childParentData is SliverDashboardParentData) {
-        childParentData
-          ..layoutOffset = isVertical ? geom[base + 1] : geom[base]
-          ..paintOffset = Offset(geom[base], geom[base + 1]);
+        _applyChildGeometry(
+          childParentData,
+          index,
+          geom[base],
+          geom[base + 1],
+          isVertical ? geom[base + 1] : geom[base],
+          animatePass: animatePass,
+        );
       }
       child.layout(
         BoxConstraints.tightFor(width: geom[base + 2], height: geom[base + 3]),
@@ -742,9 +1027,14 @@ class RenderSliverDashboard extends RenderSliverMultiBoxAdaptor {
 
           final newParentData = newChild.parentData;
           if (newParentData is SliverDashboardParentData) {
-            newParentData
-              ..layoutOffset = isVertical ? geom[insertBase + 1] : geom[insertBase]
-              ..paintOffset = Offset(geom[insertBase], geom[insertBase + 1]);
+            _applyChildGeometry(
+              newParentData,
+              insertIndex,
+              geom[insertBase],
+              geom[insertBase + 1],
+              isVertical ? geom[insertBase + 1] : geom[insertBase],
+              animatePass: animatePass,
+            );
           }
 
           previousChild = newChild;
@@ -782,6 +1072,10 @@ class RenderSliverDashboard extends RenderSliverMultiBoxAdaptor {
 
     childManager.didFinishLayout();
 
+    if (_animateReflow && _transitions.isNotEmpty) {
+      _startReflowTicker();
+    }
+
     if (stopwatch != null) {
       stopwatch.stop();
       onPerformLayout?.call(stopwatch.elapsed);
@@ -792,35 +1086,81 @@ class RenderSliverDashboard extends RenderSliverMultiBoxAdaptor {
   void paint(PaintingContext context, Offset offset) {
     if (firstChild == null) return;
     final isVertical = scrollDirection == Axis.vertical;
+    // Reflow interpolation is a pure paint-offset substitution: layout,
+    // hit-testing and semantics already sit at the final coordinates; only
+    // the painted position of a sliding tile lags by <= reflowDuration. Each
+    // tile is a RepaintBoundary, so painting the cached layer at a shifted
+    // offset is a GPU layer translation — equivalent to a Matrix4.translate
+    // without allocating a TransformLayer per child per frame.
+    final animating = _animateReflow && _transitions.isNotEmpty;
 
     var child = firstChild;
     while (child != null) {
       final childParentData = child.parentData;
       if (childParentData is! SliverDashboardParentData) break;
 
-      final mainAxisLayoutOffset = childParentData.layoutOffset!;
+      var paintX = childParentData.paintOffset.dx;
+      var paintY = childParentData.paintOffset.dy;
 
-      if (mainAxisLayoutOffset + (isVertical ? child.size.height : child.size.width) >=
+      if (animating) {
+        final index = childParentData.index;
+        if (index != null && index >= 0 && index < _items.length) {
+          final t = _transitions[_items[index].id];
+          if (t != null) {
+            final p = _transitionProgress(t);
+            if (p < 1) {
+              paintX = t.fromX + (t.toX - t.fromX) * p;
+              paintY = t.fromY + (t.toY - t.fromY) * p;
+            }
+          }
+        }
+      }
+
+      // Cull against the *visual* main-axis position so a tile sliding in
+      // from a currently invisible slot does not pop.
+      final mainAxisPos = isVertical ? paintY : paintX;
+
+      if (mainAxisPos + (isVertical ? child.size.height : child.size.width) >=
               constraints.scrollOffset &&
-          mainAxisLayoutOffset <= constraints.scrollOffset + constraints.remainingPaintExtent) {
+          mainAxisPos <= constraints.scrollOffset + constraints.remainingPaintExtent) {
         final Offset finalPaintOffset;
         if (isVertical) {
           finalPaintOffset = offset +
               Offset(
-                childParentData.paintOffset.dx,
-                mainAxisLayoutOffset - constraints.scrollOffset,
+                paintX,
+                paintY - constraints.scrollOffset,
               );
         } else {
           finalPaintOffset = offset +
               Offset(
-                mainAxisLayoutOffset - constraints.scrollOffset,
-                childParentData.paintOffset.dy,
+                paintX - constraints.scrollOffset,
+                paintY,
               );
         }
         context.paintChild(child, finalPaintOffset);
       }
       child = childAfter(child);
     }
+  }
+
+  @override
+  void attach(PipelineOwner owner) {
+    super.attach(owner);
+    if (_transitions.isNotEmpty) _startReflowTicker();
+  }
+
+  @override
+  void detach() {
+    _stopReflowTicker();
+    super.detach();
+  }
+
+  @override
+  void dispose() {
+    _stopReflowTicker();
+    _ticker?.dispose();
+    _ticker = null;
+    super.dispose();
   }
 
   // override childMainAxisPosition, childCrossAxisPosition and applyPaintTransform
@@ -874,4 +1214,24 @@ class _DefaultSectionHeader extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Mutable per-tile slide state for the paint-phase reflow animation.
+///
+/// Mutated in place on retarget so a sustained drag (a cell crossing every
+/// few frames) allocates at most one instance per pushed tile.
+class _ReflowTransition {
+  _ReflowTransition({
+    required this.fromX,
+    required this.fromY,
+    required this.toX,
+    required this.toY,
+    required this.startUs,
+  });
+
+  double fromX;
+  double fromY;
+  double toX;
+  double toY;
+  int startUs;
 }

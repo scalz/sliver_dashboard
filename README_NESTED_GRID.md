@@ -1,4 +1,4 @@
-# Nested Grids (v2) — `sliver_dashboard`
+# Nested Grids — `sliver_dashboard`
 
 Grids inside grid items, **continuous
 drag & drop between any grids** (parent ↔ child ↔ siblings, any depth),
