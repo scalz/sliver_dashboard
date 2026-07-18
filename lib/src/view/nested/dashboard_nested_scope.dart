@@ -39,6 +39,29 @@ typedef DashboardNestedGridAbandonedCallback = void Function(
   DashboardController hostGridController,
 );
 
+/// Callback signature for custom item dimension projection when dragging across asymmetrical grids.
+typedef DimensionProjectionCallback = LayoutItem Function(
+  LayoutItem item, {
+  required int sourceSlotCount,
+  required int targetSlotCount,
+});
+
+/// Defines how an item's dimensions are projected when dragged between
+/// grids with different slot counts.
+enum DimensionProjectionPolicy {
+  /// Preserves the absolute logical coordinates/dimensions (e.g., a 2x2 item remains 2x2 in the target grid).
+  preserveLogicalSize,
+
+  /// Automatically scales the width proportionally based on the column count ratio
+  /// between the source and target grids (e.g., a w:2 item in an 8-column grid projects
+  /// to w:1 in a 4-column grid, keeping its visual percentage of 25% of the screen width).
+  /// The height is scaled proportionally to preserve the item's aspect ratio relative to slot count.
+  preserveVisualProportion,
+
+  /// Delegates the projection to a developer-defined custom callback.
+  custom,
+}
+
 /// How the coordinator decides which grid is under a cross-grid drag.
 enum CrossGridProbe {
   /// The raw pointer position decides.
@@ -111,6 +134,9 @@ abstract class CrossGridDragTarget {
 
   /// Stops any auto-scroll started via [autoScrollAt].
   void stopAutoScroll();
+
+  /// Checks if a global position is physically inside the visible paint boundaries of this sliver.
+  bool isPointInsideSliver(Offset globalPosition);
 }
 
 /// A live registration of a grid inside a [DashboardNestedScope].
@@ -162,6 +188,8 @@ class DashboardNestedCoordinator {
     this.nestHoverDelay = const Duration(milliseconds: 600),
     this.probe = CrossGridProbe.pointer,
     this.maxNestingDepth,
+    this.projectionPolicy = DimensionProjectionPolicy.preserveLogicalSize,
+    this.customProjectionCallback,
   });
 
   /// Fired after a successful cross-grid move (drag & drop or programmatic).
@@ -243,6 +271,99 @@ class DashboardNestedCoordinator {
   /// [moveItemToGrid] is not constrained (the caller is explicit).
   int? maxNestingDepth;
 
+  /// The active dimension projection policy when dragging across asymmetrical grids.
+  DimensionProjectionPolicy projectionPolicy;
+
+  /// A custom callback to project item dimensions when [projectionPolicy] is set to [DimensionProjectionPolicy.custom].
+  DimensionProjectionCallback? customProjectionCallback;
+
+  /// Projects an item's width and height based on the active [projectionPolicy]
+  /// and the column ratio between the source and target grids.
+  ///
+  /// The result is always sanitized against the target grid (see
+  /// [_sanitizeForTarget]): every policy — including
+  /// [DimensionProjectionPolicy.preserveLogicalSize] and the output of a
+  /// [customProjectionCallback] — is guaranteed to produce an item that
+  /// physically fits `targetSlotCount` columns and carries satisfiable
+  /// `minW`/`minH` constraints. Without this, dropping a `w > targetSlotCount`
+  /// item into a narrower grid crashes the placeholder clamp
+  /// (`x.clamp(0, slotCount - w)` throws when the range is inverted) and a
+  /// `minW > targetSlotCount` item trips the `correctBounds` assertion on the
+  /// next responsive pass in the target grid.
+  @visibleForTesting
+  LayoutItem projectItem(
+    LayoutItem item, {
+    required int sourceSlotCount,
+    required int targetSlotCount,
+  }) {
+    // Reason: Handle developer-defined custom projection rules first if policy is set to custom
+    if (projectionPolicy == DimensionProjectionPolicy.custom && customProjectionCallback != null) {
+      final custom = customProjectionCallback!(
+        item,
+        sourceSlotCount: sourceSlotCount,
+        targetSlotCount: targetSlotCount,
+      );
+      // Callback output is developer-controlled and therefore untrusted
+      // with respect to the target grid's invariants.
+      return _sanitizeForTarget(custom, targetSlotCount);
+    }
+
+    if (projectionPolicy == DimensionProjectionPolicy.preserveLogicalSize ||
+        sourceSlotCount == targetSlotCount) {
+      return _sanitizeForTarget(item, targetSlotCount);
+    }
+
+    final ratio = targetSlotCount / sourceSlotCount;
+
+    var projectedW = (item.w * ratio).round();
+    if (projectedW < item.minW) {
+      projectedW = item.minW;
+    }
+    final maxW = item.maxW.isFinite ? item.maxW.toInt() : targetSlotCount;
+    if (projectedW > maxW) {
+      projectedW = maxW;
+    }
+    projectedW = projectedW.clamp(1, targetSlotCount);
+
+    var projectedH = (item.h * ratio).round();
+    if (projectedH < item.minH) {
+      projectedH = item.minH;
+    }
+    final maxH = item.maxH.isFinite ? item.maxH.toInt() : _kMaxProjectedH;
+    if (projectedH > maxH) {
+      projectedH = maxH;
+    }
+    projectedH = projectedH.clamp(1, _kMaxProjectedH);
+
+    return _sanitizeForTarget(
+      item.copyWith(w: projectedW, h: projectedH),
+      targetSlotCount,
+    );
+  }
+
+  /// Practical upper bound for a projected height, used only when the item
+  /// declares no finite `maxH`.
+  static const int _kMaxProjectedH = 10000;
+
+  /// Clamps [item] so it satisfies the target grid's hard invariants:
+  /// `1 <= w <= targetSlotCount`, `h >= 1`, `minW <= min(w, targetSlotCount)`
+  /// and `minH <= h`. Returns the same instance when already valid (no
+  /// allocation on the common path).
+  LayoutItem _sanitizeForTarget(LayoutItem item, int targetSlotCount) {
+    final w = item.w.clamp(1, targetSlotCount);
+    final h = item.h < 1 ? 1 : item.h;
+    // minW/minH are capped rather than rejected so that oversized
+    // items remain movable across asymmetric grids; the cap is applied to the
+    // projected copy only — the source grid's snapshot keeps the original
+    // constraints if the drag is canceled or returned.
+    final minW = item.minW > w ? w : item.minW;
+    final minH = item.minH > h ? h : item.minH;
+    if (w == item.w && h == item.h && minW == item.minW && minH == item.minH) {
+      return item;
+    }
+    return item.copyWith(w: w, h: h, minW: minW, minH: minH);
+  }
+
   /// Whether a grid at [depth] (root = 0) may host a nested grid one level
   /// deeper, given [maxNestingDepth]. Always true when no limit is set.
   ///
@@ -265,6 +386,29 @@ class DashboardNestedCoordinator {
             grabOffset +
             Offset(itemPixelSize.width / 2, itemPixelSize.height / 2);
     }
+  }
+
+  /// Memoized [projectItem] for the active [session] against [over]: the
+  /// source item is constant for the whole gesture, so re-projection is only
+  /// needed when the source/target slot counts change (grid enter, or a
+  /// responsive breakpoint firing mid-drag).
+  LayoutItem _projectedItemFor(_CrossGridSession session, CrossGridDragTarget over) {
+    final src = session.origin.controller.slotCount.peek();
+    final dst = over.controller.slotCount.peek();
+    final memo = session.projMemoResult;
+    if (memo != null && session.projMemoSrc == src && session.projMemoDst == dst) {
+      return memo;
+    }
+    final projected = projectItem(
+      session.item,
+      sourceSlotCount: src,
+      targetSlotCount: dst,
+    );
+    session
+      ..projMemoSrc = src
+      ..projMemoDst = dst
+      ..projMemoResult = projected;
+    return projected;
   }
 
   final List<NestedGridRegistration> _registrations = [];
@@ -438,15 +582,31 @@ class DashboardNestedCoordinator {
         }
       }
 
-      final box = reg.target.overlayRenderBox;
-      if (box == null || !box.attached) continue;
-      final local = box.globalToLocal(globalPosition);
-      if (local.dx < 0 || local.dy < 0 || local.dx > box.size.width || local.dy > box.size.height) {
+      // Precise sliver visible paint boundaries instead of the old
+      // full-screen overlay bounds, so several sibling slivers sharing one
+      // scroll view (each overlay box covering the whole viewport) resolve to
+      // the grid actually under the pointer.
+      if (!reg.target.isPointInsideSliver(globalPosition)) {
         continue;
       }
+
       if (best == null || reg.depth > best.depth) best = reg;
     }
     return best;
+  }
+
+  /// Whether at least one registered grid other than [self] currently accepts
+  /// cross-grid items. Used by source overlays to avoid starting a pointless
+  /// exit session (proxy pop-out, silent removal) when there is nowhere else
+  /// the item could possibly land — e.g. a single-grid scope opened only for
+  /// `subGridDynamicSameGrid`.
+  bool hasAnyTargetBesides(CrossGridDragTarget self) {
+    for (final reg in _registrations) {
+      if (!identical(reg.target, self) && reg.target.canAcceptCrossGridItems) {
+        return true;
+      }
+    }
+    return false;
   }
 
   // --- Cross-grid drag session ---
@@ -552,6 +712,8 @@ class DashboardNestedCoordinator {
     final over = session.over;
     if (over == null) return;
 
+    final projectedItem = _projectedItemFor(session, over);
+
     // subGridDynamic: hovering a plain item (that hosts no grid yet) freezes
     // the placeholder and arms the nested-grid request after [nestHoverDelay].
     if (subGridDynamic && onNestedGridRequested != null) {
@@ -580,7 +742,7 @@ class DashboardNestedCoordinator {
             final current = _session;
             if (current == null || current.nestHoverId != host.id) return;
             notifyNestRequestFired(host, over.controller);
-            onNestedGridRequested?.call(host, current.item, over.controller);
+            onNestedGridRequested?.call(host, projectedItem, over.controller);
           });
         }
         return; // frozen: no placeholder while arming
@@ -588,7 +750,7 @@ class DashboardNestedCoordinator {
       if (session.nestHoverId != null) _clearNestHover(session);
     }
 
-    over.foreignDragOver(session.item, probePoint);
+    over.foreignDragOver(projectedItem, probePoint);
   }
 
   /// Finalizes an active session on pointer-up.
@@ -606,7 +768,9 @@ class DashboardNestedCoordinator {
 
     LayoutItem? placed;
     if (over != null) {
-      placed = over.foreignDrop(session.item);
+      // Same memoized projection as updateSession, so the placeholder
+      // shown during the hover and the dropped dimensions always agree.
+      placed = over.foreignDrop(_projectedItemFor(session, over));
     }
 
     if (placed == null) {
@@ -772,6 +936,14 @@ class _CrossGridSession {
   String? nestHoverId;
   CrossGridDragTarget? nestHoverTarget;
   Timer? nestTimer;
+
+  // Projection memo: the dragged item is immutable for the whole session, so
+  // the projected copy only changes when the hovered grid (or its live slot
+  // count) changes. Caching it removes one LayoutItem allocation per pointer
+  // event (60-120 Hz) from the cross-grid routing hot path on dart2js.
+  int projMemoSrc = -1;
+  int projMemoDst = -1;
+  LayoutItem? projMemoResult;
 }
 
 /// Enables nested dashboards and cross-grid drag & drop for every Dashboard
@@ -803,6 +975,8 @@ class DashboardNestedScope extends StatefulWidget {
     this.nestHoverDelay = const Duration(milliseconds: 600),
     this.probe = CrossGridProbe.pointer,
     this.maxNestingDepth,
+    this.projectionPolicy = DimensionProjectionPolicy.preserveLogicalSize,
+    this.customProjectionCallback,
   });
 
   /// The subtree containing the dashboards.
@@ -845,6 +1019,12 @@ class DashboardNestedScope extends StatefulWidget {
   /// nesting. See [DashboardNestedCoordinator.maxNestingDepth].
   final int? maxNestingDepth;
 
+  /// The active dimension projection policy when dragging across asymmetrical grids.
+  final DimensionProjectionPolicy projectionPolicy;
+
+  /// A custom callback to project item dimensions when [projectionPolicy] is set to [DimensionProjectionPolicy.custom].
+  final DimensionProjectionCallback? customProjectionCallback;
+
   /// The coordinator of the nearest enclosing scope, or null.
   static DashboardNestedCoordinator? maybeOf(BuildContext context) =>
       context.dependOnInheritedWidgetOfExactType<_DashboardNestedScopeProvider>()?.coordinator;
@@ -880,7 +1060,9 @@ class _DashboardNestedScopeState extends State<DashboardNestedScope> {
       ..subGridDynamicSameGrid = widget.subGridDynamicSameGrid
       ..nestHoverDelay = widget.nestHoverDelay
       ..probe = widget.probe
-      ..maxNestingDepth = widget.maxNestingDepth;
+      ..maxNestingDepth = widget.maxNestingDepth
+      ..projectionPolicy = widget.projectionPolicy
+      ..customProjectionCallback = widget.customProjectionCallback;
   }
 
   @override

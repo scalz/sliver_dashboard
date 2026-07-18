@@ -134,6 +134,104 @@ void main() {
     controller.dispose();
   });
 
+  testWidgets('SliverDashboard updates controller dynamically in didUpdateWidget', (tester) async {
+    final controller1 = DashboardController(
+      initialSlotCount: 4,
+      initialLayout: const [LayoutItem(id: 'a', x: 0, y: 0, w: 1, h: 1)],
+    );
+    final controller2 = DashboardController(
+      initialSlotCount: 4,
+      initialLayout: const [LayoutItem(id: 'b', x: 0, y: 0, w: 1, h: 1)],
+    );
+    addTearDown(controller1.dispose);
+    addTearDown(controller2.dispose);
+
+    final scrollController = ScrollController();
+    addTearDown(scrollController.dispose);
+
+    // 1. Render with controller 1
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: CustomScrollView(
+            controller: scrollController,
+            slivers: [
+              SliverDashboard(
+                controller: controller1,
+                itemBuilder: (context, item) => Text(item.id),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('a'), findsOneWidget);
+    expect(find.text('b'), findsNothing);
+
+    // 2. Re-render with controller 2 to trigger didUpdateWidget
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: CustomScrollView(
+            controller: scrollController,
+            slivers: [
+              SliverDashboard(
+                controller: controller2,
+                itemBuilder: (context, item) => Text(item.id),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('a'), findsNothing);
+    expect(find.text('b'), findsOneWidget);
+  });
+
+  testWidgets('SliverDashboard computes metrics using itemLayoutBuilder', (tester) async {
+    final controller = DashboardController(
+      initialSlotCount: 4,
+      initialLayout: const [
+        LayoutItem(id: 'a', x: 0, y: 0, w: 2, h: 2),
+      ],
+    );
+    addTearDown(controller.dispose);
+
+    final scrollController = ScrollController();
+    addTearDown(scrollController.dispose);
+
+    double? capturedW;
+    double? capturedH;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: CustomScrollView(
+            controller: scrollController,
+            slivers: [
+              SliverDashboard(
+                controller: controller,
+                itemLayoutBuilder: (context, item, width, height, slotCount) {
+                  capturedW = width;
+                  capturedH = height;
+                  return Text(item.id);
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(capturedW, isNotNull);
+    expect(capturedH, isNotNull);
+    expect(capturedW, greaterThan(0));
+    expect(capturedH, greaterThan(0));
+  });
+
   // Helper to generate a large layout
   List<LayoutItem> generateItems(int count, int cols) {
     final items = <LayoutItem>[];

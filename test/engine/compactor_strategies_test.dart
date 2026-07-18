@@ -192,6 +192,29 @@ void main() {
         expect(b.y, 0);
         expect(a.y, 1);
       });
+
+      test('FastVerticalCompactor comparator handles identical coordinates and IDs', () {
+        const compactor = FastVerticalCompactor();
+        final layout = [
+          const LayoutItem(id: 'same', x: 0, y: 0, w: 1, h: 1, isStatic: false),
+          const LayoutItem(id: 'same', x: 0, y: 0, w: 1, h: 1, isStatic: true),
+        ];
+
+        // Forces comparison internally on identical coords and IDs to cover tie-breaker lines
+        final compacted = compactor.compact(layout, 4);
+        expect(compacted.length, equals(2));
+      });
+
+      test('FastHorizontalCompactor comparator handles identical coordinates and IDs', () {
+        const compactor = FastHorizontalCompactor();
+        final layout = [
+          const LayoutItem(id: 'same', x: 0, y: 0, w: 1, h: 1, isStatic: false),
+          const LayoutItem(id: 'same', x: 0, y: 0, w: 1, h: 1, isStatic: true),
+        ];
+
+        final compacted = compactor.compact(layout, 4);
+        expect(compacted.length, equals(2));
+      });
     });
 
     group('FastHorizontalCompactor', () {

@@ -35,6 +35,7 @@ class SliverDashboardParentData extends SliverMultiBoxAdaptorParentData {
 class SliverDashboard extends StatefulWidget {
   /// Creates a [SliverDashboard].
   const SliverDashboard({
+    this.controller,
     this.itemBuilder,
     this.itemLayoutBuilder,
     this.itemBreakpointBuilder,
@@ -58,6 +59,13 @@ class SliverDashboard extends StatefulWidget {
               1,
           'Provide exactly one builder configuration.',
         );
+
+  /// An optional controller to bind directly to this sliver.
+  ///
+  /// If provided, this sliver will bypass the nearest [DashboardControllerProvider]
+  /// ancestor and use this controller instance instead, preventing provider shadowing
+  /// in multi-sliver composition layouts.
+  final DashboardController? controller;
 
   /// A static builder that creates the widget for a dashboard item.
   ///
@@ -163,8 +171,17 @@ class _SliverDashboardState extends State<SliverDashboard> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    // REASONING: Retrieve the controller from the nearest ancestor provider (O(1) operation).
-    _controller = DashboardControllerProvider.of(context);
+    // REASONING: Retrieve the controller from the widget if provided,
+    // otherwise fall back to the nearest ancestor provider (O(1) operation).
+    _controller = widget.controller ?? DashboardControllerProvider.of(context);
+  }
+
+  @override
+  void didUpdateWidget(covariant SliverDashboard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.controller != oldWidget.controller) {
+      _controller = widget.controller ?? DashboardControllerProvider.of(context);
+    }
   }
 
   @override
@@ -180,7 +197,7 @@ class _SliverDashboardState extends State<SliverDashboard> {
     final keyToIndex = _getOrUpdateKeyToIndex(layout);
 
     // Use SliverLayoutBuilder instead of LayoutBuilder to return a RenderSliver
-    return SliverLayoutBuilder(
+    final sliverContent = SliverLayoutBuilder(
       // Bind the widget key directly to the active slotCount.
       // Changing the key forces Flutter to unmount the old sub-grid and perform
       // a clean layout pass, ensuring correct slot size calculations even on empty grids.
@@ -299,6 +316,17 @@ class _SliverDashboardState extends State<SliverDashboard> {
         );
       },
     );
+
+    // Wrap subtree in a dedicated provider if a specific controller was passed,
+    // so that child widgets (DashboardItems) automatically resolve to this correct instance.
+    if (widget.controller != null) {
+      return DashboardControllerProvider(
+        controller: widget.controller!,
+        child: sliverContent,
+      );
+    }
+
+    return sliverContent;
   }
 
   int _calculateSlots(double width, Map<double, int> breakpoints) {

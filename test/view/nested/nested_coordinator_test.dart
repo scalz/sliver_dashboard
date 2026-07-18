@@ -26,6 +26,7 @@ class _FakeTarget implements CrossGridDragTarget {
   RenderBox? Function()? boxProvider;
   bool accept = true;
   bool dragOut = true;
+  bool insideSliver = true;
 
   LayoutItem? hoverItem; // returned by itemAtGlobal
   LayoutItem? dropResult; // returned by foreignDrop
@@ -72,6 +73,22 @@ class _FakeTarget implements CrossGridDragTarget {
 
   @override
   void stopAutoScroll() => stopScrollCalls++;
+
+  @override
+  bool isPointInsideSliver(Offset globalPosition) {
+    if (!insideSliver) return false;
+
+    final box = overlayRenderBox;
+    // If no RenderBox is attached/provided, the target is logically
+    // off-grid and cannot contain any global pointer coordinate. Return false.
+    if (box == null || !box.attached) return false;
+
+    final local = box.globalToLocal(globalPosition);
+    return local.dx >= 0 &&
+        local.dy >= 0 &&
+        local.dx <= box.size.width &&
+        local.dy <= box.size.height;
+  }
 }
 
 /// Lazy render-box resolver for [_FakeTarget.boxProvider].
@@ -1369,6 +1386,137 @@ void main() {
 
       await tester.pumpWidget(build(coordinator: coordinator, sameGrid: false));
       expect(coordinator.subGridDynamicSameGrid, isFalse);
+    });
+  });
+
+  group('DashboardNestedCoordinator - Proportional & Custom Projection', () {
+    test('projectItem respects preserveLogicalSize policy', () {
+      final localCoordinator = DashboardNestedCoordinator(
+        projectionPolicy: DimensionProjectionPolicy.preserveLogicalSize,
+      );
+      const item = LayoutItem(id: 'a', x: 0, y: 0, w: 2, h: 2);
+      final projected = localCoordinator.projectItem(
+        item,
+        sourceSlotCount: 8,
+        targetSlotCount: 4,
+      );
+      expect(projected.w, equals(2));
+      expect(projected.h, equals(2));
+    });
+
+    test('projectItem scales proportionally (preserveVisualProportion)', () {
+      final localCoordinator = DashboardNestedCoordinator(
+        projectionPolicy: DimensionProjectionPolicy.preserveVisualProportion,
+      );
+      const item = LayoutItem(id: 'a', x: 0, y: 0, w: 2, h: 2);
+      final projected = localCoordinator.projectItem(
+        item,
+        sourceSlotCount: 8,
+        targetSlotCount: 4,
+      );
+      expect(projected.w, equals(1));
+      expect(projected.h, equals(1));
+    });
+
+    test('projectItem clamps to target slots and constraints', () {
+      final localCoordinator = DashboardNestedCoordinator(
+        projectionPolicy: DimensionProjectionPolicy.preserveVisualProportion,
+      );
+      const item = LayoutItem(id: 'a', x: 0, y: 0, w: 4, h: 4, minW: 2);
+      final projected = localCoordinator.projectItem(
+        item,
+        sourceSlotCount: 4,
+        targetSlotCount: 2,
+      );
+      expect(projected.w, equals(2)); // Clamped to minW
+      expect(projected.h, equals(2)); // Ratio 0.5 -> 2
+    });
+
+    test('projectItem supports custom projection callback', () {
+      final localCoordinator = DashboardNestedCoordinator(
+        projectionPolicy: DimensionProjectionPolicy.custom,
+        customProjectionCallback: (item, {required sourceSlotCount, required targetSlotCount}) {
+          return item.copyWith(w: 3, h: 3);
+        },
+      );
+      const item = LayoutItem(id: 'a', x: 0, y: 0, w: 1, h: 1);
+      final projected = localCoordinator.projectItem(
+        item,
+        sourceSlotCount: 4,
+        targetSlotCount: 8,
+      );
+      expect(projected.w, equals(3));
+      expect(projected.h, equals(3));
+    });
+
+    test(
+        'preserveLogicalSize sanitizes an item wider than the target grid '
+        '(regression: inverted x.clamp range threw ArgumentError on hover)', () {
+      final localCoordinator = DashboardNestedCoordinator(
+        // Default policy: dimensions are kept as-is…
+        projectionPolicy: DimensionProjectionPolicy.preserveLogicalSize,
+      );
+      const item = LayoutItem(id: 'a', x: 0, y: 0, w: 6, h: 2);
+      final projected = localCoordinator.projectItem(
+        item,
+        sourceSlotCount: 8,
+        targetSlotCount: 4,
+      );
+      // …except when they physically cannot fit the target grid.
+      expect(projected.w, equals(4));
+      expect(projected.h, equals(2));
+    });
+
+    test(
+        'projection caps minW when it exceeds the target column count '
+        '(regression: correctBounds assertion in the target grid)', () {
+      final localCoordinator = DashboardNestedCoordinator(
+        projectionPolicy: DimensionProjectionPolicy.preserveLogicalSize,
+      );
+      const item = LayoutItem(id: 'a', x: 0, y: 0, w: 5, h: 2, minW: 5);
+      final projected = localCoordinator.projectItem(
+        item,
+        sourceSlotCount: 8,
+        targetSlotCount: 4,
+      );
+      expect(projected.w, equals(4));
+      expect(projected.minW, lessThanOrEqualTo(4));
+    });
+
+    test('custom callback output is sanitized against the target grid', () {
+      final localCoordinator = DashboardNestedCoordinator(
+        projectionPolicy: DimensionProjectionPolicy.custom,
+        customProjectionCallback: (item, {required sourceSlotCount, required targetSlotCount}) {
+          return item.copyWith(w: 999, h: 0);
+        },
+      );
+      const item = LayoutItem(id: 'a', x: 0, y: 0, w: 1, h: 1);
+      final projected = localCoordinator.projectItem(
+        item,
+        sourceSlotCount: 4,
+        targetSlotCount: 8,
+      );
+      expect(projected.w, equals(8)); // clamped to targetSlotCount
+      expect(projected.h, equals(1)); // clamped to >= 1
+    });
+
+    test('proportional projection respects item minH constraints', () {
+      final localCoordinator = DashboardNestedCoordinator(
+        projectionPolicy: DimensionProjectionPolicy.preserveVisualProportion,
+      );
+
+      // Card of size 2x2 with a minH constraint of 2.
+      // Scaling down from 8 columns to 4 columns yields a ratio of 0.5.
+      // Mathematically, projected height would be 1, but minH clamp forces it to 2.
+      const item = LayoutItem(id: 'a', x: 0, y: 0, w: 2, h: 2, minH: 2);
+
+      final projected = localCoordinator.projectItem(
+        item,
+        sourceSlotCount: 8,
+        targetSlotCount: 4,
+      );
+
+      expect(projected.h, equals(2)); // Locked to minH
     });
   });
 

@@ -1003,6 +1003,61 @@ their grid), and item ids must be unique across the tree. See
 [`README_NESTED_GRID.md`](README_NESTED_GRID.md) for the full guide and
 documented behaviors.
 
+#### Multi-Sliver Drag & Drop (Sibling Grids)
+
+You can also coordinate drag-and-drop operations across completely separate sibling grids (e.g., separated by a collapsing `SliverAppBar` or a normal native `SliverList`) inside the same `CustomScrollView`.
+
+To prevent `DashboardControllerProvider` shadowing and resolve target metrics with absolute precision, you must pass unique `GlobalKey`s and bind controllers directly to the slivers:
+
+```dart
+final scrollController = ScrollController();
+final sliverKey1 = GlobalKey();
+final sliverKey2 = GlobalKey();
+
+@override
+Widget build(BuildContext context) {
+  return DashboardNestedScope(
+    projectionPolicy: DimensionProjectionPolicy.preserveVisualProportion,
+    child: DashboardOverlay(
+      controller: controller1,
+      scrollController: scrollController,
+      sliverKey: sliverKey1, // Bind key to the overlay
+      padding: const EdgeInsets.all(8.0), // MUST match the SliverPadding below
+      child: DashboardOverlay(
+        controller: controller2,
+        scrollController: scrollController,
+        sliverKey: sliverKey2, // Bind key to the overlay
+        padding: const EdgeInsets.all(8.0), // MUST match the SliverPadding below
+        child: CustomScrollView(
+          controller: scrollController,
+          slivers: [
+            const SliverAppBar(title: Text('Dense Grid (8 Columns)')),
+            SliverPadding(
+              padding: const EdgeInsets.all(8.0),
+              sliver: SliverDashboard(
+                key: sliverKey1,       // Match key on the sliver
+                controller: controller1, // Pass controller directly
+                itemBuilder: buildItem,
+              ),
+            ),
+            SliverList(delegate: ...), // Normal list separator
+            const SliverAppBar(title: Text('Large Grid (4 Columns)')),
+            SliverPadding(
+              padding: const EdgeInsets.all(8.0),
+              sliver: SliverDashboard(
+                key: sliverKey2,       // Match key on the sliver
+                controller: controller2, // Pass controller directly
+                itemBuilder: buildItem,
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+```
+
 ### Custom Compaction Strategy
 
 If the default vertical/horizontal compaction doesn't fit your needs (e.g., you want a Tetris-like gravity or specific sorting rules), you can implement your own strategy.
@@ -1146,7 +1201,7 @@ The development of `sliver_dashboard` can be assisted using AI coding assistants
 
 *   **Strict Architectural Constraints:** All contributions must align with the State, Logic, and View layers detailed in [architecture.md](architecture.md). AI assistants are further guided by the rules in [AGENTS.md](AGENTS.md) file, which dictates core invariants (such as avoiding allocations during layout phases, enforcing proper tree isolation via `RepaintBoundary`, and maintaining row-index consistency).
 *   **Systematic Human Review:** No generated code is merged without manual review to verify algorithmic efficiency, readability, and overall design cohesion.
-*   **CI Test Verification:** The suite of 370+ regression tests running in CI serves as the final validator. Every contribution, whether handwritten or co-authored with an AI, must pass all tests and respect documented performance budgets.
+*   **CI Test Verification:** The suite of 400+ regression tests running in CI serves as the final validator. Every contribution, whether handwritten or co-authored with an AI, must pass all tests and respect documented performance budgets.
 
 #### How to Contribute:
 1. **Understand the System:** Read [architecture.md](architecture.md) to familiarize yourself with the declarative UI, reactive state management, and nested grids protocol.

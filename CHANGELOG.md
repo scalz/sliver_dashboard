@@ -89,6 +89,12 @@ tree, the new code paths reduce to a few null-checks per pointer event.
   with three-way resolution (`movedAway` / `returned` / `canceled`),
   template-preserving external drop (`onDropExternalItem`), programmatic
   clamped resize (`setItemSize`).
+- **Cross-Sliver Drag & Drop:** Drag tiles between independent sibling `SliverDashboard` widgets separated by other native slivers (e.g. `SliverAppBar`, `SliverList`) within the same `DashboardNestedScope`.
+- **Dimension Projection Policies:** Added a configurable `projectionPolicy` with three modes:
+  - `preserveLogicalSize`: Keeps the exact original grid dimensions (e.g. 2x2 remains 2x2).
+  - `preserveVisualProportion`: Automatically scales tile dimensions proportionally based on the column count ratio between the source and target grids (e.g., a w:2 item in an 8-col grid scales down to w:1 in a 4-col grid, keeping its visual 25% width ratio).
+  - `custom`: Delegates the scaling arithmetic to a developer-defined `customProjectionCallback`.
+- **Shadowing Decoupling:** Added the optional `controller` parameter to `SliverDashboard` and `sliverKey` to `DashboardOverlay` to safely support multiple concurrent sliver grids in the same viewport without context collision or shadowing.
 
 ### Bug Fixes
 
@@ -115,7 +121,7 @@ tree, the new code paths reduce to a few null-checks per pointer event.
 - `README_NESTED_GRID.md`: feature guide.
 - New example entry point `example/lib/nested_example.dart` and a demo
   launcher in `example/lib/main.dart`.
-- **Test Suite Consolidation & Reorganization**: Reorganized, added and improved test files.  
+- Test Suite Consolidation & Reorganization: Reorganized, added and improved test files.  
 
 ### Bug Fixes
 

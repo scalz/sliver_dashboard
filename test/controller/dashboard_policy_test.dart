@@ -151,4 +151,25 @@ void main() {
       expect(folder.y, equals(0));
     });
   });
+
+  test('DimensionProjectionPolicy.custom delegates to customProjectionCallback', () {
+    final coordinator = DashboardNestedCoordinator(
+      projectionPolicy: DimensionProjectionPolicy.custom,
+      customProjectionCallback: (item, {required sourceSlotCount, required targetSlotCount}) {
+        // Custom rule: force dimensions to 5x5
+        return item.copyWith(w: 5, h: 5);
+      },
+    );
+
+    const item = LayoutItem(id: 'a', x: 0, y: 0, w: 2, h: 2);
+
+    final projected = coordinator.projectItem(
+      item,
+      sourceSlotCount: 8,
+      targetSlotCount: 6,
+    );
+
+    expect(projected.w, equals(5));
+    expect(projected.h, equals(5));
+  });
 }

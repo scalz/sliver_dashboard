@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:sliver_dashboard/sliver_dashboard.dart';
 
-/// Nested grids demo (v2) — a self-contained showcase of every nested-grid
+/// Nested grids demo — a self-contained showcase of every nested-grid
 /// capability, styled to match the main Playground:
 ///
 ///  * a root dashboard whose `group` item hosts a nested dashboard;
@@ -364,8 +364,14 @@ class _NestedExamplePageState extends State<NestedExamplePage> {
             ),
         ],
       ),
-      endDrawer: isDesktop ? null : Drawer(child: SafeArea(child: configPanel)),
+      endDrawer: isDesktop
+          ? null
+          : Drawer(
+              backgroundColor: Colors.grey.shade900,
+              child: SafeArea(child: configPanel),
+            ),
       body: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Expanded(
             // subGridDynamic and maxNestingDepth are read in _buildDashboard():

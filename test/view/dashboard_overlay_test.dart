@@ -273,6 +273,100 @@ void main() {
 
       await gesture.up();
     });
+
+    testWidgets('DashboardOverlay resolves RenderSliverDashboard using sliverKey', (tester) async {
+      final controller = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: const [
+          LayoutItem(id: 'a', x: 0, y: 0, w: 2, h: 2),
+        ],
+      )..setEditMode(true);
+      addTearDown(controller.dispose);
+
+      final sliverKey = GlobalKey();
+      final scrollController = ScrollController();
+      addTearDown(scrollController.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: DashboardOverlay(
+              controller: controller,
+              scrollController: scrollController,
+              sliverKey: sliverKey,
+              itemBuilder: (context, item) => SizedBox(child: Text('T-${item.id}')),
+              child: CustomScrollView(
+                controller: scrollController,
+                slivers: [
+                  SliverDashboard(
+                    key: sliverKey,
+                    itemBuilder: (context, item) => SizedBox(child: Text('T-${item.id}')),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final state = tester.state<State<DashboardOverlay>>(find.byType(DashboardOverlay));
+      final target = state as CrossGridDragTarget;
+
+      final metrics = target.currentSlotMetrics();
+      expect(metrics, isNotNull);
+      expect(metrics!.slotCount, equals(4));
+    });
+
+    testWidgets('isPointInsideSliver supports Axis.horizontal scroll direction', (tester) async {
+      final controller = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: const [
+          LayoutItem(id: 'a', x: 0, y: 0, w: 2, h: 2),
+        ],
+      )..setEditMode(true);
+      addTearDown(controller.dispose);
+
+      final sliverKey = GlobalKey();
+      final scrollController = ScrollController();
+      addTearDown(scrollController.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 500,
+              height: 500,
+              child: DashboardOverlay(
+                controller: controller,
+                scrollController: scrollController,
+                sliverKey: sliverKey,
+                scrollDirection: Axis.horizontal,
+                itemBuilder: (context, item) => SizedBox(child: Text('T-${item.id}')),
+                child: CustomScrollView(
+                  controller: scrollController,
+                  scrollDirection: Axis.horizontal,
+                  slivers: [
+                    SliverDashboard(
+                      key: sliverKey,
+                      scrollDirection: Axis.horizontal,
+                      itemBuilder: (context, item) => SizedBox(child: Text('T-${item.id}')),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final state = tester.state<State<DashboardOverlay>>(find.byType(DashboardOverlay));
+      final target = state as CrossGridDragTarget;
+
+      expect(target.isPointInsideSliver(const Offset(50, 50)), isTrue);
+      expect(target.isPointInsideSliver(const Offset(999, 50)), isFalse);
+    });
   });
 
   group('DashboardItem A11y Actions (Keyboard)', () {

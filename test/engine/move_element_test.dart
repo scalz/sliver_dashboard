@@ -192,6 +192,7 @@ void main() {
       final corrected = correctBounds(layout, cols);
       expect(corrected, equals(layout));
     });
+
     test('should correct item with negative y coordinate to y = 0', () {
       final layout = [const LayoutItem(id: 'a', x: 0, y: -1, w: 2, h: 2)];
       final corrected = correctBounds(layout, cols);
@@ -199,6 +200,18 @@ void main() {
       // Expected behavior: y coordinate is sanitized and clamped to 0
       expect(corrected.first.y, 0);
       expect(corrected.first.x, 0);
+    });
+
+    test('correctBounds asserts when item minW exceeds grid columns', () {
+      expect(
+        () => correctBounds(
+          [
+            const LayoutItem(id: 'a', x: 0, y: 0, w: 2, h: 2, minW: 5),
+          ],
+          4,
+        ),
+        throwsA(isA<AssertionError>()),
+      );
     });
   });
 

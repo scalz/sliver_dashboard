@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:sliver_dashboard/sliver_dashboard.dart';
 
+import 'multi_sliver_crossdrag_example.dart' show MultiSliverExamplePage;
 import 'nested_example.dart' show NestedExamplePage;
 
 void main() {
@@ -69,6 +70,22 @@ class ExampleHome extends StatelessWidget {
               onTap: () => Navigator.of(context).push(
                 MaterialPageRoute<void>(
                   builder: (_) => const NestedExamplePage(),
+                ),
+              ),
+            ),
+          ),
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.layers),
+              title: const Text('Multi-Sliver Drag & Drop (v2)'),
+              subtitle: const Text(
+                'Asymmetric sliver grids, physical coordinate matrix translation, '
+                'custom proportional scaling projection policies.',
+              ),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => const MultiSliverExamplePage(),
                 ),
               ),
             ),
@@ -532,6 +549,7 @@ class _DashboardPageState extends State<DashboardPage> {
                 controller: sliverScrollController,
                 slivers: [
                   SliverAppBar(
+                    automaticallyImplyLeading: false,
                     pinned: true,
                     expandedHeight: 120,
                     backgroundColor: Colors.indigo.shade900,
