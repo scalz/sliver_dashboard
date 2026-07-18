@@ -36,6 +36,7 @@ class LayoutItem {
     this.moved = false,
     this.isSectionBarrier = false,
     this.sectionTitle,
+    this.hasNestedGrid = false,
   }) : isStatic =
             isStatic || isSectionBarrier; // Ensure section barriers are always static in-memory
 
@@ -61,6 +62,7 @@ class LayoutItem {
       moved: map['moved'] as bool? ?? false,
       isSectionBarrier: map['isSectionBarrier'] as bool? ?? false,
       sectionTitle: map['sectionTitle'] as String?,
+      hasNestedGrid: map['hasNestedGrid'] as bool? ?? false,
     );
   }
 
@@ -83,6 +85,7 @@ class LayoutItem {
       'moved': moved,
       'isSectionBarrier': isSectionBarrier,
       'sectionTitle': sectionTitle,
+      'hasNestedGrid': hasNestedGrid,
     };
   }
 
@@ -102,6 +105,7 @@ class LayoutItem {
         isStatic || isSectionBarrier,
         isSectionBarrier,
         sectionTitle,
+        hasNestedGrid,
       );
 
   /// Creates a new [LayoutItem] with updated properties.
@@ -121,6 +125,7 @@ class LayoutItem {
     bool? moved,
     bool? isSectionBarrier,
     String? sectionTitle,
+    bool? hasNestedGrid,
   }) {
     return LayoutItem(
       id: id ?? this.id,
@@ -138,6 +143,7 @@ class LayoutItem {
       moved: moved ?? this.moved,
       isSectionBarrier: isSectionBarrier ?? this.isSectionBarrier,
       sectionTitle: sectionTitle ?? this.sectionTitle,
+      hasNestedGrid: hasNestedGrid ?? this.hasNestedGrid,
     );
   }
 
@@ -160,7 +166,8 @@ class LayoutItem {
           (isStatic || isSectionBarrier) == (other.isStatic || other.isSectionBarrier) &&
           moved == other.moved &&
           isSectionBarrier == other.isSectionBarrier &&
-          sectionTitle == other.sectionTitle;
+          sectionTitle == other.sectionTitle &&
+          hasNestedGrid == other.hasNestedGrid;
 
   @override
   int get hashCode => Object.hash(
@@ -179,6 +186,7 @@ class LayoutItem {
         moved,
         isSectionBarrier,
         sectionTitle,
+        hasNestedGrid,
       );
 
   @override
@@ -237,4 +245,18 @@ class LayoutItem {
 
   /// The text title of the section if [isSectionBarrier] is true.
   final String? sectionTitle;
+
+  /// Whether this item hosts a nested dashboard (a `NestedDashboard` in its
+  /// content).
+  ///
+  /// Declarative metadata for the application: it lets a shared `itemBuilder`
+  /// branch generically (`if (item.hasNestedGrid) return NestedDashboard(...)`)
+  /// — which is what makes a whole group portable between grids without id
+  /// coupling — travels through plain toMap/fromMap round-trips, and can
+  /// be targeted by `DashboardPolicy` rules. The nested layer also uses it to
+  /// skip `subGridDynamic` arming on items that already host a grid.
+  ///
+  /// Included in [contentSignature]: converting an item to or from a grid
+  /// host changes its content and must invalidate the cached item widget.
+  final bool hasNestedGrid;
 }

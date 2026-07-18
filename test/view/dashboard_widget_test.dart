@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:sliver_dashboard/sliver_dashboard.dart';
+import 'package:sliver_dashboard/src/controller/layout_metrics.dart';
 import 'package:sliver_dashboard/src/controller/utility.dart';
 import 'package:sliver_dashboard/src/view/dashboard_item_widget.dart';
 
@@ -631,33 +632,63 @@ void main() {
 
     testWidgets('SliverDashboard updates render object properties', (tester) async {
       final controller = DashboardController(
-        initialLayout: [],
+        initialLayout: const [
+          LayoutItem(id: 'item_1', x: 0, y: 0, w: 2, h: 2),
+        ],
         initialSlotCount: 4,
       );
+      addTearDown(controller.dispose);
 
+      Widget buildApp() => MaterialApp(
+            home: Dashboard(
+              controller: controller,
+              itemBuilder: (_, __) => Container(),
+              scrollDirection: Axis.vertical,
+            ),
+          );
+
+      await tester.pumpWidget(buildApp());
+
+      // Force a full layout pass so SliverLayoutBuilder's builder executes and mounts the render object
+      await tester.pumpAndSettle();
+
+      // 1. Change slot count
+      controller.setSlotCount(5);
+
+      // Force a parent-initiated rebuild pass to bypass state_beacon's list equality cache
+      await tester.pumpWidget(buildApp());
+      await tester.pumpAndSettle();
+
+      // Verify slotCount update on the ACTIVE render object directly from the render tree
+      var renderSliver =
+          tester.allRenderObjects.whereType<RenderSliverDashboard>().firstWhere((r) => r.attached);
+
+      expect(
+        renderSliver.slotCount,
+        5,
+        reason: 'RenderSliverDashboard slotCount should update on controller setSlotCount',
+      );
+
+      // 2. Change scroll direction
       await tester.pumpWidget(
         MaterialApp(
           home: Dashboard(
             controller: controller,
             itemBuilder: (_, __) => Container(),
-            scrollDirection: Axis.vertical,
+            scrollDirection: Axis.horizontal,
           ),
         ),
       );
+      await tester.pumpAndSettle();
 
-      // Change slot count -> Trigger updateRenderObject -> Trigger setter
-      controller.setSlotCount(5);
-      await tester.pump();
+      // Verify scrollDirection update on the ACTIVE render object directly from the render tree
+      renderSliver =
+          tester.allRenderObjects.whereType<RenderSliverDashboard>().firstWhere((r) => r.attached);
 
-      // Change scroll direction -> Trigger setter
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Dashboard(
-            controller: controller,
-            itemBuilder: (_, __) => Container(),
-            scrollDirection: Axis.horizontal, // Change here
-          ),
-        ),
+      expect(
+        renderSliver.scrollDirection,
+        Axis.horizontal,
+        reason: 'RenderSliverDashboard scrollDirection should update on widget rebuild',
       );
     });
   });
@@ -867,6 +898,272 @@ void main() {
       // Test keeping original values
       final kept = original.copyWith();
       expect(kept.focusColor, Colors.red);
+    });
+  });
+
+  group('Dashboard Responsive Tests', () {
+    late DashboardController controller;
+
+    setUp(() {
+      controller = DashboardController(initialSlotCount: 1);
+    });
+
+    tearDown(() {
+      controller.dispose();
+    });
+
+    testWidgets('updates slotCount automatically based on width', (tester) async {
+      // Use small breakpoints for default window test size (800x600).
+      final breakpoints = {
+        0.0: 4,
+        300.0: 8,
+        600.0: 12,
+      };
+
+      // 1. Start with small screen (Mobile)
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Center(
+            child: SizedBox(
+              width: 200, // < 300
+              child: Dashboard(
+                controller: controller,
+                breakpoints: breakpoints,
+                itemBuilder: (_, __) => const SizedBox(),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      // Wait for postFrameCallback
+      await tester.pump();
+      expect(controller.slotCount.value, 4);
+
+      // 2. Resize to Tablet
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Center(
+            child: SizedBox(
+              width: 400, // > 300 && < 600
+              child: Dashboard(
+                controller: controller,
+                breakpoints: breakpoints,
+                itemBuilder: (_, __) => const SizedBox(),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await tester.pump();
+      expect(controller.slotCount.value, 8);
+
+      // 3. Resize to Desktop
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Center(
+            child: SizedBox(
+              width: 700, // > 600 (Fits in 800px screen)
+              child: Dashboard(
+                controller: controller,
+                breakpoints: breakpoints,
+                itemBuilder: (_, __) => const SizedBox(),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await tester.pump();
+      expect(controller.slotCount.value, 12);
+    });
+
+    testWidgets('handles unsorted breakpoints correctly', (tester) async {
+      // Keys are not sorted
+      final breakpoints = {
+        600.0: 12,
+        0.0: 4,
+        300.0: 8,
+      };
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Center(
+            child: SizedBox(
+              width: 400, // Should trigger 8 cols
+              child: Dashboard(
+                controller: controller,
+                breakpoints: breakpoints,
+                itemBuilder: (_, __) => const SizedBox(),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await tester.pump();
+      // Should pick 8 correctly despite map order
+      expect(controller.slotCount.value, 8);
+    });
+
+    testWidgets('Dashboard renders Section Barriers using default or custom header builders',
+        (tester) async {
+      controller = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: [
+          const LayoutItem(
+            id: 'header1',
+            x: 0,
+            y: 0,
+            w: 4,
+            h: 1,
+            isSectionBarrier: true,
+            sectionTitle: 'Overview',
+          ),
+          const LayoutItem(id: 'item1', x: 0, y: 1, w: 1, h: 1),
+        ],
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Dashboard<String>(
+              controller: controller,
+              itemBuilder: (ctx, item) => Text('Card ${item.id}'),
+              // Custom builder to verify integration
+              sectionHeaderBuilder: (ctx, item) => Container(
+                key: const ValueKey('custom_header'),
+                child: Text('Custom ${item.sectionTitle}'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Verify custom section header is drawn correctly
+      expect(find.byKey(const ValueKey('custom_header')), findsOneWidget);
+      expect(find.text('Custom Overview'), findsOneWidget);
+      expect(find.text('Card item1'), findsOneWidget);
+    });
+
+    testWidgets('Dashboard renders default section headers when custom header builder is null',
+        (tester) async {
+      controller = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: [
+          const LayoutItem(
+            id: 'header1',
+            x: 0,
+            y: 0,
+            w: 4,
+            h: 1,
+            isSectionBarrier: true,
+            sectionTitle: 'Default Overview',
+          ),
+          const LayoutItem(
+            id: 'header_no_title',
+            x: 0,
+            y: 1,
+            w: 4,
+            h: 1,
+            isSectionBarrier: true, // sectionTitle is left null to cover fallback branch
+          ),
+          const LayoutItem(id: 'item1', x: 0, y: 2, w: 1, h: 1),
+        ],
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Dashboard<String>(
+              controller: controller,
+              itemBuilder: (ctx, item) => Text('Card ${item.id}'),
+              // sectionHeaderBuilder is left null to force default rendering
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Verify both default headers are rendered correctly with their fallback texts
+      expect(find.text('Default Overview'), findsOneWidget);
+      expect(find.text('Section'), findsOneWidget); // Verifies "item.sectionTitle ?? 'Section'"
+      expect(find.text('Card item1'), findsOneWidget);
+    });
+  });
+
+  group('Horizontal Layout Tests', () {
+    testWidgets('Dashboard renders correctly with Axis.horizontal', (tester) async {
+      final controller = DashboardController(
+        initialLayout: [
+          const LayoutItem(id: '1', x: 0, y: 0, w: 1, h: 2), // Tall item
+          const LayoutItem(id: '2', x: 1, y: 0, w: 1, h: 1),
+        ],
+        initialSlotCount: 4, // 4 rows in horizontal mode
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              height: 400, // Constrain height for horizontal list
+              width: 800,
+              child: Dashboard(
+                controller: controller,
+                scrollDirection: Axis.horizontal,
+                slotAspectRatio: 1,
+                itemBuilder: (context, item) => Text('Item ${item.id}'),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+
+      // Verify items are rendered
+      expect(find.text('Item 1'), findsOneWidget);
+      expect(find.text('Item 2'), findsOneWidget);
+
+      // Verify layout logic (Item 1 should be taller than wide in visual terms,
+      // but in grid terms w=1, h=2 means 1 column, 2 rows).
+      final item1Finder = find.text('Item 1');
+      final item1Size = tester.getSize(item1Finder);
+
+      // With aspect ratio 1, and w=1, h=2:
+      // Height (Cross axis) should be roughly 2x Width (Main axis)
+      expect(item1Size.height, greaterThan(item1Size.width));
+
+      controller.dispose();
+    });
+
+    test('SlotMetrics calculates horizontal coordinates correctly', () {
+      // Simulate a container of 800x400
+      const constraints = BoxConstraints(maxWidth: 800, maxHeight: 400);
+
+      final metrics = SlotMetrics.fromConstraints(
+        constraints,
+        slotCount: 4, // 4 rows
+        slotAspectRatio: 1,
+        mainAxisSpacing: 0,
+        crossAxisSpacing: 0,
+        padding: EdgeInsets.zero,
+        scrollDirection: Axis.horizontal,
+      );
+
+      // In horizontal:
+      // Height is divided by slotCount: 400 / 4 = 100 per slot height.
+      // Width is derived from aspect ratio: 100 * 1.0 = 100.
+      expect(metrics.slotHeight, 100.0);
+      expect(metrics.slotWidth, 100.0);
+
+      // Test pixelToGrid conversion
+      // Point (150, 150) -> x=1, y=1
+      final gridPos = metrics.pixelToGrid(const Offset(150, 150), 0);
+      expect(gridPos.x, 1);
+      expect(gridPos.y, 1);
     });
   });
 }

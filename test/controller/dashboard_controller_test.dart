@@ -15,6 +15,10 @@ class MockLayoutChangeListener extends Mock {
 class MockCompactorDelegate extends Mock implements CompactorDelegate {}
 
 void main() {
+  setUpAll(() {
+    registerFallbackValue(<LayoutItem>[]);
+  });
+
   group('DashboardController', () {
     late DashboardControllerImpl controller;
     final initialLayout = [
@@ -28,6 +32,8 @@ void main() {
           as DashboardControllerImpl;
     });
 
+    tearDown(() => controller.dispose());
+
     test('initializes with correct values', () {
       expect(controller.layout.value, equals(initialLayout));
       expect(controller.slotCount.value, 4);
@@ -39,6 +45,29 @@ void main() {
       expect(controller.preventCollision.value, isTrue);
       controller.setPreventCollision(false);
       expect(controller.preventCollision.value, isFalse);
+    });
+
+    test('setAllowAutoShrink toggles the beacon', () {
+      expect(controller.allowAutoShrink.value, isFalse);
+      controller.setAllowAutoShrink(allow: true);
+      expect(controller.allowAutoShrink.value, isTrue);
+      controller.setAllowAutoShrink(allow: false);
+      expect(controller.allowAutoShrink.value, isFalse);
+    });
+
+    test('setNestTargetHover sets, no-ops on same value, and clears', () {
+      final impl = controller.internal;
+      expect(impl.hoveredNestTargetId.value, isNull);
+
+      impl.setNestTargetHover('a');
+      expect(impl.hoveredNestTargetId.value, 'a');
+
+      // Same value: no-op (peek fast path).
+      impl.setNestTargetHover('a');
+      expect(impl.hoveredNestTargetId.value, 'a');
+
+      impl.setNestTargetHover(null);
+      expect(impl.hoveredNestTargetId.value, isNull);
     });
 
     test('addItem() adds an item and compacts the layout', () {
@@ -75,16 +104,6 @@ void main() {
         expect(controller.activeItem.value, isNull);
         expect(controller.originalLayoutOnStart.value, isEmpty);
       });
-
-      // test('onDragStart() sets initial state for a draggable item', () {
-      //   controller.onDragStart('a');
-      //   final activeItem = controller.activeItem.value;
-      //   final originalLayout = controller.originalLayoutOnStart.value;
-      //
-      //   expect(activeItem, isNotNull);
-      //   expect(activeItem!.id, 'a');
-      //   expect(originalLayout, equals(initialLayout));
-      // });
 
       test('onDragUpdate() moves the item and updates the layout beacon', () {
         controller
@@ -129,29 +148,6 @@ void main() {
         expect(item.x, 1);
         expect(item.y, 1);
       });
-
-/*
-      test('onDragEnd() finalizes layout and cleans up state', () {
-        controller
-          ..addItem(const LayoutItem(id: 'c', x: 0, y: 10, w: 1, h: 1))
-          ..onDragStart('c')
-          ..onDragUpdate(
-            'c',
-            const Offset(0, 500),
-            slotWidth: 100,
-            slotHeight: 100,
-            mainAxisSpacing: 0,
-            crossAxisSpacing: 0,
-          )
-          ..onDragEnd('c');
-
-        final finalLayout = controller.layout.value;
-        final finalItem = finalLayout.firstWhere((item) => item.id == 'c');
-        expect(finalItem.y, lessThan(5));
-        expect(controller.activeItem.value, isNull);
-        expect(controller.originalLayoutOnStart.value, isEmpty);
-      });
-*/
 
       test('onDragEnd does not compact if compactionType is none', () {
         controller.setCompactionType(CompactType.none);
@@ -302,24 +298,6 @@ void main() {
         expect(item.h, 3); // Grew taller
       });
 
-      // test('onResizeEnd() finalizes layout and cleans up state', () {
-      //   controller
-      //     ..onResizeStart('a')
-      //     ..onResizeUpdate(
-      //       'a',
-      //       ResizeHandle.bottomRight,
-      //       const Offset(100, 100),
-      //       slotWidth: 100,
-      //       slotHeight: 100,
-      //       crossAxisSpacing: 0,
-      //       mainAxisSpacing: 0,
-      //     )
-      //     ..onResizeEnd('a');
-      //
-      //   expect(controller.activeItem.value, isNull);
-      //   expect(controller.originalLayoutOnStart.value, isEmpty);
-      // });
-
       test('onResizeEnd does not compact if compactionType is none', () {
         controller.setCompactionType(CompactType.none);
         controller.layout.value = [
@@ -403,6 +381,7 @@ void main() {
 
         // With empty layout
         final emptyController = DashboardController();
+        addTearDown(emptyController.dispose);
         expect(emptyController.lastRowNumber, 0);
       });
 
@@ -435,6 +414,7 @@ void main() {
 
       test('availableFreeAreas returns full width for empty layout', () {
         final emptyController = DashboardController(initialSlotCount: 6);
+        addTearDown(emptyController.dispose);
         final freeAreas = emptyController.availableFreeAreas;
         expect(freeAreas, hasLength(1));
         expect(freeAreas.first.x, 0);
@@ -467,6 +447,7 @@ void main() {
 
       test('availableHorizontalFreeAreas returns full rows for empty layout', () {
         final emptyController = DashboardController(initialLayout: const [], initialSlotCount: 5);
+        addTearDown(emptyController.dispose);
         final freeAreas = emptyController.availableHorizontalFreeAreas;
         expect(freeAreas, hasLength(1));
         expect(freeAreas.first.x, 0);
@@ -486,6 +467,7 @@ void main() {
           initialLayout: [const LayoutItem(id: 'full', x: 0, y: 0, w: 4, h: 2)],
           initialSlotCount: 4,
         );
+        addTearDown(noGapsController.dispose);
         // The layout is full, so there should be no available areas.
         expect(noGapsController.firstFreeArea, isNull);
       });
@@ -506,6 +488,7 @@ void main() {
           const LayoutItem(id: 'filler', x: 1, y: 2, w: 3, h: 1),
         ];
         final newController = DashboardController(initialLayout: newLayout, initialSlotCount: 4);
+        addTearDown(newController.dispose);
         expect(newController.lastRowFreeArea, isNull);
       });
 
@@ -558,6 +541,8 @@ void main() {
           // Start a resize operation on item 'a'
           ..onResizeStart('a');
       });
+
+      tearDown(() => controller.dispose());
 
       group('with vertical scroll (default)', () {
         test('should resize from topRight handle correctly', () {
@@ -655,6 +640,54 @@ void main() {
           // So new width should be 6.
           expect(resizedItem.w, 6);
         });
+
+        test(
+          'Resizing top edge against a static barrier does not push bottom edge downwards',
+          () {
+            final controller = DashboardController(
+              initialSlotCount: 8,
+              initialLayout: [
+                const LayoutItem(
+                  id: 'barrier',
+                  x: 0,
+                  y: 0,
+                  w: 8,
+                  h: 1,
+                  isStatic: true,
+                ),
+                const LayoutItem(
+                  id: 'item',
+                  x: 0,
+                  y: 1,
+                  w: 2,
+                  h: 2,
+                  minH: 1,
+                ),
+              ],
+            );
+            addTearDown(controller.dispose);
+
+            controller.setEditMode(true);
+
+            controller.internal
+              ..onResizeStart('item')
+              ..onResizeUpdate(
+                'item',
+                ResizeHandle.top,
+                const Offset(0, -200),
+                slotWidth: 100,
+                slotHeight: 100,
+                crossAxisSpacing: 8,
+                mainAxisSpacing: 8,
+              );
+
+            final updatedItem = controller.layout.value.firstWhere((i) => i.id == 'item');
+
+            expect(updatedItem.y, equals(1));
+            expect(updatedItem.h, equals(2));
+            expect(updatedItem.y + updatedItem.h, equals(3));
+          },
+        );
       });
 
       group('with horizontal scroll', () {
@@ -1184,9 +1217,9 @@ void main() {
         initialLayout: initialLayout,
         onLayoutChanged: mockListener.call,
       );
-      // Register fallback for mocktail
-      registerFallbackValue(initialLayout);
     });
+
+    tearDown(() => controller.dispose());
 
     test('moveActiveItemBy moves the item and resolves collision', () {
       // 1. Start a drag operation (simulating Grab)
@@ -1299,6 +1332,8 @@ void main() {
         onLayoutChanged: mockListener.call,
       );
     });
+
+    tearDown(() => controller.dispose());
 
     test('initializes with correct values', () {
       expect(controller.layout.value, equals(initialLayout));
@@ -1512,6 +1547,8 @@ void main() {
       ) as DashboardControllerImpl;
     });
 
+    tearDown(() => controller.dispose());
+
     test('setCompactionType handles Horizontal type correctly', () {
       controller.setCompactionType(CompactType.horizontal);
       expect(controller.compactionType.value, CompactType.horizontal);
@@ -1561,6 +1598,241 @@ void main() {
       expect(controller.layout.value.any((i) => i.id == 'v'), isTrue);
       expect(controller.layout.value.any((i) => i.id == 'h'), isTrue);
       expect(controller.layout.value.any((i) => i.id == 'n'), isTrue);
+    });
+  });
+
+  group('Programmatic Scroll Invariants', () {
+    test('scrollToItem completes immediately if no overlay is listening (prevents await deadlocks)',
+        () async {
+      final controller = DashboardController(
+        initialLayout: [const LayoutItem(id: 'target', x: 0, y: 0, w: 2, h: 2)],
+      );
+
+      // Verification: Calling scrollToItem on a detached controller must not hang the future
+      // indefinitely when there is no attached overlay listener.
+      await expectLater(
+        controller.scrollToItem('target').timeout(const Duration(seconds: 1)),
+        completes,
+      );
+    });
+  });
+
+  group('DashboardController — internal paths', () {
+    late DashboardController controller;
+
+    setUp(() {
+      controller = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: const [
+          LayoutItem(id: 'a', x: 0, y: 0, w: 2, h: 1),
+          LayoutItem(id: 'b', x: 2, y: 0, w: 2, h: 1),
+        ],
+      );
+    });
+
+    tearDown(() => controller.dispose());
+
+    test(
+        'placeholderHitTestSnapshot: null without a placeholder, pre-push '
+        'snapshot while one is active, null again after hiding', () {
+      final impl = controller.internal;
+      expect(impl.placeholderHitTestSnapshot, isNull);
+
+      final before = List<LayoutItem>.from(controller.layout.value);
+      impl.showPlaceholder(x: 0, y: 0, w: 2, h: 1);
+
+      final snapshot = impl.placeholderHitTestSnapshot;
+      expect(snapshot, isNotNull);
+      // The snapshot is the pre-push layout: same ids and geometry as before
+      // the placeholder started shoving items around.
+      expect(
+        snapshot!.map((i) => '${i.id}:${i.x},${i.y}').toSet(),
+        before.map((i) => '${i.id}:${i.x},${i.y}').toSet(),
+      );
+
+      impl.hidePlaceholder();
+      expect(impl.placeholderHitTestSnapshot, isNull);
+      // Layout restored to the pre-drag state.
+      expect(
+        controller.layout.value.map((i) => i.id).toSet(),
+        before.map((i) => i.id).toSet(),
+      );
+    });
+
+    test(
+        'beginCrossGridExit with CompactType.none resolves collisions '
+        'instead of compacting', () {
+      controller.setCompactionType(CompactType.none);
+      final impl = controller.internal;
+
+      final removed = impl.beginCrossGridExit({'a'});
+      expect(removed.single.id, 'a');
+      // 'b' stays exactly where it was: none-compaction must not pull it left.
+      final b = controller.layout.value.single;
+      expect(b.id, 'b');
+      expect(b.x, 2);
+
+      impl.finishCrossGridExit(outcome: CrossGridExitOutcome.canceled);
+      expect(controller.layout.value.length, 2);
+    });
+
+    test('scrollToItem completes harmlessly for an unknown item', () async {
+      // Must not hang nor throw: the unknown-id branch returns immediately.
+      await expectLater(
+        controller.scrollToItem('does-not-exist'),
+        completes,
+      );
+    });
+
+    test('scrollToItem completes when no overlay is attached', () async {
+      await expectLater(
+        controller.scrollToItem('a'),
+        completes,
+      );
+    });
+  });
+
+  group('DashboardController - Cross-Grid Protocol', () {
+    late DashboardController controller;
+    late int layoutChangedCalls;
+
+    setUp(() {
+      layoutChangedCalls = 0;
+      controller = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: [
+          const LayoutItem(id: 'a', x: 0, y: 0, w: 2, h: 1),
+          const LayoutItem(id: 'b', x: 2, y: 0, w: 2, h: 1),
+          const LayoutItem(id: 'c', x: 0, y: 1, w: 2, h: 1),
+        ],
+        onLayoutChanged: (_, __) => layoutChangedCalls++,
+      );
+    });
+
+    tearDown(() => controller.dispose());
+
+    test('beginCrossGridExit removes silently and returns pre-drag geometry', () {
+      final removed = controller.internal.beginCrossGridExit({'a'});
+
+      expect(removed, hasLength(1));
+      expect(removed.first.id, 'a');
+      expect(removed.first.w, 2);
+      // Temporary removal: the item is gone from the live layout...
+      expect(controller.layout.value.any((i) => i.id == 'a'), isFalse);
+      // ...but the move is NOT committed yet: no layout-changed event.
+      expect(layoutChangedCalls, 0);
+      expect(controller.internal.hasPendingCrossGridExit, isTrue);
+      // The internal drag state is fully reset.
+      expect(controller.isDragging.value, isFalse);
+    });
+
+    test('beginCrossGridExit uses the drag-start snapshot when present', () {
+      controller.internal.onDragStart('a');
+      // Simulate mid-drag pushes by mutating the live layout.
+      controller.layout.value = [
+        for (final i in controller.layout.value)
+          if (i.id == 'b') i.copyWith(y: 5) else i,
+      ];
+
+      final removed = controller.internal.beginCrossGridExit({'a'});
+      expect(removed.single.x, 0);
+      expect(removed.single.y, 0);
+
+      // Cancel must restore the PRE-DRAG layout, not the pushed one.
+      controller.internal.finishCrossGridExit(outcome: CrossGridExitOutcome.canceled);
+      final b = controller.layout.value.firstWhere((i) => i.id == 'b');
+      expect(b.y, 0);
+      expect(controller.layout.value.any((i) => i.id == 'a'), isTrue);
+      expect(layoutChangedCalls, 0);
+    });
+
+    test('finishCrossGridExit(movedAway) commits and fires exactly one event', () {
+      controller.internal.beginCrossGridExit({'a'});
+      controller.internal.finishCrossGridExit(outcome: CrossGridExitOutcome.movedAway);
+
+      expect(controller.layout.value.any((i) => i.id == 'a'), isFalse);
+      expect(layoutChangedCalls, 1);
+      expect(controller.internal.hasPendingCrossGridExit, isFalse);
+
+      // Resolving twice is a no-op.
+      controller.internal.finishCrossGridExit(outcome: CrossGridExitOutcome.movedAway);
+      expect(layoutChangedCalls, 1);
+    });
+
+    test('finishCrossGridExit(returned) discards the snapshot silently', () {
+      controller.internal.beginCrossGridExit({'a'});
+      controller.internal.finishCrossGridExit(outcome: CrossGridExitOutcome.returned);
+
+      // The item stays removed (the external-drop path re-inserted it and
+      // already emitted its own event in the real flow).
+      expect(controller.layout.value.any((i) => i.id == 'a'), isFalse);
+      expect(layoutChangedCalls, 0);
+      expect(controller.internal.hasPendingCrossGridExit, isFalse);
+    });
+
+    test('onDropExternalItem preserves id, constraints and flags', () {
+      const template = LayoutItem(
+        id: 'foreign',
+        x: 9,
+        y: 9,
+        w: 2,
+        h: 2,
+        minW: 2,
+        minH: 2,
+        maxW: 3,
+        maxH: 3,
+        isResizable: false,
+      );
+
+      controller.internal.showPlaceholder(x: 2, y: 1, w: 2, h: 2);
+      final placed = controller.internal.onDropExternalItem(template: template);
+
+      expect(placed, isNotNull);
+      expect(placed!.id, 'foreign');
+      final inLayout = controller.layout.value.firstWhere((i) => i.id == 'foreign');
+      expect(inLayout.minW, 2);
+      expect(inLayout.minH, 2);
+      expect(inLayout.maxW, 3);
+      expect(inLayout.maxH, 3);
+      expect(inLayout.isResizable, isFalse);
+      expect(inLayout.w, 2);
+      expect(inLayout.h, 2);
+      // Placeholder fully cleaned up.
+      expect(controller.currentDragPlaceholder, isNull);
+      expect(controller.layout.value.any((i) => i.id == '__placeholder__'), isFalse);
+      expect(layoutChangedCalls, 1);
+    });
+
+    test('onDropExternalItem without an active placeholder is a no-op', () {
+      final placed = controller.internal.onDropExternalItem(
+        template: const LayoutItem(id: 'x', x: 0, y: 0, w: 1, h: 1),
+      );
+      expect(placed, isNull);
+      expect(layoutChangedCalls, 0);
+    });
+
+    test('setItemSize resizes, clamps to constraints and fires one event', () {
+      controller.internal.layout.value = [
+        const LayoutItem(id: 'a', x: 0, y: 0, w: 2, h: 1, minH: 1, maxH: 3),
+      ];
+      layoutChangedCalls = 0;
+
+      final resized = controller.internal.setItemSize('a', h: 2);
+      expect(resized!.h, 2);
+      expect(layoutChangedCalls, 1);
+
+      // Clamped to maxH.
+      final clamped = controller.internal.setItemSize('a', h: 10);
+      expect(clamped!.h, 3);
+
+      // Unchanged size: no event.
+      layoutChangedCalls = 0;
+      controller.internal.setItemSize('a', h: 3);
+      expect(layoutChangedCalls, 0);
+
+      // Unknown id: null, no event.
+      expect(controller.internal.setItemSize('zzz', h: 1), isNull);
+      expect(layoutChangedCalls, 0);
     });
   });
 }

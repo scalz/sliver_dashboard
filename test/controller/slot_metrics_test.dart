@@ -50,31 +50,6 @@ void main() {
         expect(metrics.slotHeight, 50.0);
         expect(metrics.slotWidth, 50.0);
       });
-
-      test('SlotMetrics hashCode consistency with value equality', () {
-        const metrics1 = SlotMetrics(
-          slotWidth: 100,
-          slotHeight: 100,
-          mainAxisSpacing: 10,
-          crossAxisSpacing: 10,
-          padding: EdgeInsets.zero,
-          scrollDirection: Axis.vertical,
-          slotCount: 4,
-        );
-        const metrics2 = SlotMetrics(
-          slotWidth: 100,
-          slotHeight: 100,
-          mainAxisSpacing: 10,
-          crossAxisSpacing: 10,
-          padding: EdgeInsets.zero,
-          scrollDirection: Axis.vertical,
-          slotCount: 4,
-        );
-
-        // Asserts that SlotMetrics.hashCode is symmetric and consistent
-        // with value equality, preventing redundant background grid painting.
-        expect(metrics1.hashCode, equals(metrics2.hashCode));
-      });
     });
 
     group('pixelToGrid conversion', () {
@@ -140,6 +115,46 @@ void main() {
         expect(gridPos.x, 1);
         expect(gridPos.y, 1);
       });
+    });
+  });
+
+  group('SlotMetrics equality & hashCode', () {
+    const base = SlotMetrics(
+      slotWidth: 100,
+      slotHeight: 50,
+      mainAxisSpacing: 8,
+      crossAxisSpacing: 4,
+      padding: EdgeInsets.all(2),
+      scrollDirection: Axis.vertical,
+      slotCount: 4,
+    );
+
+    test('equal values are == and share a hashCode', () {
+      const same = SlotMetrics(
+        slotWidth: 100,
+        slotHeight: 50,
+        mainAxisSpacing: 8,
+        crossAxisSpacing: 4,
+        padding: EdgeInsets.all(2),
+        scrollDirection: Axis.vertical,
+        slotCount: 4,
+      );
+      expect(base, equals(same));
+      expect(base.hashCode, same.hashCode);
+    });
+
+    test('any differing field breaks equality', () {
+      const differing = SlotMetrics(
+        slotWidth: 100,
+        slotHeight: 50,
+        mainAxisSpacing: 8,
+        crossAxisSpacing: 4,
+        padding: EdgeInsets.all(2),
+        scrollDirection: Axis.vertical,
+        slotCount: 5, // differs
+      );
+      expect(base == differing, isFalse);
+      expect(base == Object(), isFalse);
     });
   });
 }

@@ -27,6 +27,17 @@ class DefaultTestPolicy extends DashboardPolicy {
   const DefaultTestPolicy();
 }
 
+class NoFolderCollisionPolicy extends DashboardPolicy {
+  const NoFolderCollisionPolicy();
+
+  @override
+  bool canCollide(LayoutItem itemA, LayoutItem itemB) {
+    // Prevent collisions with items that have hasNestedGrid enabled
+    if (itemB.hasNestedGrid) return false;
+    return true;
+  }
+}
+
 void main() {
   group('DashboardPolicy Integration', () {
     late DashboardControllerImpl controller;
@@ -45,6 +56,8 @@ void main() {
       ) as DashboardControllerImpl
         ..policy = policy;
     });
+
+    tearDown(() => controller.dispose());
 
     test('canDrag policy blocks drag start', () {
       controller.onDragStart('no-drag');
@@ -111,5 +124,52 @@ void main() {
       expect(policy.canMoveTo(item, 0, 0, []), isTrue);
       expect(policy.canCollide(item, item), isTrue);
     });
+  });
+
+  group('DashboardController - showPlaceholder Policy', () {
+    test('showPlaceholder must respect DashboardPolicy when resolving collisions', () {
+      final controller = DashboardController(
+        initialSlotCount: 8,
+        initialLayout: const [
+          LayoutItem(id: 'folder_item', x: 2, y: 0, w: 2, h: 2, hasNestedGrid: true),
+        ],
+      ) as DashboardControllerImpl;
+
+      addTearDown(controller.dispose);
+
+      controller
+        ..policy = const NoFolderCollisionPolicy()
+
+        // Show placeholder directly overlapping folder_item at x: 2, y: 0
+        ..showPlaceholder(x: 2, y: 0, w: 2, h: 2);
+
+      final result = controller.layout.value;
+
+      // Verify the folder_item was NOT pushed (x and y remain unchanged)
+      final folder = result.firstWhere((i) => i.id == 'folder_item');
+      expect(folder.x, equals(2));
+      expect(folder.y, equals(0));
+    });
+  });
+
+  test('DimensionProjectionPolicy.custom delegates to customProjectionCallback', () {
+    final coordinator = DashboardNestedCoordinator(
+      projectionPolicy: DimensionProjectionPolicy.custom,
+      customProjectionCallback: (item, {required sourceSlotCount, required targetSlotCount}) {
+        // Custom rule: force dimensions to 5x5
+        return item.copyWith(w: 5, h: 5);
+      },
+    );
+
+    const item = LayoutItem(id: 'a', x: 0, y: 0, w: 2, h: 2);
+
+    final projected = coordinator.projectItem(
+      item,
+      sourceSlotCount: 8,
+      targetSlotCount: 6,
+    );
+
+    expect(projected.w, equals(5));
+    expect(projected.h, equals(5));
   });
 }

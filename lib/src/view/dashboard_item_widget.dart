@@ -118,6 +118,77 @@ class _DashboardItemState extends State<DashboardItem>
 
   bool _isFocused = false;
 
+  // The collision cascade in LayoutEngine.moveElement can shift
+  // hundreds of items' `y` on every drag frame (see moveElement). Since
+  // RenderSliverDashboard.performLayout recomputes its visible index range
+  // from those positions every frame, items can flicker in and out of the
+  // visible+cache window purely due to the cascade, even though their Key
+  // and index never change during a single drag. Without keepAlive, each
+  // flicker tears the widget down and rebuilds it from scratch
+  // (Element.inflateWidget), which is what dominates the CPU profile during
+  // a top-of-grid drag. Keeping items alive only while a drag is active
+  // avoids this thrash without disabling virtualization the rest of the time.
+  bool _keepAlive = false;
+
+  @override
+  bool get wantKeepAlive => _keepAlive;
+
+  void _updateKeepAlive(bool value) {
+    if (_keepAlive == value) return;
+    _keepAlive = value;
+    updateKeepAlive(); // Notify Flutter to retain this widget in the keep-alive bucket
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    // We initialize the tracking variables, but NOT the widget itself.
+    // The widget will be built in the build() method where context is valid.
+    _lastSignature = widget.item.contentSignature;
+    _lastIsEditing = widget.isEditing;
+    _lastWidth = widget.itemWidth;
+    _lastHeight = widget.itemHeight;
+    _lastSlotCount = widget.slotCount;
+  }
+
+  @override
+  void didUpdateWidget(DashboardItem oldWidget) {
+    super.didUpdateWidget(oldWidget);
+
+    // PERFORMANCE CRITICAL:
+    // We intentionally ignore `widget.builder` changes here.
+    // We only invalidate the cache if:
+    // 1. The item content (w, h, id, static) changes (checked via signature).
+    // 2. The global edit mode changes.
+
+    final newSignature = widget.item.contentSignature;
+    final signatureChanged = newSignature != _lastSignature;
+    final editingChanged = widget.isEditing != _lastIsEditing;
+
+    // Invalidate cache on dimension changes if sub-pixel or breakpoint builders are active.
+    final dimensionsChanged = widget.trackDimensions &&
+        (widget.itemWidth != _lastWidth ||
+            widget.itemHeight != _lastHeight ||
+            widget.slotCount != _lastSlotCount);
+
+    if (signatureChanged || editingChanged || dimensionsChanged) {
+      _cachedWidget = null; // Invalidate cache
+      _lastSignature = newSignature;
+      _lastIsEditing = widget.isEditing;
+      _lastWidth = widget.itemWidth;
+      _lastHeight = widget.itemHeight;
+      _lastSlotCount = widget.slotCount;
+    }
+  }
+
+  /// Helper to announce messages to Screen Readers (TalkBack/VoiceOver).
+  void _announce(String message) {
+    // Use the old API for older Flutter versions, and ignore the deprecation warning
+    // Until we have no other choice to use sendAnnouncement
+    // ignore: deprecated_member_use
+    SemanticsService.announce(message, Directionality.of(context)).ignore();
+  }
+
   late final Map<Type, Action<Intent>> _actions = <Type, Action<Intent>>{
     DashboardGrabItemIntent: CallbackAction<DashboardGrabItemIntent>(
       onInvoke: (_) {
@@ -192,77 +263,6 @@ class _DashboardItemState extends State<DashboardItem>
     return isActive ? _activeShortcuts : _idleShortcuts;
   }
 
-  // The collision cascade in LayoutEngine.moveElement can shift
-  // hundreds of items' `y` on every drag frame (see moveElement). Since
-  // RenderSliverDashboard.performLayout recomputes its visible index range
-  // from those positions every frame, items can flicker in and out of the
-  // visible+cache window purely due to the cascade, even though their Key
-  // and index never change during a single drag. Without keepAlive, each
-  // flicker tears the widget down and rebuilds it from scratch
-  // (Element.inflateWidget), which is what dominates the CPU profile during
-  // a top-of-grid drag. Keeping items alive only while a drag is active
-  // avoids this thrash without disabling virtualization the rest of the time.
-  bool _keepAlive = false;
-
-  @override
-  bool get wantKeepAlive => _keepAlive;
-
-  void _updateKeepAlive(bool value) {
-    if (_keepAlive == value) return;
-    _keepAlive = value;
-    updateKeepAlive(); // Notify Flutter to retain this widget in the keep-alive bucket
-  }
-
-  @override
-  void initState() {
-    super.initState();
-    // We initialize the tracking variables, but NOT the widget itself.
-    // The widget will be built in the build() method where context is valid.
-    _lastSignature = widget.item.contentSignature;
-    _lastIsEditing = widget.isEditing;
-    _lastWidth = widget.itemWidth;
-    _lastHeight = widget.itemHeight;
-    _lastSlotCount = widget.slotCount;
-  }
-
-  @override
-  void didUpdateWidget(DashboardItem oldWidget) {
-    super.didUpdateWidget(oldWidget);
-
-    // PERFORMANCE CRITICAL:
-    // We intentionally ignore `widget.builder` changes here.
-    // We only invalidate the cache if:
-    // 1. The item content (w, h, id, static) changes (checked via signature).
-    // 2. The global edit mode changes.
-
-    final newSignature = widget.item.contentSignature;
-    final signatureChanged = newSignature != _lastSignature;
-    final editingChanged = widget.isEditing != _lastIsEditing;
-
-    // Invalidate cache on dimension changes if sub-pixel or breakpoint builders are active.
-    final dimensionsChanged = widget.trackDimensions &&
-        (widget.itemWidth != _lastWidth ||
-            widget.itemHeight != _lastHeight ||
-            widget.slotCount != _lastSlotCount);
-
-    if (signatureChanged || editingChanged || dimensionsChanged) {
-      _cachedWidget = null; // Invalidate cache
-      _lastSignature = newSignature;
-      _lastIsEditing = widget.isEditing;
-      _lastWidth = widget.itemWidth;
-      _lastHeight = widget.itemHeight;
-      _lastSlotCount = widget.slotCount;
-    }
-  }
-
-  /// Helper to announce messages to Screen Readers (TalkBack/VoiceOver).
-  void _announce(String message) {
-    // Use the old API for older Flutter versions, and ignore the deprecation warning
-    // Until we have no other choice to use sendAnnouncement
-    // ignore: deprecated_member_use
-    SemanticsService.announce(message, Directionality.of(context)).ignore();
-  }
-
   @override
   Widget build(BuildContext context) {
     super.build(context);
@@ -317,6 +317,11 @@ class _DashboardItemState extends State<DashboardItem>
     // Active means "Part of the group being dragged"
     final isActive = isDragging && isSelected;
 
+    // Nested grids (subGridDynamic): highlight this item while it is armed as
+    // a dynamic nested-grid host. Watching here only rebuilds the light item
+    // shells; the heavy content stays cached behind its RepaintBoundary.
+    final isNestHovered = controller.internal.hoveredNestTargetId.watch(context) == widget.item.id;
+
     _updateKeepAlive(isDragging);
 
     final semanticLabel = 'Item ${widget.item.id}, Row ${widget.item.y}, Column ${widget.item.x}';
@@ -364,19 +369,28 @@ class _DashboardItemState extends State<DashboardItem>
             // Hide if dragged AND not the feedback
             opacity: (isActive && !widget.isFeedback) ? 0.0 : 1.0,
             child: Container(
-              decoration: widget.isEditing &&
-                      (_isFocused || isSelected) // Show border if editMode && (focused OR selected)
-                  ? (style.focusDecoration ??
-                      BoxDecoration(
-                        border: Border.all(
-                          color: isActive
-                              ? (style.activeColor ?? Colors.deepOrange)
-                              : (style.focusColor ?? Theme.of(context).primaryColor),
-                          width: (isActive || _isFocused) ? 4 : 3,
-                        ),
-                        borderRadius: style.borderRadius,
-                      ))
-                  : null,
+              decoration: isNestHovered
+                  ? BoxDecoration(
+                      border: Border.all(
+                        color: style.activeColor ?? Colors.deepOrange,
+                        width: 4,
+                      ),
+                      borderRadius: style.borderRadius,
+                    )
+                  : widget.isEditing &&
+                          (_isFocused ||
+                              isSelected) // Show border if editMode && (focused OR selected)
+                      ? (style.focusDecoration ??
+                          BoxDecoration(
+                            border: Border.all(
+                              color: isActive
+                                  ? (style.activeColor ?? Colors.deepOrange)
+                                  : (style.focusColor ?? Theme.of(context).primaryColor),
+                              width: (isActive || _isFocused) ? 4 : 3,
+                            ),
+                            borderRadius: style.borderRadius,
+                          ))
+                      : null,
               child: DashboardItemWrapper(
                 item: widget.item,
                 child: _cachedWidget!, // Use the cached heavy content

@@ -17,7 +17,9 @@ import 'package:sliver_dashboard/src/view/a11y/dashboard_shortcuts.dart';
 import 'package:sliver_dashboard/src/view/dashboard_configuration.dart';
 import 'package:sliver_dashboard/src/view/dashboard_feedback_widget.dart';
 import 'package:sliver_dashboard/src/view/dashboard_grid.dart';
+import 'package:sliver_dashboard/src/view/dashboard_item_widget.dart';
 import 'package:sliver_dashboard/src/view/dashboard_typedefs.dart';
+import 'package:sliver_dashboard/src/view/nested/dashboard_nested_scope.dart';
 import 'package:sliver_dashboard/src/view/resize_handle.dart';
 import 'package:sliver_dashboard/src/view/sliver_dashboard.dart';
 import 'package:state_beacon/state_beacon.dart';
@@ -82,6 +84,7 @@ class DashboardOverlay<T extends Object> extends StatefulWidget {
     required this.controller,
     required this.scrollController,
     required this.child,
+    this.sliverKey,
     this.itemBuilder,
     this.itemLayoutBuilder,
     this.itemBreakpointBuilder,
@@ -112,6 +115,8 @@ class DashboardOverlay<T extends Object> extends StatefulWidget {
     this.backgroundBuilder,
     this.fillViewport = false,
     this.dragStartGesture = DragStartGesture.longPress,
+    this.crossGridDragOut = true,
+    this.acceptCrossGridItems = true,
     super.key,
   }) : assert(
           (itemBuilder != null ? 1 : 0) +
@@ -124,12 +129,24 @@ class DashboardOverlay<T extends Object> extends StatefulWidget {
   /// The controller that manages the state of the dashboard.
   final DashboardController controller;
 
+  /// Whether items may be dragged out of this grid into another grid of the
+  /// same [DashboardNestedScope]. Only relevant when such a scope is present.
+  final bool crossGridDragOut;
+
+  /// Whether this grid accepts items dragged from other grids of the same [DashboardNestedScope].
+  /// Only relevant when such a scope is present.
+  final bool acceptCrossGridItems;
+
   /// The scroll controller of the child scroll view.
   /// Required for auto-scrolling and feedback positioning.
   final ScrollController scrollController;
 
   /// The child widget, typically a [CustomScrollView].
   final Widget child;
+
+  /// A specific GlobalKey bound to the SliverDashboard to resolve hit-test
+  /// and geometry target metrics in multi-sliver viewport layouts.
+  final GlobalKey? sliverKey;
 
   /// A static builder that creates the widget for a dashboard item.
   ///
@@ -239,8 +256,38 @@ class DashboardOverlay<T extends Object> extends StatefulWidget {
 }
 
 class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>>
-    implements DashboardOverlayController {
+    implements DashboardOverlayController, CrossGridDragTarget {
   final GlobalKey _overlayStackKey = GlobalKey();
+
+  // Cache target for the RenderObject to prevent expensive tree traversals on pointer moves
+  RenderSliverDashboard? _renderSliver;
+
+  // --- Nested grids / cross-grid drag & drop ---
+  // Resolved from the nearest DashboardNestedScope; null outside a scope, in
+  // which case every cross-grid code path is a single null-check no-op.
+  DashboardNestedCoordinator? _nestedCoordinator;
+  // Whether this overlay owns the active cross-grid session (the drag started
+  // here and the item currently lives as a placeholder in another grid).
+  bool _ownsCrossGridSession = false;
+  // The foreign item currently hovering this grid (cross-grid target side).
+  // Lets the auto-scroll tick re-anchor the placeholder with the right size.
+  LayoutItem? _foreignDragItem;
+  // Parent grid overlay currently scrolled on our behalf (sizeToContent
+  // nested grids delegate edge auto-scroll to their parent).
+  CrossGridDragTarget? _delegatedAutoScroll;
+  // --- Same-grid subGridDynamic (subGridDynamicSameGrid) ---
+  // In-grid drags push neighbours continuously, so a hovered sibling is
+  // shoved away before the pointer can rest on it. When the option is on, a
+  // stationary pointer freezes the pushes (pre-drag snapshot restored while
+  // the drag stays alive), highlights the item under the pointer and arms the
+  // nested-grid request — the in-grid twin of the cross-grid arming.
+  static const Duration _sameGridPauseDelay = Duration(milliseconds: 350);
+  static const double _sameGridMoveTolerance = 8;
+  Timer? _sameGridPauseTimer;
+  Timer? _sameGridArmTimer;
+  String? _sameGridArmedHostId;
+  Offset? _sameGridFreezePosition;
+  Offset? _sameGridPauseAnchor;
   StreamSubscription<ScrollRequest>? _scrollSubscription;
 
   // State for tracking the active drag/resize operation
@@ -302,9 +349,35 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final coordinator = DashboardNestedScope.maybeOf(context);
+    if (!identical(coordinator, _nestedCoordinator)) {
+      _nestedCoordinator?.unregister(this);
+      _nestedCoordinator = coordinator;
+      if (coordinator != null) {
+        // Depth = number of enclosing dashboards. Computed once per
+        // registration; used to resolve the deepest grid under the pointer.
+        var depth = 0;
+        context.visitAncestorElements((element) {
+          if (element.widget is DashboardOverlayProvider) depth++;
+          return true;
+        });
+        coordinator.register(this, depth: depth);
+      }
+    }
+  }
+
+  @override
   void didUpdateWidget(covariant DashboardOverlay<T> oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (widget.sliverKey != oldWidget.sliverKey) {
+      // The cached render object may still be attached (it belongs to
+      // another grid); only the key swap tells us it is no longer ours.
+      _renderSliver = null;
+    }
     if (widget.controller != oldWidget.controller) {
+      _renderSliver = null;
       _scrollSubscription?.cancel().ignore();
       _setupScrollListener();
     }
@@ -397,6 +470,9 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
     _isTrashActive.dispose();
     _trashTimer?.cancel();
     _throttleFlushScheduled?.cancel();
+    _sameGridPauseTimer?.cancel();
+    _sameGridArmTimer?.cancel();
+    _nestedCoordinator?.unregister(this);
     super.dispose();
   }
 
@@ -730,6 +806,13 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
     final result = BoxHitTestResult();
 
     if (overlayRenderBox.hitTest(result, position: localPosition)) {
+      // Nested grids: the hit-test path is deepest-first, so without an
+      // ownership check the first SliverDashboardParentData found under the
+      // pointer may belong to a *nested* dashboard's item, and this overlay
+      // would try to drag a foreign item (crashing onDragStart on an unknown
+      // id). Only entries whose sliver is our own are considered; deeper
+      // entries are skipped and the walk naturally reaches our host item.
+      final ownSliver = _findRenderSliver();
       for (final entry in result.path) {
         final target = entry.target;
         if (target is RenderBox) {
@@ -737,6 +820,7 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
           if (parentData is SliverDashboardParentData && parentData.index != null) {
             final parent = target.parent;
             if (parent is RenderSliverDashboard) {
+              if (!identical(parent, ownSliver)) continue;
               final index = parentData.index!;
               if (index < parent.items.length) {
                 return (
@@ -754,6 +838,40 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
   }
 
   RenderSliverDashboard? _findRenderSliver() {
+    if (_renderSliver != null && _renderSliver!.attached) return _renderSliver;
+
+    // In multi-sliver environments, resolve the exact targeted render object
+    // by searching strictly within the localized subtree of the sliver's GlobalKey.
+    if (widget.sliverKey != null) {
+      final sliverContext = widget.sliverKey!.currentContext;
+      if (sliverContext != null) {
+        final rootObject = sliverContext.findRenderObject();
+        if (rootObject != null) {
+          RenderSliverDashboard? found;
+          void visitor(RenderObject child) {
+            if (found != null) return;
+            if (child is RenderSliverDashboard) {
+              found = child;
+              return;
+            }
+            child.visitChildren(visitor);
+          }
+
+          if (rootObject is RenderSliverDashboard) {
+            _renderSliver = rootObject;
+          } else {
+            // Localized search inside specific SliverDashboard subtree only
+            rootObject.visitChildren(visitor);
+            _renderSliver = found;
+          }
+
+          if (_renderSliver != null) {
+            return _renderSliver;
+          }
+        }
+      }
+    }
+
     RenderSliverDashboard? found;
     void visitor(RenderObject child) {
       if (found != null) return;
@@ -766,11 +884,16 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
 
     final root = context.findRenderObject();
     root?.visitChildren(visitor);
+    _renderSliver = found;
     return found;
   }
 
   void _onPointerDown(Offset position) {
     if (!widget.controller.isEditing.value) return;
+
+    // A deeper nested grid already handles this pointer (its Listener runs
+    // first in the dispatch order): do not steal the drag.
+    if (_nestedCoordinator?.isPointerClaimedByOther(this) ?? false) return;
 
     final hit = _hitTest(position);
     final foundItem = hit.item;
@@ -852,6 +975,9 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
       _operationStartPosition = position;
       _activeResizeHandle = handle;
 
+      // Claim the pointer so ancestor overlays skip it (see _onPointerDown).
+      _nestedCoordinator?.claimPointer(this);
+
       if (handle != null) {
         widget.onItemResizeStart?.call(foundItem);
         widget.controller.internal.onResizeStart(foundItem.id);
@@ -884,7 +1010,7 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
             _onPointerMove(pending);
           }
         });
-        return;
+        return; // Skip intermediate events (approx. 60fps) to keep browser responsive
       }
       _throttleStopwatch.reset();
       _pendingThrottledPosition = null;
@@ -897,6 +1023,20 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
     }
 
     _lastGlobalPosition = position;
+
+    // Active cross-grid session: the item no longer lives in this grid; every
+    // move is routed to the coordinator (proxy + hovered grid placeholder +
+    // that grid's auto-scroll). Our own auto-scroll and drag math are skipped.
+    if (_ownsCrossGridSession) {
+      _nestedCoordinator?.updateSession(position);
+      return;
+    }
+
+    // Same-grid dynamic nesting: while frozen, jitter within the tolerance is
+    // swallowed (no pushes, no auto-scroll — the pause IS the intent); a real
+    // move disarms and falls through, resuming the normal drag below.
+    if (_handleSameGridNestPause(position)) return;
+
     _handleAutoScroll(position);
     _performUpdate(position);
   }
@@ -924,6 +1064,12 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
         mainAxisSpacing: metrics.mainAxisSpacing,
       );
     } else {
+      // Cross-grid handoff: when the pointer enters another grid of the same
+      // DashboardNestedScope (a nested grid inside one of our items, an
+      // ancestor grid, or a sibling), the drag leaves this grid and becomes a
+      // coordinator-driven session.
+      if (_maybeStartCrossGridSession(position)) return;
+
       // Reason: We calculate the position relative to the Overlay's render box.
       // We assume the Overlay wraps the entire scrollable area.
       final renderObject = context.findRenderObject();
@@ -966,13 +1112,23 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
     }
   }
 
+  /// Whether [position] currently hits the trash zone (if any). Shared by
+  /// [_checkTrash] and by the cross-grid exit gating in
+  /// [_maybeStartCrossGridSession].
+  bool _isPointerOverTrash(Offset position) {
+    if (widget.trashBuilder == null) return false;
+    final trashRenderBox = _trashKey.currentContext?.findRenderObject() as RenderBox?;
+    if (trashRenderBox == null || !trashRenderBox.attached) return false;
+    final localTrashPos = trashRenderBox.globalToLocal(position);
+    final result = BoxHitTestResult();
+    return trashRenderBox.hitTest(result, position: localTrashPos);
+  }
+
   void _checkTrash(Offset position) {
     if (widget.trashBuilder == null) return;
     final trashRenderBox = _trashKey.currentContext?.findRenderObject() as RenderBox?;
     if (trashRenderBox != null) {
-      final localTrashPos = trashRenderBox.globalToLocal(position);
-      final result = BoxHitTestResult();
-      final isHovering = trashRenderBox.hitTest(result, position: localTrashPos);
+      final isHovering = _isPointerOverTrash(position);
 
       if (isHovering) {
         if (!_isHoveringTrash.value) {
@@ -998,10 +1154,26 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
   Future<void> _onPointerUp() async {
     if (_isProcessingPointerUp) return;
     _isProcessingPointerUp = true;
+    final hadActiveDrag = _activeItemId != null;
 
     try {
       _stopScrollTimer();
       _trashTimer?.cancel();
+
+      // Same-grid nest arming: releasing while frozen drops at the pointer —
+      // one final update re-applies the move and, if the armed host was just
+      // converted, hands the item over to the freshly mounted nested grid
+      // (the regular cross-grid session start inside _performUpdate), which
+      // the _ownsCrossGridSession branch below then finalizes as a drop.
+      if (_sameGridArmedHostId != null) {
+        _cancelSameGridNest();
+        if (_activeItemId != null && _lastGlobalPosition != null) {
+          _performUpdate(_lastGlobalPosition!);
+        }
+      } else {
+        _sameGridPauseTimer?.cancel();
+        _sameGridPauseTimer = null;
+      }
 
       // Clic management for group
       if (_shouldClearSelectionOnUp && _activeItemId != null) {
@@ -1018,6 +1190,15 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
               _activeItemInitialLayout;
 
       if (currentItem == null) {
+        return;
+      }
+
+      if (_ownsCrossGridSession) {
+        // The item was dragged into another grid (or back): finalize there.
+        // A drop over no grid restores this grid's pre-drag layout.
+        final placed =
+            _nestedCoordinator?.dropSession(_lastGlobalPosition ?? _operationStartPosition);
+        widget.onItemDragEnd?.call(placed ?? currentItem);
         return;
       }
 
@@ -1062,6 +1243,12 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
         widget.onItemDragEnd?.call(currentItem);
       }
     } finally {
+      // Resolve any fired-but-unconfirmed nested-grid request. A session
+      // drop has already resolved it inside dropSession (no-op here); a
+      // plain in-grid release resolves it as abandoned. Guarded so a stray
+      // pointer-up on a non-dragging overlay can't steal another grid's
+      // pending request.
+      if (hadActiveDrag) _nestedCoordinator?.resolveNestRequest(null);
       _resetOperationState();
       _isProcessingPointerUp = false;
     }
@@ -1083,12 +1270,63 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
     _throttleFlushScheduled?.cancel();
     _throttleFlushScheduled = null;
     _pendingThrottledPosition = null;
+    _cancelSameGridNest();
+    // Cross-grid cleanup: release the pointer claim and, if a session we own
+    // is somehow still alive (exception path), cancel it so the source grid
+    // is restored instead of silently losing the item.
+    _ownsCrossGridSession = false;
+    final coordinator = _nestedCoordinator;
+    if (coordinator != null) {
+      if (coordinator.isSessionOwner(this)) coordinator.cancelSession();
+      coordinator.releasePointer(this);
+    }
     widget.controller.internal.setDragOffset(Offset.zero);
   }
 
   // Auto Scroll
 
   void _handleAutoScroll(Offset globalPosition) {
+    // Auto-scroll for a grid whose own scroll view cannot scroll (typically a
+    // sizeToContent nested grid on NeverScrollableScrollPhysics) is delegated
+    // to its parent grid, which owns the real viewport. This covers both a
+    // foreign cross-grid hover near the bottom edge and an internal child-tile
+    // drag that grows the host: in either case the parent must scroll to keep
+    // the relevant tile in view. See the delegation block below.
+    final scrollPosition =
+        widget.scrollController.hasClients ? widget.scrollController.position : null;
+    final canScrollSelf =
+        scrollPosition != null && scrollPosition.maxScrollExtent > scrollPosition.minScrollExtent;
+    // A non-scrollable grid (sizeToContent) delegates edge auto-scroll to its
+    // parent in BOTH cases:
+    //  - foreign hover: the parent reveals the grid's growing content;
+    //  - internal drag: dragging a child tile toward the bottom grows the host
+    //    (sizeToContent) and the parent must scroll to keep the tile in view.
+    // The difference is handled by the caller: for an internal drag the caller
+    // still runs the local _performUpdate afterwards (the tile is ours), while
+    // a foreign hover returns here. In both cases we do NOT run this grid's own
+    // hot-zone math (it cannot scroll).
+    if (!canScrollSelf) {
+      final coordinator = _nestedCoordinator;
+      final parentController = coordinator?.registrationOf(widget.controller)?.parentController;
+      final parentTarget =
+          parentController == null ? null : coordinator!.registrationOf(parentController)?.target;
+      if (parentTarget != null) {
+        // The parent decides start/stop from its own hot zones on every call.
+        _delegatedAutoScroll = parentTarget;
+        parentTarget.autoScrollAt(globalPosition);
+      } else {
+        // No parent to delegate to: release any prior delegation.
+        _delegatedAutoScroll?.stopAutoScroll();
+        _delegatedAutoScroll = null;
+      }
+      // Nothing to scroll locally regardless; stop only this grid's own timer
+      // (must NOT cancel the delegation we just requested above).
+      _scrollTimer?.cancel();
+      _scrollTimer = null;
+      _scrollSpeed = 0.0;
+      return;
+    }
+
     final overlayBox = _overlayStackKey.currentContext?.findRenderObject() as RenderBox?;
     if (overlayBox == null) return;
 
@@ -1129,6 +1367,16 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
 
   void _startScrollTimer() {
     if (_scrollTimer?.isActive ?? false) return;
+    // A non-scrollable grid (e.g. sizeToContent on NeverScrollableScrollPhysics)
+    // has nothing to auto-scroll on its own. A foreign hover has already been
+    // delegated to the parent in _handleAutoScroll; an internal drag simply
+    // grows the host via sizeToContent, and the parent scrolls itself. Starting
+    // a timer here would tick jumpTo() against a pinned position every 16ms for
+    // no effect, so skip it.
+    if (widget.scrollController.hasClients) {
+      final p = widget.scrollController.position;
+      if (p.maxScrollExtent <= p.minScrollExtent) return;
+    }
     _scrollTimer = Timer.periodic(const Duration(milliseconds: 16), (timer) {
       if (!widget.scrollController.hasClients) return;
       final newOffset = widget.scrollController.offset + _scrollSpeed;
@@ -1141,7 +1389,17 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
       if (_lastGlobalPosition != null) {
         if (_activeItemId != null) {
           _performUpdate(_lastGlobalPosition!);
-        } else {
+        } else if (_foreignDragItem != null) {
+          // Cross-grid hover: re-anchor with the dragged item's size, not the
+          // DragTarget placeholder size.
+          _showPlaceholderAt(
+            _lastGlobalPosition!,
+            w: _foreignDragItem!.w,
+            h: _foreignDragItem!.h,
+          );
+        } else if (widget.controller.currentDragPlaceholder != null) {
+          // External DragTarget hover only; never resurrect a placeholder
+          // from a stale position (e.g. when scrolled by delegation).
           _updatePlaceholderPosition(_lastGlobalPosition!);
         }
       }
@@ -1149,23 +1407,37 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
   }
 
   void _stopScrollTimer() {
+    // Also stop a parent grid scrolled on our behalf (delegation).
+    _delegatedAutoScroll?.stopAutoScroll();
+    _delegatedAutoScroll = null;
+
     _scrollTimer?.cancel();
     _scrollTimer = null;
     _scrollSpeed = 0.0;
   }
 
   void _updatePlaceholderPosition(Offset globalPosition) {
+    _showPlaceholderAt(
+      globalPosition,
+      w: widget.placeholderWidth,
+      h: widget.placeholderHeight,
+    );
+  }
+
+  /// Converts [globalPosition] into grid-content coordinates (pixels relative
+  /// to the sliver's (0,0), scroll- and padding-corrected), together with the
+  /// current slot metrics. Returns null when the sliver is not attached.
+  ({SlotMetrics metrics, double dx, double dy})? _gridPointAtGlobal(Offset globalPosition) {
     final renderSliver = _findRenderSliver();
-    if (renderSliver == null) return;
+    if (renderSliver == null) return null;
 
     final metrics = _getMetricsFromSliver(renderSliver);
-    _activeSliverMetrics = metrics;
 
     // Reason: We use the Overlay's RenderBox as the global coordinate reference.
     // This is safer than using the child's render box, as the Overlay is guaranteed
     // to cover the entire interactive area.
     final renderObject = context.findRenderObject();
-    if (renderObject is! RenderBox) return;
+    if (renderObject is! RenderBox) return null;
     final overlayBox = renderObject;
 
     final localPos = overlayBox.globalToLocal(globalPosition);
@@ -1190,13 +1462,34 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
       dy = localPos.dy - metrics.padding.top;
     }
 
-    final x = (dx /
+    return (metrics: metrics, dx: dx, dy: dy);
+  }
+
+  /// Shows (or moves) the external/foreign placeholder of size [w] x [h] at
+  /// the grid cell under [globalPosition]. Shared by the [DragTarget] path
+  /// (`widget.placeholderWidth/Height`) and by cross-grid drags (dragged item size).
+  void _showPlaceholderAt(Offset globalPosition, {required int w, required int h}) {
+    final point = _gridPointAtGlobal(globalPosition);
+    if (point == null) return;
+
+    final metrics = point.metrics;
+    _activeSliverMetrics = metrics;
+
+    // Defensive clamp — a foreign/projected item wider than this grid
+    // would invert the x/y clamp range below (`x.clamp(0, slotCount - w)`
+    // throws ArgumentError when the upper bound is negative). The coordinator
+    // sanitizes projections, but this method is also reachable via the public
+    // DragTarget path with caller-provided dimensions.
+    final clampedW = metrics.scrollDirection == Axis.vertical ? min(w, metrics.slotCount) : w;
+    final clampedH = metrics.scrollDirection != Axis.vertical ? min(h, metrics.slotCount) : h;
+
+    final x = (point.dx /
             (metrics.slotWidth +
                 (metrics.scrollDirection == Axis.vertical
                     ? metrics.crossAxisSpacing
                     : metrics.mainAxisSpacing)))
         .floor();
-    final y = (dy /
+    final y = (point.dy /
             (metrics.slotHeight +
                 (metrics.scrollDirection == Axis.vertical
                     ? metrics.mainAxisSpacing
@@ -1205,25 +1498,399 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
 
     final clampedX = max(
       0,
-      metrics.scrollDirection == Axis.vertical
-          ? x.clamp(0, metrics.slotCount - widget.placeholderWidth)
-          : x,
+      metrics.scrollDirection == Axis.vertical ? x.clamp(0, metrics.slotCount - clampedW) : x,
     );
     final clampedY = max(
       0,
-      metrics.scrollDirection == Axis.vertical
-          ? y
-          : y.clamp(0, metrics.slotCount - widget.placeholderHeight),
+      metrics.scrollDirection == Axis.vertical ? y : y.clamp(0, metrics.slotCount - clampedH),
     );
 
     widget.controller.internal.showPlaceholder(
       x: clampedX,
       y: clampedY,
-      w: widget.placeholderWidth,
-      h: widget.placeholderHeight,
+      w: clampedW,
+      h: clampedH,
     );
 
     _lastValidPlaceholder = widget.controller.currentDragPlaceholder;
+  }
+
+  @override
+  bool isPointInsideSliver(Offset globalPosition) => _isInsideSliver(globalPosition, tolerance: 0);
+
+  /// Core of [isPointInsideSliver] with an optional symmetric [tolerance]
+  /// (pixels) inflating the accepted bounds.
+  ///
+  /// Reason — hot-path shape: this runs once per registered grid per pointer
+  /// event during a cross-grid drag (see `DashboardNestedCoordinator.targetAt`,
+  /// budget: O(G) point-in-rect tests). It therefore reads the sliver
+  /// constraints/geometry directly instead of going through
+  /// [_gridPointAtGlobal], which would allocate one SlotMetrics and one record
+  /// per grid per event (~2·G·120 short-lived objects/s on a 120 Hz pointer).
+  bool _isInsideSliver(Offset globalPosition, {required double tolerance}) {
+    final sliver = _findRenderSliver();
+    if (sliver == null || !sliver.attached || sliver.geometry == null) return false;
+
+    final renderObject = context.findRenderObject();
+    if (renderObject is! RenderBox || !renderObject.attached) return false;
+    final localPos = renderObject.globalToLocal(globalPosition);
+
+    final viewportScroll =
+        widget.scrollController.hasClients ? widget.scrollController.offset : 0.0;
+    final constraints = sliver.constraints;
+    final paintExtent = sliver.geometry!.paintExtent;
+    final crossAxisExtent = constraints.crossAxisExtent;
+    // Position along the scroll axis relative to the first *visible* pixel of
+    // this sliver: (pointer main-axis) + (viewport scroll) - (extent of the
+    // slivers before this one) - (part of this sliver already scrolled away).
+    final mainLead = constraints.precedingScrollExtent + constraints.scrollOffset;
+
+    if (constraints.axis == Axis.vertical) {
+      final dx = localPos.dx - widget.padding.left;
+      if (dx < -tolerance || dx > crossAxisExtent + tolerance) return false;
+      final dyLocal = localPos.dy + viewportScroll - mainLead;
+      return dyLocal >= -tolerance && dyLocal <= paintExtent + tolerance;
+    } else {
+      final dy = localPos.dy - widget.padding.top;
+      if (dy < -tolerance || dy > crossAxisExtent + tolerance) return false;
+      final dxLocal = localPos.dx + viewportScroll - mainLead;
+      return dxLocal >= -tolerance && dxLocal <= paintExtent + tolerance;
+    }
+  }
+  // ===========================================================================
+  // CrossGridDragTarget — how the DashboardNestedScope coordinator drives this
+  // grid during a cross-grid drag (see dashboard_nested_scope.dart).
+  // ===========================================================================
+
+  @override
+  DashboardController get controller => widget.controller;
+
+  @override
+  bool get canAcceptCrossGridItems =>
+      widget.acceptCrossGridItems && widget.controller.isEditing.value;
+
+  @override
+  bool get canDragItemsOut => widget.crossGridDragOut;
+
+  @override
+  RenderBox? get overlayRenderBox =>
+      _overlayStackKey.currentContext?.findRenderObject() as RenderBox?;
+
+  @override
+  SlotMetrics? currentSlotMetrics() {
+    final sliver = _findRenderSliver();
+    return sliver == null ? null : _getMetricsFromSliver(sliver);
+  }
+
+  @override
+  void foreignDragOver(LayoutItem item, Offset globalPosition) {
+    _foreignDragItem = item;
+    // Keep the freshest position so the auto-scroll tick can re-anchor the
+    // placeholder while the content moves under a stationary pointer.
+    _lastGlobalPosition = globalPosition;
+    _showPlaceholderAt(globalPosition, w: item.w, h: item.h);
+    _handleAutoScroll(globalPosition);
+  }
+
+  @override
+  void foreignDragLeave() {
+    _foreignDragItem = null;
+    _stopScrollTimer();
+    widget.controller.internal.hidePlaceholder();
+  }
+
+  @override
+  LayoutItem? foreignDrop(LayoutItem item) {
+    _foreignDragItem = null;
+    _stopScrollTimer();
+    return widget.controller.internal.onDropExternalItem(template: item);
+  }
+
+  @override
+  void autoScrollAt(Offset globalPosition) => _handleAutoScroll(globalPosition);
+
+  @override
+  void stopAutoScroll() => _stopScrollTimer();
+
+  @override
+  LayoutItem? itemAtGlobal(Offset globalPosition, {String? excludeId}) {
+    // When a foreign placeholder is active, its collision pushes constantly
+    // move items away from the cursor; hover detection is therefore done
+    // against the pre-push snapshot so the hovered item is stable.
+    final base =
+        widget.controller.internal.placeholderHitTestSnapshot ?? widget.controller.layout.peek();
+    return _itemAtGlobalIn(base, globalPosition, excludeId: excludeId);
+  }
+
+  /// Resolves the item whose cell contains [globalPosition] within [base] —
+  /// which may be the live layout or a pre-push snapshot, depending on why
+  /// the caller needs hover stability (foreign placeholder vs same-grid drag).
+  LayoutItem? _itemAtGlobalIn(
+    List<LayoutItem> base,
+    Offset globalPosition, {
+    String? excludeId,
+  }) {
+    final point = _gridPointAtGlobal(globalPosition);
+    if (point == null) return null;
+    final metrics = point.metrics;
+    final isVertical = metrics.scrollDirection == Axis.vertical;
+    final strideX =
+        metrics.slotWidth + (isVertical ? metrics.crossAxisSpacing : metrics.mainAxisSpacing);
+    final strideY =
+        metrics.slotHeight + (isVertical ? metrics.mainAxisSpacing : metrics.crossAxisSpacing);
+    final cx = (point.dx / strideX).floor();
+    final cy = (point.dy / strideY).floor();
+    if (cx < 0 || cy < 0) return null;
+
+    for (final candidate in base) {
+      if (candidate.id == '__placeholder__' || candidate.id == excludeId) continue;
+      if (cx >= candidate.x &&
+          cx < candidate.x + candidate.w &&
+          cy >= candidate.y &&
+          cy < candidate.y + candidate.h) {
+        return candidate;
+      }
+    }
+    return null;
+  }
+
+  // ===========================================================================
+  // Same-grid subGridDynamic (subGridDynamicSameGrid)
+  // ===========================================================================
+
+  /// Called on every internal-drag pointer move. Returns true while the drag
+  /// is frozen (armed) and the move is within the jitter tolerance — the
+  /// caller must then skip its drag math so the freeze holds. A real move
+  /// disarms and returns false, letting the normal drag resume.
+  bool _handleSameGridNestPause(Offset position) {
+    final coordinator = _nestedCoordinator;
+    // Note: deliberately independent of subGridDynamic — the two are
+    // orthogonal surfaces (cross-grid hover vs in-grid pause).
+    if (coordinator == null ||
+        !coordinator.subGridDynamicSameGrid ||
+        coordinator.onNestedGridRequested == null ||
+        _activeResizeHandle != null ||
+        _ownsCrossGridSession) {
+      return false;
+    }
+    // Same rule as cross-grid: dynamic nesting carries exactly one item.
+    if (widget.controller.selectedItemIds.peek().length != 1) return false;
+
+    if (_sameGridArmedHostId != null) {
+      final anchor = _sameGridFreezePosition;
+      if (anchor != null && (position - anchor).distance <= _sameGridMoveTolerance) {
+        return true; // frozen: swallow jitter, keep the pushes reverted
+      }
+      // Real movement: disarm. The caller falls through to _performUpdate,
+      // which re-applies the pushes (freezeDragPushes reset the bbox cache)
+      // or hands the drag over to a freshly mounted nested grid.
+      _cancelSameGridNest();
+      return false;
+    }
+
+    // Not armed: (re)start pause detection. Pointer events stop arriving when
+    // the pointer stops, so the pause can only be observed with a timer —
+    // but one restarted only on REAL movement: trackpads and touch screens
+    // emit sub-pixel jitter continuously, and restarting on every event
+    // would keep the pause forever out of reach on those devices.
+    final anchor = _sameGridPauseAnchor;
+    if (anchor == null || (position - anchor).distance > _sameGridMoveTolerance) {
+      _sameGridPauseAnchor = position;
+      _sameGridPauseTimer?.cancel();
+      _sameGridPauseTimer = Timer(_sameGridPauseDelay, _armSameGridNest);
+    }
+    return false;
+  }
+
+  /// Pause-timer callback: the pointer has been stationary for
+  /// [_sameGridPauseDelay] during an in-grid drag. Freezes the pushes,
+  /// highlights the hovered item (resolved against the pre-drag snapshot,
+  /// since the pushed layout lies about what is under the pointer) and arms
+  /// the nested-grid request after [DashboardNestedCoordinator.nestHoverDelay].
+  void _armSameGridNest() {
+    if (!mounted) return;
+    final coordinator = _nestedCoordinator;
+    final itemId = _activeItemId;
+    final position = _lastGlobalPosition;
+    if (coordinator == null || itemId == null || position == null) return;
+    if (_ownsCrossGridSession || _activeResizeHandle != null) return;
+    // Pausing over the trash is a delete intent, not a nest intent.
+    if (_isHoveringTrash.peek()) return;
+
+    final impl = widget.controller.internal;
+    final snapshot = impl.dragOriginSnapshot;
+    if (snapshot == null) return;
+
+    final host = _itemAtGlobalIn(snapshot, position, excludeId: itemId);
+    final myReg = coordinator.registrationOf(widget.controller);
+    final hostable = host != null &&
+        !host.isStatic &&
+        !host.isSectionBarrier &&
+        !host.hasNestedGrid &&
+        !coordinator.hasChildGrid(widget.controller, host.id) &&
+        (myReg == null || coordinator.canHostAtDepth(myReg.depth));
+    if (!hostable) return;
+
+    // Freeze: revert the collision pushes so the hovered item is visually
+    // back under the pointer — the in-grid equivalent of the cross-grid
+    // freeze (foreignDragLeave before arming). Stop the edge auto-scroll
+    // first: its periodic tick re-runs _performUpdate and would fight the
+    // freeze every 16ms.
+    _stopScrollTimer();
+    impl
+      ..freezeDragPushes()
+      ..setNestTargetHover(host.id);
+    _sameGridArmedHostId = host.id;
+    _sameGridFreezePosition = position;
+
+    _sameGridArmTimer?.cancel();
+    _sameGridArmTimer = Timer(coordinator.nestHoverDelay, () {
+      if (!mounted) return;
+      if (_sameGridArmedHostId != host.id || _activeItemId != itemId) return;
+      final dragged = snapshot.firstWhereOrNull((i) => i.id == itemId) ?? _activeItemInitialLayout;
+      if (dragged == null) return;
+      coordinator.notifyNestRequestFired(host, widget.controller);
+      coordinator.onNestedGridRequested?.call(host, dragged, widget.controller);
+      // Stay frozen: the app converts the host and the nested grid mounts
+      // under the (stationary) pointer. The next pointer move — or the
+      // release itself — hands the drag over to it through the regular
+      // cross-grid session start in _performUpdate.
+    });
+  }
+
+  /// Cancels any same-grid pause/arming state and clears the highlight.
+  /// Idempotent; never touches the drag itself (the caller decides whether
+  /// to resume it, drop it, or reset the whole operation).
+  void _cancelSameGridNest() {
+    _sameGridPauseTimer?.cancel();
+    _sameGridPauseTimer = null;
+    _sameGridArmTimer?.cancel();
+    _sameGridArmTimer = null;
+    _sameGridPauseAnchor = null;
+    if (_sameGridArmedHostId != null) {
+      _sameGridArmedHostId = null;
+      _sameGridFreezePosition = null;
+      widget.controller.internal.setNestTargetHover(null);
+    }
+  }
+
+  @override
+  void setNestHoverHighlight(String? itemId) {
+    widget.controller.internal.setNestTargetHover(itemId);
+  }
+
+  /// Starts a cross-grid session when the pointer, during a plain item drag,
+  /// enters another grid of the same scope. Returns true when the session
+  /// started (the caller must skip its local drag math from now on).
+  bool _maybeStartCrossGridSession(Offset position) {
+    final coordinator = _nestedCoordinator;
+    if (coordinator == null || !widget.crossGridDragOut) return false;
+    if (coordinator.sessionActive) return false;
+    // a cross-grid drag carries exactly one node. Cluster drags stay within their grid.
+    if (widget.controller.selectedItemIds.peek().length != 1) return false;
+
+    final itemId = _activeItemId;
+    if (itemId == null) return false;
+    final item = widget.controller.layout.peek().firstWhereOrNull((i) => i.id == itemId) ??
+        _activeItemInitialLayout;
+    if (item == null || item.isStatic || item.isSectionBarrier) return false;
+
+    final metrics = _activeSliverMetrics;
+    if (metrics == null) return false;
+    final isVertical = metrics.scrollDirection == Axis.vertical;
+    final spacingX = isVertical ? metrics.crossAxisSpacing : metrics.mainAxisSpacing;
+    final spacingY = isVertical ? metrics.mainAxisSpacing : metrics.crossAxisSpacing;
+    final itemPixelSize = Size(
+      item.w * (metrics.slotWidth + spacingX) - spacingX,
+      item.h * (metrics.slotHeight + spacingY) - spacingY,
+    );
+
+    // Exit-by-void detection ("the pointer left this sliver's bounds") uses a
+    // hysteresis margin of half a slot (min 24 px): the common in-grid
+    // gestures — appending past the current last row, skimming through a
+    // SliverPadding ring — overshoot the exact paint bounds by a few pixels
+    // every drag, and triggering an exit there makes the tile visibly pop
+    // into the proxy and back. Entering another *registered grid* is still
+    // immediate (no tolerance), so adjacent slivers hand over instantly.
+    final double exitTolerance = max(
+      24,
+      0.5 * (isVertical ? metrics.slotHeight : metrics.slotWidth),
+    );
+    final isOutside = !_isInsideSliver(position, tolerance: exitTolerance) &&
+        // Exiting into the void is only meaningful if some other grid
+        // could receive the item; a single-grid scope (e.g. opened purely for
+        // subGridDynamicSameGrid) keeps the native drag, which also keeps the
+        // trash flow alive.
+        coordinator.hasAnyTargetBesides(this) &&
+        // The trash zone lives outside the sliver's paint bounds by
+        // construction; starting an exit session there would cancel the trash
+        // timers and make deletion unreachable (_checkTrash runs after this
+        // method in _performUpdate, and never again once a session owns the
+        // pointer).
+        !_isPointerOverTrash(position);
+
+    // Same probe as the session updates, so entering and placing agree.
+    final probePoint = coordinator.probePointFor(
+      position,
+      grabOffset: _dragGrabOffset ?? Offset.zero,
+      itemPixelSize: itemPixelSize,
+    );
+    final reg = coordinator.targetAt(
+      probePoint,
+      excludeSourceController: widget.controller,
+      excludeItemId: itemId,
+    );
+
+    // Start cross-grid session immediately if the pointer exits our overlay bounds,
+    // or if it enters another valid registered target.
+    if (isOutside || (reg != null && !identical(reg.target, this))) {
+      _stopScrollTimer();
+      _trashTimer?.cancel();
+      _isHoveringTrash.value = false;
+      _isTrashActive.value = false;
+
+      coordinator.beginSession(
+        source: this,
+        item: item,
+        globalPosition: position,
+        grabOffset: _dragGrabOffset ?? Offset.zero,
+        itemPixelSize: itemPixelSize,
+        overlayContext: context,
+        proxyChild: _buildCrossGridProxy(item, itemPixelSize, metrics.slotCount),
+      );
+      if (!coordinator.isSessionOwner(this)) return false;
+      _ownsCrossGridSession = true;
+      coordinator.updateSession(position);
+      return true;
+    }
+    return false;
+  }
+
+  /// Builds the floating proxy content that visually carries the item between
+  /// grids. Honors [DashboardOverlay.itemFeedbackBuilder] like the in-grid
+  /// drag feedback does.
+  Widget _buildCrossGridProxy(LayoutItem item, Size itemPixelSize, int slotCount) {
+    final base = Material(
+      type: MaterialType.transparency,
+      child: DashboardControllerProvider(
+        controller: widget.controller,
+        child: DashboardItem(
+          item: item,
+          isEditing: false,
+          isFeedback: true,
+          itemBuilder: widget.itemBuilder,
+          itemLayoutBuilder: widget.itemLayoutBuilder,
+          itemBreakpointBuilder: widget.itemBreakpointBuilder,
+          breakpointResolver: widget.breakpointResolver,
+          itemWidth: itemPixelSize.width,
+          itemHeight: itemPixelSize.height,
+          slotCount: slotCount,
+        ),
+      ),
+    );
+    final feedbackBuilder = widget.itemFeedbackBuilder;
+    if (feedbackBuilder == null) return base;
+    return feedbackBuilder(context, item, base);
   }
 
   SlotMetrics _getMetricsFromSliver(RenderSliverDashboard sliver) {

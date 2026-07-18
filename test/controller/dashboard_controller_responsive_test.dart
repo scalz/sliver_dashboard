@@ -16,6 +16,8 @@ void main() {
       );
     });
 
+    tearDown(() => controller.dispose());
+
     test('Should remember layout when switching back to previous breakpoint', () {
       // 1. Initial State (Desktop 8 cols)
       // A is at 0,0. B is at 6,0.

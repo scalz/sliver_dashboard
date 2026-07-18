@@ -6,6 +6,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:sliver_dashboard/sliver_dashboard.dart';
 
+import 'multi_sliver_crossdrag_example.dart' show MultiSliverExamplePage;
+import 'nested_example.dart' show NestedExamplePage;
+
 void main() {
   runApp(const MyApp());
 }
@@ -25,7 +28,70 @@ class MyApp extends StatelessWidget {
         ),
         useMaterial3: true,
       ),
-      home: const DashboardPage(),
+      home: const ExampleHome(),
+    );
+  }
+}
+
+/// Launcher for the two demos: the classic single-grid playground and the
+/// v2 nested grids demo (cross-grid drag & drop, sizeToContent, save/load).
+class ExampleHome extends StatelessWidget {
+  const ExampleHome({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Sliver Dashboard — Examples')),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.dashboard),
+              title: const Text('Playground'),
+              subtitle: const Text(
+                'Single grid: drag, resize, trash, sections, minimap, policies…',
+              ),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(builder: (_) => const DashboardPage()),
+              ),
+            ),
+          ),
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.grid_view),
+              title: const Text('Nested grids (v2)'),
+              subtitle: const Text(
+                'Grids inside items, cross-grid drag & drop, sizeToContent, '
+                'save/load of the whole tree.',
+              ),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => const NestedExamplePage(),
+                ),
+              ),
+            ),
+          ),
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.layers),
+              title: const Text('Multi-Sliver Drag & Drop (v2)'),
+              subtitle: const Text(
+                'Asymmetric sliver grids, physical coordinate matrix translation, '
+                'custom proportional scaling projection policies.',
+              ),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => const MultiSliverExamplePage(),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -120,7 +186,6 @@ class _DashboardPageState extends State<DashboardPage> {
           w: 8,
           h: 1,
           isSectionBarrier: true,
-          isStatic: true,
           sectionTitle: '📌 System Diagnostics (Section 1)',
         ),
         const LayoutItem(
@@ -159,7 +224,6 @@ class _DashboardPageState extends State<DashboardPage> {
 
     // Sync initial configuration
     controller.setEditMode(isEditing.value);
-    controller.guidance = const DashboardGuidance();
     controller.setAllowAutoShrink(allow: autoShrink.value);
     _updatePolicy();
     _syncJsonField();
@@ -410,7 +474,6 @@ class _DashboardPageState extends State<DashboardPage> {
               controller: controller,
               scrollController: standardScrollController,
               scrollDirection: controller.scrollDirection.value,
-              guidance: const DashboardGuidance(),
               slotAspectRatio: 1.0,
               mainAxisSpacing: 8.0,
               crossAxisSpacing: 8.0,
@@ -464,7 +527,6 @@ class _DashboardPageState extends State<DashboardPage> {
             DashboardOverlay<String>(
               controller: controller,
               scrollController: sliverScrollController,
-              //guidance: const DashboardGuidance(),
               dragStartGesture: handlesOnly
                   ? DragStartGesture.none
                   : DragStartGesture.longPress,
@@ -487,6 +549,7 @@ class _DashboardPageState extends State<DashboardPage> {
                 controller: sliverScrollController,
                 slivers: [
                   SliverAppBar(
+                    automaticallyImplyLeading: false,
                     pinned: true,
                     expandedHeight: 120,
                     backgroundColor: Colors.indigo.shade900,

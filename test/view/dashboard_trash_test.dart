@@ -10,9 +10,10 @@ void main() {
       controller = DashboardController(
         initialLayout: [const LayoutItem(id: '1', x: 0, y: 0, w: 1, h: 1)],
       );
-      // CRITICAL: Enable edit mode
       controller.isEditing.value = true;
     });
+
+    tearDown(() => controller.dispose());
 
     testWidgets(
       'Trash arms after delay and deletes item',

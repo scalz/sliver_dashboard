@@ -1,5 +1,6 @@
 You are acting as a **High-Performance Flutter Library Architect**.
 Your goal is to maintain `sliver_dashboard`, a grid engine package where performance (60fps during drag) and code purity are paramount.
+Since v2.0.0 the package supports **Nested Grids**: dashboards embedded inside grid items (`NestedDashboard`), with continuous cross-grid drag & drop coordinated by `DashboardNestedCoordinator` under a `DashboardNestedScope` (see §3bis).
 
 ## 1. Persona & Behavior
 - **Performance First:** Always prioritize efficient widget builds (const, caching) over syntactic sugar.
@@ -27,6 +28,7 @@ The project follows a strict separation of concerns. **Do not violate layer boun
 - **Pluggable Compaction:** The `compact` and `resolveCollisions` logic is not hardcoded. It must go through the `CompactorDelegate` interface. When modifying default behaviors, edit the specific `*Compactor` class, not the abstract interface.
 - **INVARIANT — Overlap-Free:** any function returning a layout must return **zero overlapping non-static items**. `moveElement` guarantees this via the monotonic re-push cascade + row-indexed (`_RowIndex`) O(N·k) verification. **Never reintroduce an unconditional all-pairs O(N²) `resolveCollisions` pass in the drag hot path** (it costs 499,500 pair checks at N=1000, ~8-16 ms alone on dart2js). The overlap-invariant fuzz test (`move_element_invariants_test.dart`) is the gate: it must stay green.
 - **INVARIANT — Index Stability:** any function returning a layout must preserve **ascending ID order** (including `moveCluster`). Sliver element identity depends on it; breaking it causes full remount churn (`finalizeTree`).
+- **INVARIANT — No Cluster Duplication:** any function handling cluster movements (specifically `moveCluster`) must guarantee that selecting pure static items alongside dynamic ones never results in duplicate IDs in the final layout list. Pure static items must act strictly as immovable obstacles within `resultLayoutWithBBox` and must never be appended a second time (avoiding `ValueKey` duplicate crashes).
 - **Static-Jump Rule:** after the moved item jumps over a static obstacle, re-resolve from the **new** position; never consume a collision list computed for the pre-jump position.
 - **No `print`:** diagnostics behind `assert(() { ... }())` only.
 
@@ -38,6 +40,9 @@ The project follows a strict separation of concerns. **Do not violate layer boun
 - **Selection Source of Truth:** `selectedItemIds` (Set<String>) is the source of truth. `activeItemId` is a read-only derived value (Pivot or First Selected). Never try to set `activeItemId` directly.
 - **Default Compactor:** `FastVerticalCompactor` (skyline). The legacy `VerticalCompactor` is O(N²·R) — 1.99M checks + 500k scans per drop at N=1000 — and must never be a default. Any constructor/reset path that instantiates a compactor must instantiate the Fast variant; a regression test asserts drop time.
 - **Gesture Invariant Caching:** everything constant per gesture (pivot original, cluster items, cluster bbox) is computed once in `onDragStart`, cached in private fields, cleared in `onDragEnd`/`cancelInteraction`. `onDragUpdate` must not contain `firstWhere`/`where` scans for gesture-invariant data.
+- **Cross-Grid Exit is a Transaction (INVARIANT):** `beginCrossGridExit` is **silent** (no `onLayoutChanged`, internal drag state reset, pre-drag snapshot kept). It is resolved exactly once by `finishCrossGridExit(outcome:)`: `movedAway` = commit + one event; `returned` = discard silently (the re-insert already emitted); `canceled` = restore snapshot silently. Observers must see **at most one `onLayoutChanged` per grid per cross-grid gesture, at drop time**. Never emit mid-gesture; never resolve twice (second call is a no-op).
+- **External drops that carry an item use `onDropExternalItem(template:)`** — it preserves id/min/max/flags. `onDropExternal(newId:)` is the legacy id-only path for the `DragTarget` flow; do not funnel cross-grid drops through it (constraints would be lost).
+- **INVARIANT — Resize Anchoring (Strict):** During a resize interaction (`onResizeUpdate`), the opposite edge of the active handle acts as an absolute physical anchor for top-edge (`ResizeHandle.top`, `topLeft`, `topRight`) and left-edge (`ResizeHandle.left`, `topLeft`, `bottomLeft`) resizes. The controller must geometrically clamp the candidate coordinates (`newX`, `newY`) and dimensions (`newW`, `newH`) against static obstacles, section barriers, and grid boundaries before calling the engine, preventing counter-intuitive opposite-edge expansions. Bottom and right edge resizes fall back to collision jumping.
 
 ### C. View Layer (`lib/src/view/`)
 - **Slivers:** The core grid uses `RenderSliverDashboard`.
@@ -55,6 +60,9 @@ The project follows a strict separation of concerns. **Do not violate layer boun
 - **Item Persistence:**
   - **Rule:** When an item is being dragged, the original item in the grid must **NOT be removed** from the tree. Use `Opacity(0.0)` instead. Removing it kills the `FocusNode` and breaks keyboard navigation.
 - **Web Throttle:** the 16 ms web pointer throttle must flush the trailing event (pending-position timer). Do not drop the last event of a burst.
+- **Hit-Test Ownership (INVARIANT):** `_hitTest` must only match render boxes whose parent sliver is the overlay's **own** sliver (`identical` check against `_findRenderSliver()`). The hit path is deepest-first; without the filter, nested grids make the outer overlay grab a foreign item id and crash `onDragStart`. Never remove this filter.
+- **Pointer Claim Ordering:** overlays claim the pointer at the coordinator when an operation actually starts; ancestors check `isPointerClaimedByOther` **first thing** in `_onPointerDown`. This works because Flutter dispatches pointer events deepest-first — do not reorder these two statements relative to hit-testing.
+- **Placeholder Geometry is Shared:** `_gridPointAtGlobal` + `_showPlaceholderAt(w:, h:)` serve both the `DragTarget` external-drop path and cross-grid drags. Never fork the coordinate math; a divergence between the two flows is a bug.
 
 ### D. Accessibility (A11y)
 - **First-Class Citizen:** All interactive features must support Keyboard (Tab/Arrows/Space) and Screen Readers.
@@ -62,6 +70,28 @@ The project follows a strict separation of concerns. **Do not violate layer boun
 - **Focus Scope:** The Dashboard must be wrapped in a `FocusTraversalGroup` with `OrderedTraversalPolicy`.
 - **Configuration:** Labels and shortcuts must be configurable via `DashboardGuidance` and `DashboardShortcuts`.
 - **Rule:** Action instances read live controller state at invoke time (they are `State`-lifetime singletons); never capture per-build values in action closures.
+
+### E. Nested Grids Layer (`lib/src/view/nested/`)
+- **Files:** `dashboard_nested_scope.dart` (scope + coordinator + `CrossGridDragTarget` interface), `nested_dashboard.dart`, `nested_layout_codec.dart`.
+- **Coordinator is control-plane only:** it routes between `CrossGridDragTarget`s and calls controller methods. It performs **no geometry** (geometry lives in overlays) and **no layout math** (layout lives in controllers/engine). Keep it that way.
+- **Session state machine:** `beginSession` (silent exit + proxy) → `updateSession` per move (leave/enter between grids, `foreignDragOver` on the hovered one, `subGridDynamic` arming) → `dropSession`/`cancelSession`. The **source overlay drives every event** (Flutter routes all moves/up to the pointer-down hit path); never try to "hand over" the pointer to the target overlay.
+- **Origin re-entry is symmetric:** after exit, the origin is just another target; dropping home resolves `returned`. Do not special-case it with a "resume native drag" path.
+- **`targetAt` Target Filtering (INVARIANT):** `targetAt` must never return a candidate target grid that is a child or deep descendant of the parent item actively being dragged (recursion/visual glitch prevention).
+  - **Recursive Nesting Safeguard:** This lookup is strictly checked using `isDescendantOf`, walking up the hierarchy using the coordinator's persistent `_childLinks` map to guarantee correctness even when segments of the parent hierarchy are unmounted or virtualized.
+  - **Same-Grid Drag Session Isolation:** Dragging an item within its own source grid must never trigger a premature cross-grid exit session. The source controller itself is always considered a valid target and must **not** be excluded from `targetAt` candidate targets. Only its descendant sub-grids are skipped.
+- **Single-item rule:** cross-grid sessions carry exactly one item. Multi-selection drags must never start a session.
+- **`subGridDynamic` freeze:** while a nest-hover is armed, the placeholder is hidden (pushes reverted) and hover detection reads the pre-push `originalLayoutOnStart` snapshot via `itemAtGlobal`. Detecting against the live (pushed) layout is a known trap: the collision cascade moves the host away from the cursor.
+- **Mount-order trap:** `NestedDashboard` mounts before the overlay of the grid it hosts. Parent links therefore go through the coordinator's pending `_childLinks` map and are applied at registration. Any new per-grid metadata must follow the same pending-then-apply pattern.
+- **No beacon mutation during build:** stash consumption, `autoSlotCount` and `sizeToContent` all defer their mutations post-frame with applied-value guards (`_appliedSlotCount`, `_appliedHostH`). `sizeToContent` is additionally skipped while the parent grid `isDragging`.
+- **Proxy:** one `OverlayEntry` positioned by a `ValueNotifier<Offset>`; `Overlay.maybeOf(..., rootOverlay: true)` — a missing `Overlay` degrades gracefully (no proxy, session still valid). Never rebuild grids to move the proxy.
+- **Zero-cost without scope (INVARIANT):** outside a `DashboardNestedScope`, the overlay's nested code paths must remain plain null-checks (no allocation, no registry). Any change adding per-event work in the no-scope case is a regression.
+- **Same-grid dynamic nesting lives in the overlay, not the coordinator:** it runs during a plain in-grid drag, before any cross-grid session exists, so `_handleSameGridNestPause`/`_armSameGridNest` belong to `_DashboardOverlayState`. Three invariants: (1) hit-testing MUST use `dragOriginSnapshot` — the live layout is continuously reshuffled by the pushes; (2) `freezeDragPushes` MUST reset the drag bbox-bypass cache (`_lastBBoxX/Y`), otherwise resuming at the same cell hits the fast path and the pushes never re-apply; (3) do not "finalize" anything at arming time — the handoff to the freshly created nested grid happens through the regular `_maybeStartCrossGridSession` on the next move or on release; (4) the pause timer must be jitter-anchored (restart only on >tolerance movement) or trackpads/touch never reach the pause; (5) `_stopScrollTimer()` before freezing, or the auto-scroll tick re-applies the pushes through `_performUpdate` every 16ms.
+- **Pending nest request lifecycle:** `notifyNestRequestFired` → exactly one `resolveNestRequest` at drag end. NEVER clear the pending record in `beginSession` — the same-grid handoff depends on it surviving into the session so the confirming drop can resolve it. The overlay's pointer-up resolution is guarded by a had-active-drag flag captured at entry, so a stray pointer-up on a non-dragging overlay cannot steal another grid's pending request. App-side abandon handlers must additionally be conditional on the child grid being EMPTY — a revert may only undo a speculative conversion, never dispose delivered items.
+- **Mid-interaction `updateItem` MUST write through to the snapshots:** the engine rebuilds `layout` from `originalLayoutOnStart` on every drag update, and `beginCrossGridExit`/`finishCrossGridExit` rebuild/restore from snapshot bases. Any mutation applied only to `layout.value` while a gesture is in flight WILL be silently erased by the next rebuild — this is exactly how the same-grid conversion lost its `hasNestedGrid` flag. The write-through patches the snapshot's own entry (pristine positions preserved). Known limit: transforming the actively dragged pivot mid-drag is unsupported (cached pivot/cluster copies are not rewritten).
+- **`maxNestingDepth` gates level *creation*, not item movement:** the cap is checked in `updateSession` (only when the dragged item `hasNestedGrid`, i.e. it would add a level) and in `subGridDynamic` arming (via `canHostAtDepth(reg.depth)`). Do not add a blanket depth filter to `targetAt` — that would wrongly block plain leaf moves into deep grids. `moveItemToGrid` stays unconstrained (explicit caller).
+- **`hasNestedGrid` is declarative, links are authoritative:** the flag marks intent (builders, persistence, policies) and is self-healed by the codec (set on export for linked hosts, normalized on import from `subGrid` payloads); runtime decisions (`hasChildGrid`, export recursion, delivery) must keep reading the coordinator's persistent `_childLinks` map. The flag participates in `==`/`hashCode`/`contentSignature` — any change to it must keep the equality-law tests green.
+- **`updateItem` is the single-item mutation entry point:** never rewrite `layout.value` by hand to change one item. `updateItem` enforces id identity, corrects bounds, no-ops on unknown id / equal result, and emits one `onLayoutChanged`. New per-item mutations should go through it (or a thin wrapper over it), not around it.
+- **Id uniqueness:** cross-grid moves and the tree codec assume item ids are unique across the whole tree (debug-asserted in `moveItemToGrid`). Document this on any new cross-grid API.
 
 ## 4. Coding Standards
 
@@ -130,6 +160,9 @@ The project follows a strict separation of concerns. **Do not violate layer boun
   - **Sliver Integration:** Test feedback clipping when scrolled under an AppBar.
   - **Repaint Spies:** minimap viewport repaints on scroll; items layer does NOT repaint on pure scroll; grid background short-circuits on identical `SlotMetrics`.
   - **Lifecycle:** keep-alives released after drag end (live `State` count returns to viewport+cache size); `scrollToItem` does not hang without an attached overlay.
+- **Nested-Grid Tests (mandatory, must stay green):**
+  - Controller protocol: silent exit (no `onLayoutChanged`), snapshot-based cancel restore, `movedAway` single-event + double-resolve no-op, `returned` silent discard, `onDropExternalItem` constraint preservation, `setItemSize` clamping (`test/controller/cross_grid_controller_test.dart`).
+  - Widget: pointer claim (nested drag never drags the host), hit-test ownership (parent drags the host when the child is not editing), A→B drag with temporary removal + placeholder + constraint preservation + `onItemMovedToGrid`, void-drop restore, multi-selection containment, `autoSlotCount`, `moveItemToGrid`, codec round-trip with mounted delivery (`test/view/nested_grid_test.dart`).
 - **Performance:** Ensure no regression in rebuild counts (use the `BuildCounter` pattern in tests). Identity-guard tests: identical `items` instance triggers no `performLayout`; position-only layout change keeps the Key→Index cache.
 
 ## 5bis. Performance Budgets (N=1000, 8 cols — CI thresholds)
@@ -141,6 +174,7 @@ The project follows a strict separation of concerns. **Do not violate layer boun
 | `performLayout` | 0 per-pass heap allocations | new `Rect`/`List` in the pass |
 | `DashboardItem` shell rebuild | 0 map/closure allocations | actions/shortcuts built in `build()` |
 | Minimap during drag | 2 `drawPath` for items | per-item `drawRRect` loop |
+| Cross-grid routing (per pointer event, scope present) | O(G) point-in-rect tests, G = live grids | per-item scans in `targetAt`, work added in the no-scope path |
 
 ## 6. Documentation
 - **Reference:** Read latest `architecture.md` and `AI_AGENTS.md` before starting a new task.

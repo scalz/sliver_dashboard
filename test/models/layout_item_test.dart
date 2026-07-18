@@ -4,38 +4,6 @@ import 'package:sliver_dashboard/src/models/layout_item.dart';
 import 'package:sliver_dashboard/src/view/dashboard_configuration.dart';
 
 void main() {
-  group('LayoutItem Equality Laws', () {
-    test('LayoutItem equality is symmetric and consistent with hashCode', () {
-      const a = LayoutItem(
-        id: 'widget_1',
-        x: 0,
-        y: 0,
-        w: 2,
-        h: 2,
-        isSectionBarrier: true,
-        sectionTitle: 'Title',
-      );
-      const b = LayoutItem(
-        id: 'widget_1',
-        x: 0,
-        y: 0,
-        w: 2,
-        h: 2,
-        isSectionBarrier: true,
-        sectionTitle: 'Title',
-      );
-      const c = LayoutItem(id: 'widget_1', x: 0, y: 0, w: 2, h: 2, isStatic: true);
-
-      // 1. Symmetric Law Verification on equal items
-      expect(a == b, isTrue);
-      expect(b == a, isTrue);
-      expect(a.hashCode, equals(b.hashCode));
-
-      // 2. Symmetric Law Verification on unequal items
-      expect(a == c, isFalse);
-      expect(c == a, isFalse);
-    });
-  });
   group('LayoutItem Serialization', () {
     test('toMap converts correctly', () {
       const item = LayoutItem(
@@ -100,6 +68,51 @@ void main() {
       expect(item.h, 1);
       expect(item.maxW, double.infinity); // Null in map -> Infinity in object
       expect(item.isStatic, false);
+    });
+  });
+
+  group('LayoutItem.hasNestedGrid', () {
+    test('defaults to false and round-trips through toMap/fromMap', () {
+      const item = LayoutItem(id: 'a', x: 0, y: 0, w: 2, h: 2);
+      expect(item.hasNestedGrid, isFalse);
+      expect(item.toMap()['hasNestedGrid'], isFalse);
+
+      const host = LayoutItem(id: 'g', x: 0, y: 0, w: 4, h: 4, hasNestedGrid: true);
+      final decoded = LayoutItem.fromMap(host.toMap());
+      expect(decoded.hasNestedGrid, isTrue);
+      expect(decoded, equals(host));
+
+      // Missing key in legacy JSON -> default false.
+      final legacy = LayoutItem.fromMap(const {'id': 'l', 'x': 0, 'y': 0, 'w': 1, 'h': 1});
+      expect(legacy.hasNestedGrid, isFalse);
+    });
+
+    test('equality laws: symmetric, hash-consistent, discriminating', () {
+      const a = LayoutItem(id: 'a', x: 0, y: 0, w: 2, h: 2, hasNestedGrid: true);
+      const b = LayoutItem(id: 'a', x: 0, y: 0, w: 2, h: 2, hasNestedGrid: true);
+      const c = LayoutItem(id: 'a', x: 0, y: 0, w: 2, h: 2);
+
+      expect(a == b, isTrue);
+      expect(b == a, isTrue); // symmetry
+      expect(a.hashCode, b.hashCode); // a == b => same hash
+      expect(a == c, isFalse); // flag discriminates
+      expect(c == a, isFalse); // symmetric in both directions
+    });
+
+    test('copyWith toggles the flag and preserves it by default', () {
+      const item = LayoutItem(id: 'a', x: 0, y: 0, w: 2, h: 2);
+      final host = item.copyWith(hasNestedGrid: true);
+      expect(host.hasNestedGrid, isTrue);
+      // Unrelated copyWith preserves the flag.
+      expect(host.copyWith(x: 3).hasNestedGrid, isTrue);
+    });
+
+    test('contentSignature changes when the flag toggles (cache invalidation)', () {
+      const item = LayoutItem(id: 'a', x: 0, y: 0, w: 2, h: 2);
+      final host = item.copyWith(hasNestedGrid: true);
+      expect(item.contentSignature, isNot(equals(host.contentSignature)));
+      // Position changes still do NOT affect the signature.
+      expect(host.contentSignature, host.copyWith(x: 5, y: 5).contentSignature);
     });
   });
 

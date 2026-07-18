@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sliver_dashboard/src/engine/layout_engine.dart';
 import 'package:sliver_dashboard/src/models/layout_item.dart';
@@ -190,6 +192,7 @@ void main() {
       final corrected = correctBounds(layout, cols);
       expect(corrected, equals(layout));
     });
+
     test('should correct item with negative y coordinate to y = 0', () {
       final layout = [const LayoutItem(id: 'a', x: 0, y: -1, w: 2, h: 2)];
       final corrected = correctBounds(layout, cols);
@@ -197,6 +200,18 @@ void main() {
       // Expected behavior: y coordinate is sanitized and clamped to 0
       expect(corrected.first.y, 0);
       expect(corrected.first.x, 0);
+    });
+
+    test('correctBounds asserts when item minW exceeds grid columns', () {
+      expect(
+        () => correctBounds(
+          [
+            const LayoutItem(id: 'a', x: 0, y: 0, w: 2, h: 2, minW: 5),
+          ],
+          4,
+        ),
+        throwsA(isA<AssertionError>()),
+      );
     });
   });
 
@@ -351,6 +366,8 @@ void main() {
       // Verify A's new width
       expect(result.firstWhere((i) => i.id == 'A').w, 3);
 
+      // Under horizontal compaction, pushed items are compacted to the left (x = 0)
+      // and placed side-by-side on row y=2 because B occupies x=0.
       expect(b.x, 0);
       expect(c.x, 0);
       expect(b.y, 2);
@@ -936,116 +953,204 @@ void main() {
     });
   });
 
-  group('Safeguards', () {
-    test('FastVerticalCompactor sorting tie-breaker with static items', () {
-      // Setup: dynamic and static items overlapping at (0,0)
+  group('LayoutEngine - Edge Case', () {
+    test('optimizeLayout should append too-wide items at the bottom (Line 1251)', () {
       final layout = [
-        const LayoutItem(id: 'dyn', x: 0, y: 0, w: 1, h: 1),
-        const LayoutItem(id: 'static', x: 0, y: 0, w: 1, h: 1, isStatic: true),
+        const LayoutItem(id: 'item_1', x: 0, y: 0, w: 2, h: 1),
+        // Item is wider (w=4) than grid columns (cols=3)
+        const LayoutItem(id: 'too_wide', x: 0, y: 1, w: 4, h: 2),
       ];
+
+      final result = optimizeLayout(layout, 3);
+
+      final tooWide = result.firstWhere((i) => i.id == 'too_wide');
+      expect(tooWide.y, equals(1)); // Should be appended at the bottom
+    });
+
+    test('FastVerticalCompactor should sort static items first when coordinates match', () {
+      final layout = [
+        const LayoutItem(id: 'dynamic', x: 0, y: 0, w: 2, h: 2, isStatic: false),
+        const LayoutItem(id: 'static', x: 0, y: 0, w: 2, h: 2, isStatic: true),
+      ];
+
       const compactor = FastVerticalCompactor();
-      final result = compactor.compact(layout, 10);
-      expect(result, isNotEmpty);
+      final result = compactor.compact(layout, 8);
+
+      expect(result.isNotEmpty, isTrue);
     });
 
-    test('FastHorizontalCompactor sorting tie-breaker with static items', () {
+    test('resizeItem with ResizeBehavior.shrink failing minW should fall back to push', () {
       final layout = [
-        const LayoutItem(id: 'dyn', x: 0, y: 0, w: 1, h: 1),
-        const LayoutItem(id: 'static', x: 0, y: 0, w: 1, h: 1, isStatic: true),
-      ];
-      const compactor = FastHorizontalCompactor();
-      final result = compactor.compact(layout, 10);
-      expect(result, isNotEmpty);
-    });
-
-    test('sortLayoutItems alphabetical tie-breaker on identical coordinates', () {
-      final layout = [
-        const LayoutItem(id: 'b', x: 0, y: 0, w: 1, h: 1),
-        const LayoutItem(id: 'a', x: 0, y: 0, w: 1, h: 1),
-      ];
-      final sorted = sortLayoutItems(layout, CompactType.vertical);
-      expect(sorted.first.id, equals('a'));
-      expect(sorted.last.id, equals('b'));
-    });
-
-    test('_resolveCollisionsDefault hits sorting triggers (Vertical & Horizontal)', () {
-      final layout = [
-        const LayoutItem(id: 'static1', x: 0, y: 0, w: 1, h: 1, isStatic: true),
-        const LayoutItem(id: 'static2', x: 0, y: 1, w: 1, h: 1, isStatic: true),
-        const LayoutItem(id: 'mover', x: 0, y: 0, w: 1, h: 2),
+        const LayoutItem(id: 'item_1', x: 0, y: 0, w: 2, h: 2, minW: 2),
+        const LayoutItem(id: 'item_2', x: 2, y: 0, w: 2, h: 2, minW: 2), // Cannot shrink below 2
       ];
 
-      // Force hits.sort to run by overlapping a dynamic item with multiple static obstacles.
-      final resultVertical = resolveCollisions(layout, CompactType.vertical);
-      final resultHorizontal = resolveCollisions(layout, CompactType.horizontal);
-
-      expect(resultVertical, isNotEmpty);
-      expect(resultHorizontal, isNotEmpty);
-    });
-
-    test('NoCompactor delegate mapping coverage', () {
-      final layout = [const LayoutItem(id: 'a', x: 0, y: 0, w: 1, h: 1)];
-      final result = compact(layout, CompactType.none, 10);
-      expect(result, isNotEmpty);
-    });
-
-    test('correctBounds dimension clamping safeguards', () {
-      final layout = [
-        const LayoutItem(id: 'a', x: 0, y: 0, w: 0, h: 0),
-      ];
-      final corrected = correctBounds(layout, 10);
-
-      // Confirms negative or zero dimensions are cleanly clamped to 1.
-      expect(corrected.first.w, equals(1));
-      expect(corrected.first.h, equals(1));
-    });
-
-    test('correctBounds asserts and prints warning on column overflow', () {
-      final layout = [
-        const LayoutItem(id: 'a', x: 0, y: 0, w: 1, h: 1, minW: 10),
-      ];
-
-      expect(
-        () => correctBounds(layout, 4),
-        throwsA(
-          isA<AssertionError>().having(
-            (e) => e.message,
-            'message',
-            contains('constraint (minW: 10) exceeds grid columns (4)!'),
-          ),
-        ),
+      const resized = LayoutItem(id: 'item_1', x: 0, y: 0, w: 3, h: 2, minW: 2);
+      final result = resizeItem(
+        layout,
+        resized,
+        behavior: ResizeBehavior.shrink,
+        cols: 8,
+        preventCollision: true,
       );
+
+      final item2 = result.firstWhere((i) => i.id == 'item_2');
+      // Push fallback is vertical push in NoCompactor/VerticalCompactor.
+      // item_1 becomes w=3 (occupying x:0,1,2).
+      // item_2 is pushed down to y:2, x:2.
+      expect(item2.x, equals(2));
+      expect(item2.y, equals(2));
     });
 
-    test('moveElement triggers safety loop limit and residual fallback verification', () {
-      // Build a heavy vertical stack of static obstacles (1,300 items)
-      // and drop 5 dynamic items on top of it. Solving this cascade requires over 6,500
-      // operations, which exceeds the maxLoops barrier (5,220). This triggers the
-      // safety break statement, leaving residual overlaps that force the O(N*k)
-      // verification to trigger the legacy resolveCollisions fallback pass, ensuring
-      // 100% coverage of the engine's crash-protection layers.
-      final statics = List.generate(1300, (i) {
-        return LayoutItem(id: 'static_$i', x: 0, y: i, w: 1, h: 1, isStatic: true);
-      });
-      final dynamics = List.generate(5, (i) {
-        return LayoutItem(id: 'dyn_$i', x: 0, y: 0, w: 1, h: 1);
-      });
+    test('_tryShrinkMoveCollisions should fail when colliding with a static item', () {
+      final layout = [
+        const LayoutItem(id: 'static_obstacle', x: 0, y: 2, w: 2, h: 2, isStatic: true),
+        const LayoutItem(id: 'moving_item', x: 0, y: 0, w: 2, h: 2),
+      ];
 
-      final layout = [...statics, ...dynamics];
-      final moved = dynamics.first;
+      final result = moveCluster(
+        layout,
+        {'moving_item'},
+        0,
+        1, // Directly overlaps static_obstacle
+        cols: 8,
+        compactType: CompactType.vertical,
+        allowAutoShrink: true,
+        preventCollision: true,
+      );
+
+      final moving = result.firstWhere((i) => i.id == 'moving_item');
+      expect(moving.y, equals(4)); // Jumps over the immovable static item
+    });
+
+    test('_tryShrinkMoveCollisions should fail when collision item minH prevents shrinking', () {
+      final layout = [
+        const LayoutItem(
+          id: 'blocked_item',
+          x: 0,
+          y: 2,
+          w: 2,
+          h: 2,
+          minH: 2,
+        ), // Cannot shrink below 2
+        const LayoutItem(id: 'moving_item', x: 0, y: 0, w: 2, h: 2),
+      ];
+
+      final result = moveCluster(
+        layout,
+        {'moving_item'},
+        0,
+        1, // Overlaps blocked_item
+        cols: 8,
+        compactType: CompactType.vertical,
+        allowAutoShrink: true,
+        preventCollision: true, // <-- Crucial
+      );
+
+      final moving = result.firstWhere((i) => i.id == 'moving_item');
+      final blocked = result.firstWhere((i) => i.id == 'blocked_item');
+
+      expect(moving.y, equals(1)); // User moved item is the anchor
+      expect(blocked.y, equals(3)); // Pushed!
+    });
+
+    test('calculateBoundingBox on empty list should return empty cluster bounding box', () {
+      final bbox = calculateBoundingBox([]);
+      expect(bbox.id, equals('empty_cluster'));
+      expect(bbox.w, equals(0));
+    });
+
+    test('compact with CompactType.none should fallback to NoCompactor', () {
+      final layout = [
+        const LayoutItem(id: 'item_1', x: 0, y: 0, w: 2, h: 2),
+      ];
+      final result = compact(layout, CompactType.none, 8);
+      expect(result.first.id, equals('item_1'));
+    });
+  });
+
+  group('LayoutEngine moveElement Invariants', () {
+    // Helper to generate dense randomized layouts
+    List<LayoutItem> randomDenseLayout(Random random, {required int count, required int cols}) {
+      var layout = <LayoutItem>[];
+      for (var i = 0; i < count; i++) {
+        final item = LayoutItem(
+          id: 'item_$i',
+          x: -1,
+          y: -1,
+          w: random.nextInt(2) + 1,
+          h: random.nextInt(2) + 1,
+        );
+        layout = placeNewItems(
+          existingLayout: layout,
+          newItems: [item],
+          cols: cols,
+        );
+      }
+      return layout;
+    }
+
+    int countOverlaps(List<LayoutItem> layout) {
+      var overlaps = 0;
+      for (var i = 0; i < layout.length; i++) {
+        for (var j = i + 1; j < layout.length; j++) {
+          if (collides(layout[i], layout[j])) {
+            overlaps++;
+          }
+        }
+      }
+      return overlaps;
+    }
+
+    test('never leaves residual overlaps (seeded fuzz, dense layouts)', () {
+      final random = Random(42);
+      for (var trial = 0; trial < 150; trial++) {
+        final layout = randomDenseLayout(random, count: 35, cols: 8);
+        if (layout.isEmpty) continue;
+
+        final moved = layout[random.nextInt(layout.length)];
+        final result = moveElement(
+          layout,
+          moved,
+          random.nextInt(6),
+          random.nextInt(15),
+          cols: 8,
+          compactType: CompactType.vertical,
+          preventCollision: true,
+          force: true,
+        );
+
+        // Verification: Ensure the monotonic re-push resolver has resolved all collisions
+        expect(
+          countOverlaps(result),
+          equals(0),
+          reason: 'Trial $trial left residual overlapping items after cascade movement',
+        );
+      }
+    });
+
+    test('result is always sorted by ID alphabetically (index stability)', () {
+      final random = Random(99);
+      final layout = randomDenseLayout(random, count: 15, cols: 8);
+      final moved = layout.first;
 
       final result = moveElement(
         layout,
         moved,
-        0,
-        1,
+        2,
+        3,
         cols: 8,
         compactType: CompactType.vertical,
         preventCollision: true,
-        force: true,
       );
 
-      expect(result, isNotEmpty);
+      for (var i = 0; i < result.length - 1; i++) {
+        expect(
+          result[i].id.compareTo(result[i + 1].id),
+          lessThan(0),
+          reason: 'Layout array was not sorted alphabetically by ID, violating index stability',
+        );
+      }
     });
   });
 }

@@ -1,3 +1,151 @@
+## 2.0.0
+
+**No breaking changes in this release.** All new parameters are optional with
+defaults preserving 1.x behavior; without a `DashboardNestedScope` in the
+tree, the new code paths reduce to a few null-checks per pointer event.
+
+### New Features — Nested Grids
+
+- **`NestedDashboard`**: embed a full dashboard inside a grid item at any depth.
+- **Cross-grid drag & drop**: drag items between a parent grid,
+  its nested grids, and sibling grids under a shared `DashboardNestedScope`.
+  Live push-preview placeholder in whichever grid is hovered, floating drag
+  proxy (honors `itemFeedbackBuilder`), auto-scroll on the hovered grid,
+  constraint/flag/id preservation, and pre-drag restore when a drop lands on
+  no grid. Exactly one `onLayoutChanged` per affected grid, emitted at drop
+  time (never mid-gesture).
+- **`DashboardNestedScope`**: opt-in coordinator scope with
+  `onItemMovedToGrid`, `subGridDynamic`, `nestHoverDelay`,
+  `onNestedGridRequested`.
+- **`autoSlotCount`**: the nested grid's slot
+  count follows its host item width, keeping inner/outer cells visually
+  consistent during host resizes.
+- **`sizeToContent`** (+ `sizeToContentMax`, `chromeExtent`): the host item
+  auto-grows/shrinks so the nested grid never scrolls internally.
+- **`subGridDynamic`**: holding a dragged item over a plain item highlights it
+  and fires `onNestedGridRequested` after `nestHoverDelay`, letting the app
+  convert it into a nested grid.
+- **Recursive persistence**: `exportNestedTree` / `loadNestedTree` save and
+  restore the whole tree in one call — robust to sliver virtualization
+  (parent links persist while a host item is scrolled out of view, so its
+  subtree still exports; call `coordinator.unlinkChildGrid` when removing a
+  nested grid permanently) (`subGrid: {slotCount, items}` payloads,
+  delivered automatically to grids that mount later).
+- **Programmatic moves**: `DashboardNestedCoordinator.moveItemToGrid`.
+- **`maxNestingDepth`** (`DashboardNestedScope` / `DashboardNestedCoordinator`,
+  default `null` = unlimited): caps how many nesting levels users can create.
+  The root grid is level 0, so `1` allows one level of nesting and `0`
+  disables it. Enforced where levels are *created* — cross-grid drops of a
+  host item, and `subGridDynamic` arming — while plain leaf moves and explicit
+  `moveItemToGrid` calls are unaffected. `canHostAtDepth(depth)` exposes the
+  same predicate for building UI affordances.
+- **`CrossGridProbe`** (`DashboardNestedScope.probe`): choose whether the
+  pointer (default) or the dragged tile's visual center decides which grid it
+  enters — the latter makes enter-vs-push independent of where the tile was
+  grabbed.
+- **`sizeToContent` no longer overrides a manual host resize mid-gesture**:
+  the guard that pauses content-driven height sync now covers resize (not just
+  drag) on both the parent and the child grid, so dragging the host's resize
+  handle is not fought by sizeToContent. Note `sizeToContent: true` still owns
+  the host height by design (it reconciles to the content height after the
+  gesture); disable it for a host whose height users should set by hand.
+- **`sizeToContent` grid lines**: a `sizeToContent` nested grid now paints
+  background grid lines only for the rows its content occupies (new
+  `Dashboard.fillViewport` param, default `true`, set to `false` by
+  `NestedDashboard` under `sizeToContent`) instead of filling the host height
+  with empty trailing rows, and the host-height sync re-converges instead of
+  freezing on a transient value computed during resize churn.
+- **Auto-scroll delegation**: grids whose own scroll view cannot scroll
+  (`sizeToContent` nested grids) forward edge auto-scroll to their parent
+  grid, recursively — dragging a child tile downward grows the host *and*
+  scrolls the parent to follow.
+- **New optional `Dashboard` parameters**: `crossGridDragOut`,
+  `acceptCrossGridItems` (both default `true`, only meaningful inside a
+  scope).
+- **`LayoutItem.hasNestedGrid`** (default `false`): declarative flag marking
+  items that host a nested dashboard. Lets a shared `itemBuilder` branch
+  generically (`if (item.hasNestedGrid) return NestedDashboard(...)`) — which
+  makes whole groups portable between grids without id coupling — travels
+  through plain `exportLayout`/`importLayout` round-trips, is targetable by
+  `DashboardPolicy`, and is included in `contentSignature` (toggling it
+  invalidates the cached item widget). The nested codec self-heals it: linked
+  hosts export with the flag set, and items carrying a `subGrid` payload are
+  normalized to `hasNestedGrid: true` on import. `subGridDynamic` skips
+  arming on flagged items even when their grid was never linked in the
+  session.
+- **`DashboardController.updateItem(id, transform, {recompact})`**: safe,
+  controller-owned single-item mutation (flags, title, constraints, size),
+  replacing hand-written `layout.value` rewrites.
+  no-op on unknown id or an equal result, id changes are rejected (assert in
+  debug, defensively restored in release), transformed geometry is passed
+  through bound correction so invalid `w`/`h`/position cannot corrupt the
+  layout, and exactly one `onLayoutChanged` fires per effective change.
+  `recompact: false` skips pulling items back for metadata-only edits.
+- **`DashboardController.replaceItem`**: A new public API to swap/replace an existing 
+  grid item in-place. Automatically enforces ascending ID order, corrects bounds, 
+  and performs write-through updates to active pre-drag snapshots. Designed to support 
+  clean dynamic nested grid group/folder conversions on hover.
+- New controller capabilities (internal API): temporary cross-grid removal
+  with three-way resolution (`movedAway` / `returned` / `canceled`),
+  template-preserving external drop (`onDropExternalItem`), programmatic
+  clamped resize (`setItemSize`).
+- **Cross-Sliver Drag & Drop:** Drag tiles between independent sibling `SliverDashboard` widgets separated by other native slivers (e.g. `SliverAppBar`, `SliverList`) within the same `DashboardNestedScope`.
+- **Dimension Projection Policies:** Added a configurable `projectionPolicy` with three modes:
+  - `preserveLogicalSize`: Keeps the exact original grid dimensions (e.g. 2x2 remains 2x2).
+  - `preserveVisualProportion`: Automatically scales tile dimensions proportionally based on the column count ratio between the source and target grids (e.g., a w:2 item in an 8-col grid scales down to w:1 in a 4-col grid, keeping its visual 25% width ratio).
+  - `custom`: Delegates the scaling arithmetic to a developer-defined `customProjectionCallback`.
+- **Shadowing Decoupling:** Added the optional `controller` parameter to `SliverDashboard` and `sliverKey` to `DashboardOverlay` to safely support multiple concurrent sliver grids in the same viewport without context collision or shadowing.
+
+### Bug Fixes
+
+- **Auto-scroll tick placeholder re-anchoring**: while auto-scrolling under a
+  stationary pointer, the tick re-anchored any active placeholder with the
+  `DragTarget` size (`placeholderWidth/Height`) and could resurrect a
+  placeholder from a stale position; it now uses the hovering item's real
+  size for cross-grid drags and only re-anchors when a hover is actually
+  active.
+- **Overlay hit-testing with nested dashboards**: the overlay previously
+  returned the first grid item found on the hit-test path, which for nested
+  layouts is an item of the *inner* grid — crashing the outer grid's drag
+  start on an unknown id. Hit-test entries are now filtered by sliver
+  ownership, so the outer grid correctly resolves to its own host item.
+- **Placeholder Collision Policies**: Fixed an issue where the drag-over 
+  placeholder ignored `DashboardPolicy` rules (specifically custom `canCollide` exclusions), 
+  causing protected items (like folders/panels) to be pushed during external 
+  or cross-grid hover events.
+- **Sliver Layout Caching**: Resolved an issue where programmatic slot count updates on empty or unmodified grids were ignored due to constraint-caching optimization.
+- **Intuitive Resizing Anchors:** Fixed a layout defect where resizing an item's top or left edge against a static obstacle, section barrier, or grid boundary caused the item to expand downwards or rightwards. The layout engine now strictly respects the opposite edge as a fixed anchor during resize operations, stopping the resize interaction immediately when a static boundary is reached.
+
+### Documentation & Tooling
+
+- `README_NESTED_GRID.md`: feature guide.
+- New example entry point `example/lib/nested_example.dart` and a demo
+  launcher in `example/lib/main.dart`.
+- Test Suite Consolidation & Reorganization: Reorganized, added and improved test files.  
+
+### Bug Fixes
+
+- **Auto-scroll tick placeholder re-anchoring**: while auto-scrolling under a
+  stationary pointer, the tick re-anchored any active placeholder with the
+  `DragTarget` size (`placeholderWidth/Height`) and could resurrect a
+  placeholder from a stale position; it now uses the hovering item's real
+  size for cross-grid drags and only re-anchors when a hover is actually
+  active.
+- **Overlay hit-testing with nested dashboards**: the overlay previously
+  returned the first grid item found on the hit-test path, which for nested
+  layouts is an item of the *inner* grid — crashing the outer grid's drag
+  start on an unknown id. Hit-test entries are now filtered by sliver
+  ownership, so the outer grid correctly resolves to its own host item.
+
+### Documentation & Tooling
+
+- New example entry point `example/lib/nested_example.dart` and a demo
+  launcher in `example/lib/main.dart`.
+- 14 new tests (cross-grid controller protocol, pointer claiming, hit-test
+  ownership, A→B drag with constraint preservation, cancel/restore,
+  multi-selection containment, `autoSlotCount`, programmatic moves, codec
+  round-trip).
+
 ## 1.2.0
 
 **No breaking changes in this release.**

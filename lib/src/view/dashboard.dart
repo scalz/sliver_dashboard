@@ -60,6 +60,9 @@ class Dashboard<T extends Object> extends StatefulWidget {
     this.trashHoverDelay = const Duration(milliseconds: 800),
     this.dragStartGesture = DragStartGesture.longPress,
     this.sectionHeaderBuilder,
+    this.crossGridDragOut = true,
+    this.acceptCrossGridItems = true,
+    this.fillViewport = true,
     super.key,
   }) : assert(
           (itemBuilder != null ? 1 : 0) +
@@ -199,6 +202,23 @@ class Dashboard<T extends Object> extends StatefulWidget {
   /// Optional builder to customize the appearance of section headers.
   final DashboardSectionHeaderBuilder? sectionHeaderBuilder;
 
+  /// Whether items may be dragged out of this grid into another grid of the
+  /// same `DashboardNestedScope`. Has no effect without such a scope.
+  final bool crossGridDragOut;
+
+  /// Whether this grid accepts items dragged from other grids of the same
+  /// `DashboardNestedScope`. Has no effect without such a scope.
+  final bool acceptCrossGridItems;
+
+  /// Whether the background grid lines fill the whole viewport (`true`,
+  /// default) or stop at the content's actual extent (`false`).
+  ///
+  /// A standalone dashboard fills the viewport so the grid reads as a full
+  /// backdrop. A NestedDashboard with `sizeToContent` sets this to `false`
+  /// so the host item shows grid lines only for the rows its content actually
+  /// occupies, instead of empty trailing rows.
+  final bool fillViewport;
+
   @override
   State<Dashboard<T>> createState() => _DashboardState<T>();
 }
@@ -285,6 +305,8 @@ class _DashboardState<T extends Object> extends State<Dashboard<T>> {
       placeholderHeight: widget.placeholderHeight,
       itemGlobalKeySuffix: widget.itemGlobalKeySuffix,
       dragStartGesture: widget.dragStartGesture,
+      crossGridDragOut: widget.crossGridDragOut,
+      acceptCrossGridItems: widget.acceptCrossGridItems,
 
       // Pass layout params directly to Overlay so it can render the background grid.
       gridStyle: widget.gridStyle,
@@ -294,7 +316,7 @@ class _DashboardState<T extends Object> extends State<Dashboard<T>> {
       crossAxisSpacing: widget.crossAxisSpacing,
       padding: widget.padding ?? EdgeInsets.zero,
       scrollDirection: widget.scrollDirection,
-      fillViewport: true,
+      fillViewport: widget.fillViewport,
 
       child: ScrollConfiguration(
         behavior: widget.scrollBehavior ??

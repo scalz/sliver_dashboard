@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -8,6 +9,8 @@ import 'package:sliver_dashboard/src/controller/dashboard_controller_impl.dart';
 import 'package:sliver_dashboard/src/view/dashboard_feedback_widget.dart';
 import 'package:sliver_dashboard/src/view/dashboard_grid.dart';
 import 'package:sliver_dashboard/src/view/dashboard_item_widget.dart';
+
+import '../test_helpers.dart';
 
 // Mock for the persistence callback
 class MockLayoutChangeListener extends Mock {
@@ -53,6 +56,10 @@ Future<void> _requestFocus(WidgetTester tester, Finder itemFinder) async {
 }
 
 void main() {
+  setUpAll(() {
+    registerFallbackValue(const LayoutItem(id: '_', x: 0, y: 0, w: 0, h: 0));
+  });
+
   group('DashboardOverlay Sliver Integration', () {
     late DashboardController controller;
 
@@ -65,9 +72,12 @@ void main() {
       )..setEditMode(true);
     });
 
+    tearDown(() => controller.dispose());
+
     testWidgets('Feedback item is positioned and clipped correctly under SliverAppBar',
         (tester) async {
       final scrollController = ScrollController();
+      addTearDown(scrollController.dispose);
 
       await tester.pumpWidget(
         MaterialApp(
@@ -146,13 +156,15 @@ void main() {
     testWidgets('onItemDragUpdate is called and Trash hover state resets', (tester) async {
       var dragUpdateCalled = false;
       final trashKey = GlobalKey();
+      final scrollController = ScrollController();
+      addTearDown(scrollController.dispose);
 
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
             body: DashboardOverlay(
               controller: controller,
-              scrollController: ScrollController(),
+              scrollController: scrollController,
               // Provide the callback
               onItemDragUpdate: (item, pos) {
                 dragUpdateCalled = true;
@@ -172,6 +184,7 @@ void main() {
               ),
               itemBuilder: (context, item) => Container(color: Colors.blue),
               child: CustomScrollView(
+                controller: scrollController,
                 slivers: [
                   SliverDashboard(
                     itemBuilder: (context, item) => Container(color: Colors.blue),
@@ -208,8 +221,8 @@ void main() {
 
     testWidgets('Auto-scroll triggers at edges (Top/Bottom/Left/Right)', (tester) async {
       final scrollController = ScrollController();
+      addTearDown(scrollController.dispose);
 
-      // Setup a dashboard with enough content to scroll
       final items = List.generate(20, (i) => LayoutItem(id: '$i', x: 0, y: i, w: 1, h: 1));
       controller.layout.value = items;
 
@@ -234,26 +247,125 @@ void main() {
       );
 
       final itemFinder = find.byType(DashboardItem).first; // Top item
-      final gesture = await tester.startGesture(tester.getCenter(itemFinder));
+      final gesture =
+          await tester.startGesture(tester.getCenter(itemFinder), kind: PointerDeviceKind.mouse);
       await tester.pump(kLongPressTimeout);
 
       // 1. Drag to Bottom Edge (Scroll Down)
-      // Move to bottom of screen
       await gesture.moveTo(const Offset(100, 580)); // Assuming 600 height
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 500)); // Wait for timer
 
-      expect(scrollController.offset, greaterThan(0), reason: 'Should scroll down');
+      final offsetAfterDown = scrollController.offset;
+      expect(offsetAfterDown, greaterThan(0), reason: 'Should scroll down');
 
       // 2. Drag to Top Edge (Scroll Up)
-      await gesture.moveTo(const Offset(100, 10)); // Top of screen
+      await gesture.moveTo(const Offset(10, 10)); // Top of screen
       await tester.pump();
-      await tester.pump(const Duration(milliseconds: 500));
+      await tester.pump(const Duration(milliseconds: 500)); // Wait for timer
 
-      // It should scroll back up (offset decreases)
-      // Note: exact value depends on timing, just checking direction/change
+      // Verify that it scrolled back up (offset decreased)
+      expect(
+        scrollController.offset,
+        lessThan(offsetAfterDown),
+        reason: 'Scroll offset should decrease when dragging near the top edge',
+      );
 
       await gesture.up();
+    });
+
+    testWidgets('DashboardOverlay resolves RenderSliverDashboard using sliverKey', (tester) async {
+      final controller = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: const [
+          LayoutItem(id: 'a', x: 0, y: 0, w: 2, h: 2),
+        ],
+      )..setEditMode(true);
+      addTearDown(controller.dispose);
+
+      final sliverKey = GlobalKey();
+      final scrollController = ScrollController();
+      addTearDown(scrollController.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: DashboardOverlay(
+              controller: controller,
+              scrollController: scrollController,
+              sliverKey: sliverKey,
+              itemBuilder: (context, item) => SizedBox(child: Text('T-${item.id}')),
+              child: CustomScrollView(
+                controller: scrollController,
+                slivers: [
+                  SliverDashboard(
+                    key: sliverKey,
+                    itemBuilder: (context, item) => SizedBox(child: Text('T-${item.id}')),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final state = tester.state<State<DashboardOverlay>>(find.byType(DashboardOverlay));
+      final target = state as CrossGridDragTarget;
+
+      final metrics = target.currentSlotMetrics();
+      expect(metrics, isNotNull);
+      expect(metrics!.slotCount, equals(4));
+    });
+
+    testWidgets('isPointInsideSliver supports Axis.horizontal scroll direction', (tester) async {
+      final controller = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: const [
+          LayoutItem(id: 'a', x: 0, y: 0, w: 2, h: 2),
+        ],
+      )..setEditMode(true);
+      addTearDown(controller.dispose);
+
+      final sliverKey = GlobalKey();
+      final scrollController = ScrollController();
+      addTearDown(scrollController.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 500,
+              height: 500,
+              child: DashboardOverlay(
+                controller: controller,
+                scrollController: scrollController,
+                sliverKey: sliverKey,
+                scrollDirection: Axis.horizontal,
+                itemBuilder: (context, item) => SizedBox(child: Text('T-${item.id}')),
+                child: CustomScrollView(
+                  controller: scrollController,
+                  scrollDirection: Axis.horizontal,
+                  slivers: [
+                    SliverDashboard(
+                      key: sliverKey,
+                      scrollDirection: Axis.horizontal,
+                      itemBuilder: (context, item) => SizedBox(child: Text('T-${item.id}')),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final state = tester.state<State<DashboardOverlay>>(find.byType(DashboardOverlay));
+      final target = state as CrossGridDragTarget;
+
+      expect(target.isPointInsideSliver(const Offset(50, 50)), isTrue);
+      expect(target.isPointInsideSliver(const Offset(999, 50)), isFalse);
     });
   });
 
@@ -275,11 +387,13 @@ void main() {
       )..setEditMode(true);
     });
 
+    tearDown(() => controller.dispose());
+
     // Widget wrapper for the test
     Widget createDashboardItemWrapper(LayoutItem item) {
       return MaterialApp(
         home: Scaffold(
-          // CRITICAL: Wrap in FocusScope to provide a root focus hierarchy
+          // Wrap in FocusScope to provide a root focus hierarchy
           body: FocusScope(
             autofocus: true,
             child: DashboardControllerProvider(
@@ -521,9 +635,13 @@ void main() {
         ],
       )..setEditMode(true);
     });
+
+    tearDown(() => controller.dispose());
+
     testWidgets('Drag and Placeholder work correctly in Horizontal Scroll mode', (tester) async {
       // 1. Setup Horizontal Dashboard + Source Draggable
       final scrollController = ScrollController();
+      addTearDown(scrollController.dispose);
       controller.setSlotCount(4);
       (controller as DashboardControllerImpl).setScrollDirection(Axis.horizontal);
 
@@ -592,9 +710,9 @@ void main() {
 
     testWidgets('Auto-scroll triggers horizontally at Left/Right edges', (tester) async {
       final scrollController = ScrollController();
+      addTearDown(scrollController.dispose);
       (controller as DashboardControllerImpl).setScrollDirection(Axis.horizontal);
 
-      // Add enough items to scroll
       final items = List.generate(20, (i) => LayoutItem(id: '$i', x: i, y: 0, w: 1, h: 1));
       controller.layout.value = items;
 
@@ -622,42 +740,51 @@ void main() {
       );
 
       final itemFinder = find.byType(DashboardItem).first;
-      final gesture = await tester.startGesture(tester.getCenter(itemFinder));
+      final gesture =
+          await tester.startGesture(tester.getCenter(itemFinder), kind: PointerDeviceKind.mouse);
       await tester.pump(kLongPressTimeout);
 
       // 1. Drag to Right Edge (Scroll Right)
-      // Assuming screen width 800
       await gesture.moveTo(const Offset(790, 100));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 500)); // Wait for timer
 
-      expect(scrollController.offset, greaterThan(0), reason: 'Should scroll right');
+      final offsetAfterRight = scrollController.offset;
+      expect(offsetAfterRight, greaterThan(0), reason: 'Should scroll right');
 
       // 2. Drag to Left Edge (Scroll Left)
       await gesture.moveTo(const Offset(10, 100));
       await tester.pump();
-      await tester.pump(const Duration(milliseconds: 500));
+      await tester.pump(const Duration(milliseconds: 500)); // Wait for timer
 
-      // It should scroll back left (offset decreases)
+      // Verify that it scrolled back left (offset decreased)
+      expect(
+        scrollController.offset,
+        lessThan(offsetAfterRight),
+        reason: 'Scroll offset should decrease when dragging near the left edge',
+      );
+
       await gesture.up();
     });
 
     testWidgets('onItemDragUpdate is called and Trash hover state resets on exit', (tester) async {
       var dragUpdateCalled = false;
       final trashKey = GlobalKey();
+      final scrollController = ScrollController();
+      addTearDown(scrollController.dispose);
 
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
             body: DashboardOverlay(
               controller: controller,
-              scrollController: ScrollController(),
+              scrollController: scrollController,
               // Provide callback
               onItemDragUpdate: (item, pos) {
                 dragUpdateCalled = true;
               },
               // Provide trash
-              trashBuilder: (context, hovered, active, id) {
+              trashBuilder: (context, hovered, armed, activeItemId) {
                 return Container(
                   key: trashKey,
                   width: 100,
@@ -671,6 +798,7 @@ void main() {
               ),
               itemBuilder: (context, item) => Container(color: Colors.blue),
               child: CustomScrollView(
+                controller: scrollController,
                 slivers: [
                   SliverDashboard(
                     itemBuilder: (context, item) => Container(color: Colors.blue),
@@ -699,25 +827,31 @@ void main() {
       await tester.pump();
 
       await gesture.up();
+      await tester.pump();
 
       expect(dragUpdateCalled, isTrue);
     });
 
     testWidgets('backgroundBuilder renders custom widget instead of grid', (tester) async {
+      final scrollController = ScrollController();
+      addTearDown(scrollController.dispose);
+
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
             body: DashboardOverlay(
               controller: controller,
-              scrollController: ScrollController(),
+              scrollController: scrollController,
               itemBuilder: (context, item) => Container(),
               // Provide a custom background builder
               backgroundBuilder: (context) => Container(
                 key: const ValueKey('custom_bg'),
                 color: Colors.yellow,
               ),
-              child:
-                  CustomScrollView(slivers: [SliverDashboard(itemBuilder: (_, __) => Container())]),
+              child: CustomScrollView(
+                controller: scrollController,
+                slivers: [SliverDashboard(itemBuilder: (_, __) => Container())],
+              ),
             ),
           ),
         ),
@@ -730,6 +864,9 @@ void main() {
     });
 
     testWidgets('External drop is cancelled if onDrop returns null', (tester) async {
+      final scrollController = ScrollController();
+      addTearDown(scrollController.dispose);
+
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
@@ -748,11 +885,12 @@ void main() {
                 Expanded(
                   child: DashboardOverlay(
                     controller: controller,
-                    scrollController: ScrollController(),
+                    scrollController: scrollController,
                     itemBuilder: (context, item) => Container(color: Colors.blue),
                     // Return null to cancel drop
                     onDrop: (data, item) => null,
                     child: CustomScrollView(
+                      controller: scrollController,
                       slivers: [SliverDashboard(itemBuilder: (_, __) => Container())],
                     ),
                   ),
@@ -787,12 +925,15 @@ void main() {
     });
 
     testWidgets('Trash deletion can be cancelled via onWillDelete', (tester) async {
+      final scrollController = ScrollController();
+      addTearDown(scrollController.dispose);
+
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
             body: DashboardOverlay(
               controller: controller,
-              scrollController: ScrollController(),
+              scrollController: scrollController,
               itemBuilder: (context, item) => Container(key: ValueKey(item.id), color: Colors.blue),
               trashHoverDelay: const Duration(milliseconds: 100),
               // Return false to cancel deletion
@@ -803,8 +944,9 @@ void main() {
                   child: SizedBox(key: ValueKey('trash'), width: 100, height: 100),
                 );
               },
-              child:
-                  CustomScrollView(slivers: [SliverDashboard(itemBuilder: (_, __) => Container())]),
+              child: CustomScrollView(
+                slivers: [SliverDashboard(itemBuilder: (_, __) => Container())],
+              ),
             ),
           ),
         ),
@@ -831,15 +973,19 @@ void main() {
     });
 
     testWidgets('Drag end handles case where item was removed during drag', (tester) async {
+      final scrollController = ScrollController();
+      addTearDown(scrollController.dispose);
+
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
             body: DashboardOverlay(
               controller: controller,
-              scrollController: ScrollController(),
+              scrollController: scrollController,
               itemBuilder: (context, item) => Container(color: Colors.blue),
-              child:
-                  CustomScrollView(slivers: [SliverDashboard(itemBuilder: (_, __) => Container())]),
+              child: CustomScrollView(
+                slivers: [SliverDashboard(itemBuilder: (_, __) => Container())],
+              ),
             ),
           ),
         ),
@@ -863,6 +1009,7 @@ void main() {
 
     testWidgets('scrollToItem scrolls to the exact mathematically correct offset', (tester) async {
       final scrollController = ScrollController();
+      addTearDown(scrollController.dispose);
 
       // Setup tall list
       final items = List.generate(20, (i) => LayoutItem(id: '$i', x: 0, y: i, w: 1, h: 1));
@@ -917,6 +1064,7 @@ void main() {
         'scrollToItem completes with error if ScrollController is disposed during animation',
         (tester) async {
       final scrollController = ExceptionThrowingScrollController();
+      addTearDown(scrollController.dispose);
       final items = List.generate(20, (i) => LayoutItem(id: '$i', x: 0, y: i, w: 1, h: 1));
       controller.layout.value = items;
 
@@ -947,7 +1095,6 @@ void main() {
       );
 
       expect(scrollFuture, throwsA(isA<Exception>()));
-
       await tester.pump();
     });
 
@@ -962,6 +1109,9 @@ void main() {
       final controller1 = DashboardController(initialSlotCount: 4);
       final controller2 = DashboardController(initialSlotCount: 4);
       final scrollController = ScrollController();
+      addTearDown(controller1.dispose);
+      addTearDown(controller2.dispose);
+      addTearDown(scrollController.dispose);
 
       // 1. Build with controller1
       await tester.pumpWidget(
@@ -991,15 +1141,21 @@ void main() {
       );
       await tester.pump();
 
-      // Clean up
-      controller1.dispose();
-      controller2.dispose();
-      scrollController.dispose();
+      // Ensure the Provider has been updated with the new controller
+      final providerFinder = find.byType(DashboardControllerProvider);
+      expect(providerFinder, findsOneWidget);
+      final provider = tester.widget<DashboardControllerProvider>(providerFinder);
+      expect(
+        identical(provider.controller, controller2),
+        isTrue,
+        reason: 'didUpdateWidget must bind the new controller instance.',
+      );
     });
 
     testWidgets('scrollToItem completes gracefully if RenderSliverDashboard is not found',
         (tester) async {
       final scrollController = ScrollController();
+      addTearDown(scrollController.dispose);
       controller.layout.value = [
         const LayoutItem(id: '1', x: 0, y: 0, w: 1, h: 1),
       ];
@@ -1029,14 +1185,13 @@ void main() {
 
       expect(scrollFuture, completes);
       await tester.pump();
-
-      scrollController.dispose();
     });
 
     testWidgets(
         'scrollToItem completes gracefully if item is removed before scroll animation handles',
         (tester) async {
       final scrollController = ScrollController();
+      addTearDown(scrollController.dispose);
       controller.layout.value = [
         const LayoutItem(id: '1', x: 0, y: 0, w: 1, h: 1),
       ];
@@ -1071,12 +1226,11 @@ void main() {
       // 3. Process the event loop
       expect(scrollFuture, completes);
       await tester.pump();
-
-      scrollController.dispose();
     });
 
     testWidgets('scrollToItem jumps instantly when duration is Duration.zero', (tester) async {
       final scrollController = ScrollController();
+      addTearDown(scrollController.dispose);
       final items = List.generate(20, (i) => LayoutItem(id: '$i', x: 0, y: i, w: 1, h: 1));
       controller.layout.value = items;
 
@@ -1112,7 +1266,558 @@ void main() {
 
       // Verify that the scroll position updated instantly
       expect(scrollController.offset, greaterThan(0));
+    });
+  });
+
+  group('Dashboard Auto-scroll Interactions', () {
+    late DashboardController controller;
+    late ScrollController scrollController;
+
+    setUp(() {
+      controller = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: [
+          const LayoutItem(id: '1', x: 0, y: 0, w: 4, h: 2, isResizable: true),
+          // Anchor item to ensure scrollable area > viewport
+          const LayoutItem(id: 'anchor', x: 0, y: 20, w: 1, h: 1, isStatic: true),
+        ],
+      );
+      scrollController = ScrollController();
+    });
+
+    tearDown(() {
+      controller.dispose();
       scrollController.dispose();
+    });
+
+    Widget buildTestApp({Widget? overlay}) {
+      return MaterialApp(
+        home: Scaffold(
+          body: Stack(
+            children: [
+              Positioned.fill(
+                child: Dashboard<String>(
+                  controller: controller,
+                  scrollController: scrollController,
+                  cacheExtent: 0,
+                  itemBuilder: (ctx, item) => ColoredBox(
+                    color: Colors.blue,
+                    child: Text(item.id),
+                  ),
+                  onDrop: (data, item) async => 'new_item',
+                ),
+              ),
+              if (overlay != null) overlay,
+            ],
+          ),
+        ),
+      );
+    }
+
+    testWidgets(
+      'Internal Drag at bottom edge triggers auto-scroll',
+      (tester) async {
+        final originalPlatform = debugDefaultTargetPlatformOverride;
+        debugDefaultTargetPlatformOverride = TargetPlatform.linux;
+
+        try {
+          tester.view.physicalSize = const Size(400, 400);
+          tester.view.devicePixelRatio = 1.0;
+          addTearDown(tester.view.resetPhysicalSize);
+
+          await tester.pumpWidget(buildTestApp());
+          await tester.pumpAndSettle();
+
+          // Enable editing to allow dragging
+          controller.toggleEditing();
+          await tester.pump();
+
+          final itemFinder = find.byKey(const ValueKey('1'));
+
+          // Start gesture with mouse
+          final gesture = await tester.startGesture(
+            tester.getCenter(itemFinder),
+            kind: PointerDeviceKind.mouse,
+          );
+          await tester.pump();
+
+          // Move slightly to trigger drag start
+          await gesture.moveBy(const Offset(0, 10));
+          await tester.pump();
+
+          // Move to bottom edge (Hot zone)
+          await gesture.moveTo(const Offset(200, 390));
+          await tester.pump();
+
+          final initialScroll = scrollController.offset;
+
+          // Wait for auto-scroll
+          for (var i = 0; i < 60; i++) {
+            await tester.pump(const Duration(milliseconds: 16));
+          }
+
+          expect(
+            scrollController.offset,
+            greaterThan(initialScroll),
+            reason: 'Scroll offset should increase during internal item drag',
+          );
+
+          await gesture.up();
+        } finally {
+          debugDefaultTargetPlatformOverride = originalPlatform;
+        }
+      },
+    );
+
+    testWidgets(
+      'Resize at bottom edge triggers auto-scroll and updates item height correctly',
+      (tester) async {
+        final originalPlatform = debugDefaultTargetPlatformOverride;
+        debugDefaultTargetPlatformOverride = TargetPlatform.linux;
+
+        try {
+          tester.view.physicalSize = const Size(400, 400);
+          tester.view.devicePixelRatio = 1.0;
+          addTearDown(tester.view.resetPhysicalSize);
+
+          await tester.pumpWidget(buildTestApp());
+          await tester.pumpAndSettle();
+
+          controller.toggleEditing();
+          await tester.pump();
+
+          final itemFinder = find.byKey(const ValueKey('1'));
+          final itemRect = tester.getRect(itemFinder);
+          final handlePos = itemRect.bottomCenter - const Offset(0, 5);
+
+          final gesture = await tester.startGesture(
+            handlePos,
+            kind: PointerDeviceKind.mouse,
+          );
+          await tester.pump();
+
+          // Small move to trigger PanGestureRecognizer
+          await gesture.moveBy(const Offset(0, 10));
+          await tester.pump();
+
+          await gesture.moveTo(const Offset(200, 390));
+          await tester.pump();
+
+          final initialScroll = scrollController.offset;
+          final initialHeight = controller.layout.value.first.h;
+
+          for (var i = 0; i < 60; i++) {
+            await tester.pump(const Duration(milliseconds: 16));
+          }
+
+          expect(
+            scrollController.offset,
+            greaterThan(initialScroll),
+            reason: 'Scroll offset should increase',
+          );
+
+          expect(
+            controller.layout.value.first.h,
+            greaterThan(initialHeight),
+            reason: 'Item height should increase during auto-scroll',
+          );
+
+          await gesture.up();
+        } finally {
+          debugDefaultTargetPlatformOverride = originalPlatform;
+        }
+      },
+    );
+
+    testWidgets(
+      'External Drag at bottom edge triggers auto-scroll without crashing',
+      (tester) async {
+        final originalPlatform = debugDefaultTargetPlatformOverride;
+        debugDefaultTargetPlatformOverride = TargetPlatform.linux;
+
+        try {
+          tester.view.physicalSize = const Size(400, 400);
+          tester.view.devicePixelRatio = 1.0;
+          addTearDown(tester.view.resetPhysicalSize);
+
+          await tester.pumpWidget(
+            buildTestApp(
+              overlay: const Positioned(
+                top: 0,
+                left: 0,
+                child: Draggable<String>(
+                  data: 'external_data',
+                  feedback: SizedBox(
+                    width: 50,
+                    height: 50,
+                    child: ColoredBox(color: Colors.red),
+                  ),
+                  child: SizedBox(width: 50, height: 50, child: Text('Drag Me')),
+                ),
+              ),
+            ),
+          );
+          await tester.pumpAndSettle();
+
+          final draggableFinder = find.text('Drag Me');
+
+          final gesture = await tester.startGesture(
+            tester.getCenter(draggableFinder),
+            kind: PointerDeviceKind.mouse,
+          );
+          await tester.pump();
+
+          await gesture.moveBy(const Offset(0, 10));
+          await tester.pump();
+
+          await gesture.moveTo(const Offset(200, 390));
+          await tester.pump();
+
+          for (var i = 0; i < 30; i++) {
+            await tester.pump(const Duration(milliseconds: 16));
+          }
+
+          expect(
+            scrollController.offset,
+            greaterThan(0),
+            reason: 'Should auto-scroll even for external items',
+          );
+
+          await gesture.up();
+        } finally {
+          debugDefaultTargetPlatformOverride = originalPlatform;
+        }
+      },
+    );
+  });
+
+  group('DashboardOverlay - Interactive Gesture', () {
+    testWidgets('Should cover resize handles interaction and resize updates', (tester) async {
+      await runOnDesktop(() async {
+        final controller = DashboardController(
+          initialSlotCount: 8,
+          initialLayout: const [
+            LayoutItem(id: 'item_1', x: 0, y: 0, w: 2, h: 2, isResizable: true),
+          ],
+        )..setEditMode(true);
+        addTearDown(controller.dispose);
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: Dashboard<String>(
+                controller: controller,
+                itemBuilder: (context, item) => Card(child: Text(item.id)),
+              ),
+            ),
+          ),
+        );
+
+        await tester.pumpAndSettle();
+
+        final handleFinder = find.byType(ResizeHandleWidget).first;
+        expect(handleFinder, findsOneWidget);
+
+        final gesture = await tester.startGesture(
+          tester.getCenter(handleFinder),
+          kind: PointerDeviceKind.mouse,
+        );
+        await gesture.moveBy(const Offset(50, 50));
+        await tester.pump();
+
+        await gesture.up();
+        await tester.pumpAndSettle();
+      });
+    });
+
+    testWidgets('Should cover multi-selection selection clear on pointer up', (tester) async {
+      await runOnDesktop(() async {
+        final controller = DashboardController(
+          initialSlotCount: 8,
+          initialLayout: const [
+            LayoutItem(id: 'item_1', x: 0, y: 0, w: 2, h: 2),
+          ],
+        )..setEditMode(true);
+        addTearDown(controller.dispose);
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: Dashboard<String>(
+                controller: controller,
+                itemBuilder: (context, item) => Card(child: Text(item.id)),
+              ),
+            ),
+          ),
+        );
+
+        await tester.pumpAndSettle();
+
+        await tester.tap(find.text('item_1'));
+        await tester.pumpAndSettle();
+        expect(controller.selectedItemIds.value.contains('item_1'), isTrue);
+
+        final gesture = await tester.startGesture(
+          tester.getCenter(find.text('item_1')),
+          kind: PointerDeviceKind.mouse,
+        );
+        await tester.pump();
+        await gesture.up();
+        await tester.pumpAndSettle();
+
+        expect(controller.selectedItemIds.value.contains('item_1'), isTrue);
+      });
+    });
+
+    testWidgets('Should trigger edge auto-scrolling when dragging near bounds', (tester) async {
+      await runOnDesktop(() async {
+        tester.view.physicalSize = const Size(800, 600);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+
+        final scrollController = ScrollController();
+        addTearDown(scrollController.dispose);
+        final controller = DashboardController(
+          initialSlotCount: 8,
+          initialLayout: List.generate(
+            10,
+            (index) => LayoutItem(id: 'item_$index', x: 0, y: index * 2, w: 2, h: 2),
+          ),
+        )..setEditMode(true);
+        addTearDown(controller.dispose);
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: Dashboard<String>(
+                controller: controller,
+                scrollController: scrollController,
+                itemBuilder: (context, item) => Card(child: Text(item.id)),
+              ),
+            ),
+          ),
+        );
+
+        await tester.pumpAndSettle();
+
+        final itemFinder = find.text('item_0');
+        // Ensure mouse input is specified to trigger instant dragging in desktop mode
+        final gesture =
+            await tester.startGesture(tester.getCenter(itemFinder), kind: PointerDeviceKind.mouse);
+        await tester.pump(); // let drag start process
+
+        await gesture.moveTo(const Offset(100, 580)); // 20px from bottom (inside the 50px hot zone)
+        await tester.pump(); // let drag move process
+
+        await tester.pump(const Duration(milliseconds: 100)); // wait for auto-scroll timer ticks
+
+        await gesture.up();
+        await tester.pumpAndSettle();
+
+        expect(scrollController.offset, greaterThan(0.0));
+      });
+    });
+
+    testWidgets('Should handle scroll requests horizontally', (tester) async {
+      await runOnDesktop(() async {
+        final scrollController = ScrollController();
+        addTearDown(scrollController.dispose);
+        final controller = DashboardController(
+          initialSlotCount: 8,
+          initialLayout: List.generate(
+            10,
+            (index) => LayoutItem(id: 'item_$index', x: index * 2, y: 0, w: 2, h: 2),
+          ),
+        );
+        addTearDown(controller.dispose);
+        controller.scrollDirection.value = Axis.horizontal;
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: Dashboard<String>(
+                controller: controller,
+                scrollController: scrollController,
+                scrollDirection: Axis.horizontal,
+                itemBuilder: (context, item) => Card(child: Text(item.id)),
+              ),
+            ),
+          ),
+        );
+
+        await tester.pumpAndSettle();
+
+        await controller.scrollToItem('item_5', duration: Duration.zero);
+        await tester.pumpAndSettle();
+
+        expect(scrollController.offset, greaterThan(0.0));
+      });
+    });
+
+    testWidgets('Should handle non-existent scroll requests gracefully', (tester) async {
+      await runOnDesktop(() async {
+        final scrollController = ScrollController();
+        addTearDown(scrollController.dispose);
+        final controller = DashboardController(
+          initialSlotCount: 8,
+          initialLayout: const [
+            LayoutItem(id: 'item_1', x: 0, y: 0, w: 2, h: 2),
+          ],
+        );
+        addTearDown(controller.dispose);
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: Dashboard<String>(
+                controller: controller,
+                scrollController: scrollController,
+                itemBuilder: (context, item) => Card(child: Text(item.id)),
+              ),
+            ),
+          ),
+        );
+
+        await tester.pumpAndSettle();
+
+        await controller.scrollToItem('non_existent', duration: Duration.zero);
+        await tester.pumpAndSettle();
+
+        expect(scrollController.offset, equals(0.0));
+      });
+    });
+
+    testWidgets('Should allow dragging and moving section barriers in edit mode', (tester) async {
+      await runOnDesktop(() async {
+        final controller = DashboardController(
+          initialSlotCount: 8,
+          initialLayout: const [
+            LayoutItem(
+              id: 'sec_sys',
+              x: 0,
+              y: 0,
+              w: 8,
+              h: 1,
+              isSectionBarrier: true,
+              sectionTitle: 'Barrier 1',
+            ),
+            LayoutItem(id: 'sys_cpu', x: 0, y: 1, w: 2, h: 2),
+          ],
+        )..setEditMode(true);
+        addTearDown(controller.dispose);
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: Dashboard<String>(
+                controller: controller,
+                itemBuilder: (context, item) => Card(child: Text(item.id)),
+              ),
+            ),
+          ),
+        );
+
+        await tester.pumpAndSettle();
+
+        final barrierFinder = find.text('Barrier 1');
+        expect(barrierFinder, findsOneWidget);
+
+        // Start mouse gesture
+        final gesture = await tester.startGesture(
+          tester.getCenter(barrierFinder),
+          kind: PointerDeviceKind.mouse,
+        );
+        await tester.pump(); // Let PointerDown and drag engagement process!
+
+        // Move 150px down (well past the 101px row height)
+        await gesture.moveBy(const Offset(0, 150));
+        await tester.pump(); // Let PointerMove and collision pushes process!
+        await tester.pumpAndSettle();
+
+        await gesture.up();
+        await tester.pumpAndSettle();
+
+        final resultBarrier = controller.layout.value.firstWhere((i) => i.id == 'sec_sys');
+        expect(resultBarrier.y, greaterThan(0));
+      });
+    });
+
+    testWidgets('Should revert deletion if onWillDelete returns false', (tester) async {
+      await runOnDesktop(() async {
+        final controller = DashboardController(
+          initialSlotCount: 8,
+          initialLayout: const [
+            LayoutItem(id: 'item_1', x: 0, y: 0, w: 2, h: 2),
+          ],
+        )..setEditMode(true);
+        addTearDown(controller.dispose);
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: Dashboard<String>(
+                controller: controller,
+                trashBuilder: (ctx, hovered, active, activeId) => const SizedBox(
+                  key: ValueKey('trash'),
+                  height: 100,
+                  child: Text('Trash'),
+                ),
+                onWillDelete: (items) async => false, // Decline delete
+                itemBuilder: (context, item) => Card(child: Text(item.id)),
+              ),
+            ),
+          ),
+        );
+
+        await tester.pumpAndSettle();
+
+        final itemFinder = find.text('item_1');
+        final trashFinder = find.byKey(const ValueKey('trash'));
+
+        final gesture =
+            await tester.startGesture(tester.getCenter(itemFinder), kind: PointerDeviceKind.mouse);
+        await gesture.moveTo(tester.getCenter(trashFinder));
+        await tester.pump();
+
+        await tester.pump(const Duration(seconds: 1)); // Wait for trashHoverDelay
+        await gesture.up();
+        await tester.pumpAndSettle();
+
+        expect(controller.layout.value.any((i) => i.id == 'item_1'), isTrue);
+      });
+    });
+
+    testWidgets('Tapping on empty space should clear active selection', (tester) async {
+      // Runs on default Android target (no macOS override)
+      final controller = DashboardController(
+        initialSlotCount: 8,
+        initialLayout: const [
+          LayoutItem(id: 'item_1', x: 0, y: 0, w: 2, h: 2),
+        ],
+      )..setEditMode(true);
+      addTearDown(controller.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Dashboard<String>(
+              controller: controller,
+              itemBuilder: (context, item) => Card(child: Text(item.id)),
+            ),
+          ),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('item_1'));
+      await tester.pumpAndSettle();
+      expect(controller.selectedItemIds.value.contains('item_1'), isTrue);
+
+      await tester.tapAt(const Offset(500, 500)); // Tap empty space
+      await tester.pumpAndSettle();
+
+      expect(controller.selectedItemIds.value, isEmpty);
     });
   });
 }
