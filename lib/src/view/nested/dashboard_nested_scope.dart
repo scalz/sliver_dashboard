@@ -568,6 +568,28 @@ class DashboardNestedCoordinator {
     return false;
   }
 
+  /// Containment test for one registration — see the call site in [targetAt]
+  /// for the rationale of the host-cell path vs the sliver-bounds fallback.
+  bool _registrationContains(NestedGridRegistration reg, Offset globalPosition) {
+    final parentController = reg.parentController;
+    final hostId = reg.parentItemId;
+    if (parentController != null && hostId != null) {
+      final parentReg = registrationOf(parentController);
+      if (parentReg != null) {
+        // The child lives strictly inside its host item, so when the parent
+        // resolves an item at this point, its verdict is authoritative:
+        // that item IS the host -> inside the child; it is ANOTHER item ->
+        // not the child. When the parent resolves nothing (empty parent
+        // area, point outside the parent), fall through to the child's own
+        // sliver bounds — preserving the previous behavior wherever the
+        // parent cannot testify.
+        final hostAtPoint = parentReg.target.itemAtGlobal(globalPosition);
+        if (hostAtPoint != null) return hostAtPoint.id == hostId;
+      }
+    }
+    return reg.target.isPointInsideSliver(globalPosition);
+  }
+
   /// Resolves the deepest registered grid whose interactive area contains
   /// [globalPosition]. Grids that do not [CrossGridDragTarget.canAcceptCrossGridItems]
   /// are skipped when [acceptingOnly] is true.
@@ -594,11 +616,17 @@ class DashboardNestedCoordinator {
         }
       }
 
-      // Precise sliver visible paint boundaries instead of the old
-      // full-screen overlay bounds, so several sibling slivers sharing one
-      // scroll view (each overlay box covering the whole viewport) resolve to
-      // the grid actually under the pointer.
-      if (!reg.target.isPointInsideSliver(globalPosition)) {
+      // Containment. For a LINKED nested grid, the authoritative area is its
+      // host item's cell rectangle, resolved by the PARENT grid (O(1) via the
+      // parent's hover bucket index): it covers the host's chrome, borders
+      // and padding — which sit inside the host cells but OUTSIDE the child's
+      // internal viewport, a few-pixel strip where paint-extent containment
+      // misattributed the point to the parent (spurious session + placeholder
+      // pushed into the host's own rows at the bottom edge). It also follows
+      // the host if pushes moved it visually. Root grids and unlinked
+      // children fall back to precise sliver paint bounds, so several
+      // sibling slivers sharing one scroll view still resolve correctly.
+      if (!_registrationContains(reg, globalPosition)) {
         continue;
       }
 

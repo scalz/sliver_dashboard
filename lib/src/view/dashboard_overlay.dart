@@ -291,6 +291,11 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
   /// during an in-grid drag, while collision pushes are frozen (see the
   /// existing-host approach freeze in the drag branch of _performUpdate).
   String? _frozenOverChildHostId;
+
+  /// Number of enclosing dashboards (0 = a root grid). Cached at
+  /// registration; drives the nested-grid containment extension in
+  /// [_isInsideSliver].
+  int _nestedDepth = 0;
   Offset? _sameGridFreezePosition;
   Offset? _sameGridPauseAnchor;
   StreamSubscription<ScrollRequest>? _scrollSubscription;
@@ -360,6 +365,7 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
     if (!identical(coordinator, _nestedCoordinator)) {
       _nestedCoordinator?.unregister(this);
       _nestedCoordinator = coordinator;
+      _nestedDepth = 0;
       if (coordinator != null) {
         // Depth = number of enclosing dashboards. Computed once per
         // registration; used to resolve the deepest grid under the pointer.
@@ -368,6 +374,7 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
           if (element.widget is DashboardOverlayProvider) depth++;
           return true;
         });
+        _nestedDepth = depth;
         coordinator.register(this, depth: depth);
       }
     }
@@ -1595,23 +1602,39 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
     final viewportScroll =
         widget.scrollController.hasClients ? widget.scrollController.offset : 0.0;
     final constraints = sliver.constraints;
-    final paintExtent = sliver.geometry!.paintExtent;
     final crossAxisExtent = constraints.crossAxisExtent;
     // Position along the scroll axis relative to the first *visible* pixel of
     // this sliver: (pointer main-axis) + (viewport scroll) - (extent of the
     // slivers before this one) - (part of this sliver already scrolled away).
     final mainLead = constraints.precedingScrollExtent + constraints.scrollOffset;
 
+    var mainEnd = sliver.geometry!.paintExtent;
+    if (_nestedDepth > 0) {
+      // A nested grid owns its WHOLE internal viewport: NestedDashboard
+      // builds a scroll view containing only this grid, so the host strip
+      // below the painted content still belongs to it. Without this, the
+      // main-axis growth cap can shrink the painted extent below the host
+      // height mid-drag, and the strip under the content gets misattributed
+      // to the PARENT grid: a session starts against the parent while the
+      // pointer is visually inside the nested grid, and the parent's
+      // placeholder pushes the host around (top-placeholder + flicker).
+      // Root grids (depth 0) keep strict bounds — several sibling slivers
+      // may share their scroll view, and inflating one would shadow the
+      // others.
+      final viewportEnd = constraints.viewportMainAxisExtent + viewportScroll - mainLead;
+      if (viewportEnd > mainEnd) mainEnd = viewportEnd;
+    }
+
     if (constraints.axis == Axis.vertical) {
       final dx = localPos.dx - widget.padding.left;
       if (dx < -tolerance || dx > crossAxisExtent + tolerance) return false;
       final dyLocal = localPos.dy + viewportScroll - mainLead;
-      return dyLocal >= -tolerance && dyLocal <= paintExtent + tolerance;
+      return dyLocal >= -tolerance && dyLocal <= mainEnd + tolerance;
     } else {
       final dy = localPos.dy - widget.padding.top;
       if (dy < -tolerance || dy > crossAxisExtent + tolerance) return false;
       final dxLocal = localPos.dx + viewportScroll - mainLead;
-      return dxLocal >= -tolerance && dxLocal <= paintExtent + tolerance;
+      return dxLocal >= -tolerance && dxLocal <= mainEnd + tolerance;
     }
   }
   // ===========================================================================

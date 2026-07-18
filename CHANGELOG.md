@@ -194,8 +194,8 @@ new code paths reduce to a few null-checks per pointer event.
 ### Documentation & Tooling
 
 - `README_NESTED_GRID.md`: feature guide.
-- New example entry point `example/lib/nested_example.dart` and a demo
-  launcher in `example/lib/main.dart`.
+- New example entry points `example/lib/nested_example.dart`, `example/lib/multi_sliver_crossdrag_example.dart`,
+  and a demo launcher in `example/lib/main.dart`.
 - Test Suite Consolidation & Reorganization: Reorganized, added and improved test files.
 
 ## 1.2.0

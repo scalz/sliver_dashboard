@@ -1820,12 +1820,12 @@ void main() {
       expect(controller.selectedItemIds.value, isEmpty);
     });
 
-    /// While an in-grid drag travels over an item that already hosts a child
-    /// grid, the collision pushes must be frozen: otherwise the push preview
-    /// shoves the host — and the child grid mounted inside it — away from the
-    /// approaching pointer, and entering the child grid is a matter of luck.
-    /// (The cross-grid exit hole only protects the window AFTER the session has
-    /// started; this covers the approach BEFORE it.)
+    // While an in-grid drag travels over an item that already hosts a child
+    // grid, the collision pushes must be frozen: otherwise the push preview
+    // shoves the host — and the child grid mounted inside it — away from the
+    // approaching pointer, and entering the child grid is a matter of luck.
+    // (The cross-grid exit hole only protects the window AFTER the session has
+    // started; this covers the approach BEFORE it.)
     testWidgets(
         'dragging over an item flagged hasNestedGrid freezes the pushes: '
         'the host keeps its pre-drag position while hovered', (tester) async {
@@ -1899,6 +1899,103 @@ void main() {
 
       await gesture.up();
       await tester.pumpAndSettle();
+    });
+
+    // A nested grid owns its whole internal viewport: the host strip below the
+    // painted content must still resolve to the NESTED grid, not to the parent.
+    // Regression: with the main-axis growth cap, the drag shadow no longer
+    // extends the nested content, so its painted extent can be shorter than the
+    // host mid-drag — the strip under the content was misattributed to the
+    // parent, which started a spurious session and pushed the host around
+    // (placeholder at the top of the parent + flicker while moving back up).
+    testWidgets(
+        'the host strip below a short nested content belongs to the nested '
+        'grid, and root-grid bounds stay strict', (tester) async {
+      final coordinator = DashboardNestedCoordinator();
+      final root = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: const [
+          LayoutItem(id: 'group', x: 0, y: 0, w: 2, h: 4, hasNestedGrid: true),
+          LayoutItem(id: 'leaf-1', x: 2, y: 0, w: 2, h: 2),
+        ],
+      )..setEditMode(true);
+      addTearDown(root.dispose);
+      // Content = ONE row in a 4-row host: the lower strip is unpainted.
+      final child = DashboardController(
+        initialSlotCount: 2,
+        initialLayout: const [
+          LayoutItem(id: 'n1', x: 0, y: 0, w: 1, h: 1),
+        ],
+      )..setEditMode(true);
+      addTearDown(child.dispose);
+      final scrollController = ScrollController();
+      addTearDown(scrollController.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: DashboardNestedScope(
+              coordinator: coordinator,
+              child: DashboardOverlay<String>(
+                controller: root,
+                scrollController: scrollController,
+                itemBuilder: (context, item) => item.hasNestedGrid
+                    ? NestedDashboard(
+                        controller: child,
+                        parentItemId: item.id,
+                        itemBuilder: (context, i) => Text(i.id),
+                      )
+                    : Text(item.id),
+                child: CustomScrollView(
+                  controller: scrollController,
+                  slivers: [
+                    SliverDashboard(
+                      itemBuilder: (context, item) => item.hasNestedGrid
+                          ? NestedDashboard(
+                              controller: child,
+                              parentItemId: item.id,
+                              itemBuilder: (context, i) => Text(i.id),
+                            )
+                          : Text(item.id),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Resolve the registered targets through the coordinator.
+      final hostRect = tester.getRect(find.text('n1').first);
+      // A probe point in the LOWER strip of the host: below the single painted
+      // content row, but well inside the host item's area.
+      final groupRect = tester.getRect(find.byType(NestedDashboard).first);
+      final lowerStrip = Offset(
+        groupRect.center.dx,
+        groupRect.bottom - 10,
+      );
+      expect(
+        lowerStrip.dy,
+        greaterThan(hostRect.bottom),
+        reason: 'the probe must sit below the painted nested content',
+      );
+
+      final reg = coordinator.targetAt(lowerStrip);
+      expect(reg, isNotNull);
+      expect(
+        identical(reg!.target.controller, child),
+        isTrue,
+        reason: 'the host strip below short nested content belongs to the '
+            'nested grid, not the parent',
+      );
+
+      // Control: a point over leaf-1 (root territory) still resolves the root.
+      final leafPoint = tester.getCenter(find.text('leaf-1'));
+      final rootReg = coordinator.targetAt(leafPoint);
+      expect(rootReg, isNotNull);
+      expect(identical(rootReg!.target.controller, root), isTrue);
     });
   });
 
