@@ -1,18 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:sliver_dashboard/sliver_dashboard.dart';
 
-/// Aesthetic color scheme matching the dark-theme design of other sub-examples.
-class _Palette {
-  static const grid1Header = Color(0xFF0D9488); // Teal 600
-  static const grid2Header = Color(0xFF4F46E5); // Indigo 600
-
-  static const cardGrid1 = Color(0xFF2DD4BF); // Teal 400
-  static const cardGrid2 = Color(0xFF818CF8); // Indigo 400
-  static const intermediateBox = Color(0xFF1E293B); // Slate 800
-
-  static const onCard = Color(0xFF1F2937); // Slate 800
-}
-
+/// Interactive showcase demonstrating physical transformation math during multi-sliver
+/// drag and drop events.
 class MultiSliverExamplePage extends StatefulWidget {
   const MultiSliverExamplePage({super.key});
 
@@ -86,6 +76,7 @@ class _MultiSliverExamplePageState extends State<MultiSliverExamplePage> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     final isDesktop = MediaQuery.of(context).size.width >= 950;
 
     final configPanel = _ConfigPanel(
@@ -116,8 +107,7 @@ class _MultiSliverExamplePageState extends State<MultiSliverExamplePage> {
       endDrawer: isDesktop
           ? null
           : Drawer(
-              backgroundColor:
-                  Colors.grey.shade900, // Fixed: took full drawer height
+              backgroundColor: theme.colorScheme.surfaceContainerLow,
               child: SafeArea(child: configPanel),
             ),
       body: Row(
@@ -141,7 +131,9 @@ class _MultiSliverExamplePageState extends State<MultiSliverExamplePage> {
                 padding: const EdgeInsets.all(8.0),
                 itemBuilder: _buildCard,
                 gridStyle: GridStyle(
-                  lineColor: Colors.white.withValues(alpha: 0.04),
+                  lineColor: theme.colorScheme.onSurface.withValues(
+                    alpha: 0.04,
+                  ),
                 ),
                 child: DashboardOverlay<String>(
                   controller: controller2,
@@ -150,21 +142,24 @@ class _MultiSliverExamplePageState extends State<MultiSliverExamplePage> {
                   padding: const EdgeInsets.all(8.0),
                   itemBuilder: _buildCard,
                   gridStyle: GridStyle(
-                    lineColor: Colors.white.withValues(alpha: 0.04),
+                    lineColor: theme.colorScheme.onSurface.withValues(
+                      alpha: 0.04,
+                    ),
                   ),
                   child: CustomScrollView(
                     controller: scrollController,
                     slivers: [
                       // Section 1 Header
-                      const SliverAppBar(
+                      SliverAppBar(
                         automaticallyImplyLeading: false,
                         pinned: false,
                         floating: true,
-                        backgroundColor: _Palette.grid1Header,
-                        title: Text('Sliver Grid #1 (8 Columns - Dense)'),
+                        backgroundColor: theme.colorScheme.primary,
+                        title: Text(
+                          'Sliver Grid #1 (8 Columns - Dense)',
+                          style: TextStyle(color: theme.colorScheme.onPrimary),
+                        ),
                       ),
-
-                      // Sliver Dashboard 1
                       SliverPadding(
                         padding: const EdgeInsets.all(8.0),
                         sliver: SliverDashboard(
@@ -173,28 +168,27 @@ class _MultiSliverExamplePageState extends State<MultiSliverExamplePage> {
                           itemBuilder: _buildCard,
                         ),
                       ),
-
                       // Native Intermediate separator to prove physical transformations logic
                       SliverList(
                         delegate: SliverChildBuilderDelegate(
                           (context, index) => Container(
-                            color: _Palette.intermediateBox,
+                            color: theme.colorScheme.surfaceContainerHigh,
                             padding: const EdgeInsets.symmetric(
                               vertical: 24,
                               horizontal: 16,
                             ),
                             child: Row(
                               children: [
-                                const Icon(
+                                Icon(
                                   Icons.swap_vert,
-                                  color: Colors.orange,
+                                  color: theme.colorScheme.secondary,
                                 ),
                                 const SizedBox(width: 16),
                                 Expanded(
                                   child: Text(
                                     'Intermediate Native List Element $index\n(Drag elements across this separator)',
-                                    style: const TextStyle(
-                                      color: Colors.white60,
+                                    style: TextStyle(
+                                      color: theme.colorScheme.onSurfaceVariant,
                                       fontSize: 13,
                                     ),
                                   ),
@@ -205,16 +199,19 @@ class _MultiSliverExamplePageState extends State<MultiSliverExamplePage> {
                           childCount: 2,
                         ),
                       ),
-
                       // Section 2 Header
-                      const SliverAppBar(
+                      SliverAppBar(
                         automaticallyImplyLeading: false,
                         pinned: false,
                         floating: true,
-                        backgroundColor: _Palette.grid2Header,
-                        title: Text('Sliver Grid #2 (4 Columns - Large)'),
+                        backgroundColor: theme.colorScheme.secondary,
+                        title: Text(
+                          'Sliver Grid #2 (4 Columns - Large)',
+                          style: TextStyle(
+                            color: theme.colorScheme.onSecondary,
+                          ),
+                        ),
                       ),
-
                       // Sliver Dashboard 2
                       SliverPadding(
                         padding: const EdgeInsets.all(8.0),
@@ -224,16 +221,15 @@ class _MultiSliverExamplePageState extends State<MultiSliverExamplePage> {
                           itemBuilder: _buildCard,
                         ),
                       ),
-
                       // Trailing Separator
                       SliverToBoxAdapter(
                         child: Container(
                           height: 100,
                           alignment: Alignment.center,
-                          color: Colors.black38,
-                          child: const Text(
+                          color: theme.colorScheme.surfaceContainerLowest,
+                          child: Text(
                             'Footer content ...',
-                            style: TextStyle(color: Colors.grey),
+                            style: TextStyle(color: theme.colorScheme.outline),
                           ),
                         ),
                       ),
@@ -247,9 +243,14 @@ class _MultiSliverExamplePageState extends State<MultiSliverExamplePage> {
             Container(
               width: 320,
               decoration: BoxDecoration(
-                border: Border(left: BorderSide(color: Colors.grey.shade800)),
+                border: Border(
+                  left: BorderSide(color: theme.colorScheme.outlineVariant),
+                ),
               ),
-              child: Material(color: Colors.grey.shade900, child: configPanel),
+              child: Material(
+                color: theme.colorScheme.surfaceContainerLow,
+                child: configPanel,
+              ),
             ),
         ],
       ),
@@ -257,34 +258,20 @@ class _MultiSliverExamplePageState extends State<MultiSliverExamplePage> {
   }
 
   Widget _buildCard(BuildContext context, LayoutItem item) {
-    // Dynamic Color Switching: card color adapts on the fly to match its host grid theme
+    final theme = Theme.of(context);
     final isHost1 = controller1.layout.value.any((i) => i.id == item.id);
-    final color = isHost1 ? _Palette.cardGrid1 : _Palette.cardGrid2;
+    final color = isHost1
+        ? theme.colorScheme.primaryContainer
+        : theme.colorScheme.secondaryContainer;
+    final textColor = isHost1
+        ? theme.colorScheme.onPrimaryContainer
+        : theme.colorScheme.onSecondaryContainer;
 
-    return Card(
+    return _MultiSliverCard(
       key: ValueKey(item.id),
-      margin: EdgeInsets.zero,
-      color: color,
-      child: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Text(
-              item.id,
-              style: const TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: 13,
-                color: _Palette.onCard,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              '(${item.w}x${item.h})',
-              style: const TextStyle(fontSize: 11, color: Colors.black54),
-            ),
-          ],
-        ),
-      ),
+      item: item,
+      backgroundColor: color,
+      textColor: textColor,
     );
   }
 }
@@ -324,12 +311,11 @@ class _ConfigPanel extends StatelessWidget {
             'CROSS-SLIVER PANEL',
             style: theme.textTheme.titleMedium?.copyWith(
               fontWeight: FontWeight.bold,
-              color: Colors.indigo.shade300,
+              color: theme.colorScheme.primary,
             ),
           ),
           const Divider(),
           const SizedBox(height: 8),
-
           ValueListenableBuilder<bool>(
             valueListenable: isEditing,
             builder: (context, editing, _) {
@@ -344,19 +330,19 @@ class _ConfigPanel extends StatelessWidget {
               );
             },
           ),
-
           const SizedBox(height: 16),
-          const Text(
+          Text(
             'Dimension Projection Policy',
             style: TextStyle(
               fontWeight: FontWeight.bold,
               fontSize: 13,
-              color: Colors.white70,
+              color: theme.colorScheme.onSurfaceVariant,
             ),
           ),
           const SizedBox(height: 8),
           DropdownButton<DimensionProjectionPolicy>(
             isExpanded: true,
+            dropdownColor: theme.colorScheme.surfaceContainerHigh,
             value: activePolicy,
             items: DimensionProjectionPolicy.values.map((v) {
               return DropdownMenuItem(
@@ -371,7 +357,6 @@ class _ConfigPanel extends StatelessWidget {
               if (v != null) onPolicyChanged(v);
             },
           ),
-
           const SizedBox(height: 16),
           _PolicyCard(activePolicy: activePolicy),
         ],
@@ -387,6 +372,7 @@ class _PolicyCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     final String description;
     switch (activePolicy) {
       case DimensionProjectionPolicy.preserveLogicalSize:
@@ -401,7 +387,7 @@ class _PolicyCard extends StatelessWidget {
     }
 
     return Card(
-      color: Colors.white.withValues(alpha: 0.02),
+      color: theme.colorScheme.surfaceContainerHigh,
       child: Padding(
         padding: const EdgeInsets.all(12.0),
         child: Column(
@@ -412,10 +398,10 @@ class _PolicyCard extends StatelessWidget {
                 Icon(
                   Icons.info_outline,
                   size: 16,
-                  color: Colors.indigo.shade300,
+                  color: theme.colorScheme.primary,
                 ),
-                SizedBox(width: 8),
-                Text(
+                const SizedBox(width: 8),
+                const Text(
                   'Active Policy Logic',
                   style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
                 ),
@@ -424,10 +410,55 @@ class _PolicyCard extends StatelessWidget {
             const SizedBox(height: 8),
             Text(
               description,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 11,
-                color: Colors.white60,
+                color: theme.colorScheme.onSurfaceVariant,
                 height: 1.4,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MultiSliverCard extends StatelessWidget {
+  const _MultiSliverCard({
+    required this.item,
+    required this.backgroundColor,
+    required this.textColor,
+    super.key,
+  });
+
+  final LayoutItem item;
+  final Color backgroundColor;
+  final Color textColor;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      margin: EdgeInsets.zero,
+      color: backgroundColor,
+      elevation: 2,
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text(
+              item.id,
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 13,
+                color: textColor,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              '(${item.w}x${item.h})',
+              style: TextStyle(
+                fontSize: 11,
+                color: textColor.withValues(alpha: 0.7),
               ),
             ),
           ],

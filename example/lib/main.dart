@@ -33,21 +33,23 @@ class MyApp extends StatelessWidget {
   }
 }
 
-/// Launcher for the two demos: the classic single-grid playground and the
-/// nested grids demo (cross-grid drag & drop, sizeToContent, save/load).
+/// Launcher for the three dashboard demo examples.
 class ExampleHome extends StatelessWidget {
   const ExampleHome({super.key});
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
     return Scaffold(
       appBar: AppBar(title: const Text('Sliver Dashboard — Examples')),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
           Card(
+            color: theme.colorScheme.surfaceContainer,
             child: ListTile(
-              leading: const Icon(Icons.dashboard),
+              leading: Icon(Icons.dashboard, color: theme.colorScheme.primary),
               title: const Text('Playground'),
               subtitle: const Text(
                 'Single grid: drag, resize, trash, sections, minimap, policies…',
@@ -59,8 +61,12 @@ class ExampleHome extends StatelessWidget {
             ),
           ),
           Card(
+            color: theme.colorScheme.surfaceContainer,
             child: ListTile(
-              leading: const Icon(Icons.grid_view),
+              leading: Icon(
+                Icons.grid_view,
+                color: theme.colorScheme.secondary,
+              ),
               title: const Text('Nested grids'),
               subtitle: const Text(
                 'Grids inside items, cross-grid drag & drop, sizeToContent, '
@@ -75,8 +81,9 @@ class ExampleHome extends StatelessWidget {
             ),
           ),
           Card(
+            color: theme.colorScheme.surfaceContainer,
             child: ListTile(
-              leading: const Icon(Icons.layers),
+              leading: Icon(Icons.layers, color: theme.colorScheme.tertiary),
               title: const Text('Multi-Sliver Drag & Drop'),
               subtitle: const Text(
                 'Asymmetric sliver grids, physical coordinate matrix translation, '
@@ -96,7 +103,7 @@ class ExampleHome extends StatelessWidget {
   }
 }
 
-/// A strict enterprise policy to isolate layout regions and block specific collisions.
+/// A strict policy to isolate layout regions and block specific collisions.
 class CustomDashboardPolicy extends DashboardPolicy {
   const CustomDashboardPolicy({required this.blockSectionCollision});
 
@@ -124,6 +131,7 @@ class CustomDashboardPolicy extends DashboardPolicy {
   }
 }
 
+/// Main playground viewport combining custom configurations and responsive grid views.
 class DashboardPage extends StatefulWidget {
   const DashboardPage({super.key});
 
@@ -148,6 +156,7 @@ class _DashboardPageState extends State<DashboardPage> {
   final useSliverDemo = ValueNotifier(false);
   final useDragHandlesOnly = ValueNotifier(false);
   final blockSectionCollision = ValueNotifier(true);
+  final animateReflow = ValueNotifier(false);
   final autoShrink = ValueNotifier(false);
   final compactionType = ValueNotifier<CompactType>(CompactType.vertical);
   final resizeBehavior = ValueNotifier<ResizeBehavior>(ResizeBehavior.push);
@@ -155,18 +164,38 @@ class _DashboardPageState extends State<DashboardPage> {
     AutoPlacementStrategy.firstFit,
   );
 
-  final cardColors = <String, Color>{};
   final random = Random();
 
-  Color getColorForItem(String id) {
-    return cardColors.putIfAbsent(id, () {
-      return Color.fromRGBO(
-        random.nextInt(120) + 50,
-        random.nextInt(120) + 50,
-        random.nextInt(120) + 120,
-        1,
-      );
-    });
+  // Cache holding both background and pre-calculated text colors as a tuple.
+  final _cardColors = <String, ({Color cardColor, Color textColor})>{};
+
+  ({Color cardColor, Color textColor}) _generateColor(
+    String id,
+    ColorScheme colorScheme,
+  ) {
+    final int hash = id.hashCode;
+    final double hue = (hash.abs() % 360).toDouble();
+    final bool isDark = colorScheme.brightness == Brightness.dark;
+
+    final bgColor = HSLColor.fromAHSL(
+      1.0,
+      hue,
+      isDark ? 0.35 : 0.65,
+      isDark ? 0.25 : 0.85,
+    ).toColor();
+
+    final textColor = bgColor.computeLuminance() > 0.5
+        ? Colors.black87
+        : Colors.white;
+
+    return (cardColor: bgColor, textColor: textColor);
+  }
+
+  ({Color cardColor, Color textColor}) getColorsForItem(
+    String id,
+    ColorScheme colorScheme,
+  ) {
+    return _cardColors[id] ??= _generateColor(id, colorScheme);
   }
 
   @override
@@ -198,7 +227,6 @@ class _DashboardPageState extends State<DashboardPage> {
           minH: 1,
         ),
         const LayoutItem(id: 'sys_mem', x: 2, y: 1, w: 2, h: 2),
-
         // Section 2 Barrier
         const LayoutItem(
           id: 'sec_usr',
@@ -222,7 +250,6 @@ class _DashboardPageState extends State<DashboardPage> {
       ],
     );
 
-    // Sync initial configuration
     controller.setEditMode(isEditing.value);
     controller.setAllowAutoShrink(allow: autoShrink.value);
     _updatePolicy();
@@ -263,7 +290,6 @@ class _DashboardPageState extends State<DashboardPage> {
     showGenerateButton.value = false;
   }
 
-  /// Forces the generation of the JSON schema regardless of the layout size.
   void _forceGenerateJson() {
     final list = controller.exportLayout();
     jsonController.text = const JsonEncoder.withIndent('  ').convert(list);
@@ -273,7 +299,7 @@ class _DashboardPageState extends State<DashboardPage> {
         content: Text(
           'JSON Schema generated successfully for ${list.length} items!',
         ),
-        backgroundColor: Colors.indigo,
+        backgroundColor: Theme.of(context).colorScheme.primary,
       ),
     );
   }
@@ -284,9 +310,9 @@ class _DashboardPageState extends State<DashboardPage> {
       if (decoded is List) {
         controller.importLayout(decoded);
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Layout imported successfully!'),
-            backgroundColor: Colors.green,
+          SnackBar(
+            content: const Text('Layout imported successfully!'),
+            backgroundColor: Theme.of(context).colorScheme.primary,
           ),
         );
       }
@@ -294,7 +320,7 @@ class _DashboardPageState extends State<DashboardPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Invalid JSON: $e'),
-          backgroundColor: Colors.red,
+          backgroundColor: Theme.of(context).colorScheme.error,
         ),
       );
     }
@@ -319,7 +345,7 @@ class _DashboardPageState extends State<DashboardPage> {
     for (var i = 0; i < count; i++) {
       list.add(
         LayoutItem(
-          id: 'stress_${timestamp}_$i',
+          id: 's_${timestamp}_$i',
           x: -1,
           y: -1,
           w: random.nextInt(2) + 1,
@@ -330,7 +356,6 @@ class _DashboardPageState extends State<DashboardPage> {
     controller.addItems(list, strategy: placementStrategy.value);
   }
 
-  /// Unified deletion dialog helper supporting both singular and plural grammar.
   Future<bool> _confirmDeletion(List<LayoutItem> items) async {
     final confirm = await showDialog<bool>(
       context: context,
@@ -356,7 +381,6 @@ class _DashboardPageState extends State<DashboardPage> {
     return confirm ?? false;
   }
 
-  /// Triggered when clicking the manual 'x' close button on a single card.
   Future<void> _confirmAndDelete(LayoutItem item) async {
     final confirm = await _confirmDeletion([item]);
     if (confirm) {
@@ -378,6 +402,7 @@ class _DashboardPageState extends State<DashboardPage> {
     useSliverDemo.dispose();
     useDragHandlesOnly.dispose();
     blockSectionCollision.dispose();
+    animateReflow.dispose();
     autoShrink.dispose();
     compactionType.dispose();
     resizeBehavior.dispose();
@@ -391,6 +416,7 @@ class _DashboardPageState extends State<DashboardPage> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     final isDesktop = MediaQuery.of(context).size.width >= 950;
 
     final configPanel = _ConfigPanel(
@@ -401,6 +427,7 @@ class _DashboardPageState extends State<DashboardPage> {
       useSliverDemo: useSliverDemo,
       useDragHandlesOnly: useDragHandlesOnly,
       blockSectionCollision: blockSectionCollision,
+      animateReflow: animateReflow,
       autoShrink: autoShrink,
       compactionType: compactionType,
       resizeBehavior: resizeBehavior,
@@ -430,16 +457,15 @@ class _DashboardPageState extends State<DashboardPage> {
       ),
       endDrawer: isDesktop ? null : Drawer(child: SafeArea(child: configPanel)),
       body: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Expanded(
             child: ValueListenableBuilder(
               valueListenable: useSliverDemo,
               builder: (context, sliverMode, _) {
-                if (sliverMode) {
-                  return _buildSliverDemoView();
-                } else {
-                  return _buildStandardDemoView();
-                }
+                return sliverMode
+                    ? _buildSliverDemoView()
+                    : _buildStandardDemoView();
               },
             ),
           ),
@@ -448,10 +474,16 @@ class _DashboardPageState extends State<DashboardPage> {
               width: 320,
               decoration: BoxDecoration(
                 border: Border(
-                  left: BorderSide(color: Colors.grey.shade800, width: 1),
+                  left: BorderSide(
+                    color: theme.colorScheme.outlineVariant,
+                    width: 1,
+                  ),
                 ),
               ),
-              child: Material(color: Colors.grey.shade900, child: configPanel),
+              child: Material(
+                color: theme.colorScheme.surfaceContainerLow,
+                child: configPanel,
+              ),
             ),
         ],
       ),
@@ -463,18 +495,36 @@ class _DashboardPageState extends State<DashboardPage> {
     );
   }
 
+  Widget _buildCard(BuildContext context, LayoutItem item) {
+    final theme = Theme.of(context);
+    final colors = getColorsForItem(item.id, theme.colorScheme);
+
+    return _DashboardCard(
+      key: ValueKey(item.id),
+      item: item,
+      isEditing: isEditing.value,
+      useDragHandlesOnly: useDragHandlesOnly.value,
+      cardColor: colors.cardColor,
+      textColor: colors.textColor,
+      theme: theme,
+      onDelete: () => _confirmAndDelete(item),
+    );
+  }
+
   Widget _buildStandardDemoView() {
-    return ValueListenableBuilder2(
+    final theme = Theme.of(context);
+    return ValueListenableBuilder3(
       useDragHandlesOnly,
       showMinimap,
-      builder: (context, handlesOnly, minimap, _) {
+      animateReflow,
+      builder: (context, handlesOnly, minimap, reflow, _) {
         return Stack(
           children: [
             Dashboard<String>(
               controller: controller,
               scrollController: standardScrollController,
               scrollDirection: controller.scrollDirection.value,
-              animateReflow: false,
+              animateReflow: reflow,
               slotAspectRatio: 1.0,
               mainAxisSpacing: 8.0,
               crossAxisSpacing: 8.0,
@@ -486,19 +536,16 @@ class _DashboardPageState extends State<DashboardPage> {
               itemBuilder: _buildCard,
               onWillDelete: _confirmDeletion,
               gridStyle: GridStyle(
-                fillColor: Colors.white.withValues(alpha: 0.04),
-                handleColor: Colors.indigo.shade400,
-                lineColor: Colors.white.withValues(alpha: 0.08),
+                fillColor: theme.colorScheme.onSurface.withValues(alpha: 0.03),
+                handleColor: theme.colorScheme.primary,
+                lineColor: theme.colorScheme.onSurface.withValues(alpha: 0.08),
                 lineWidth: 1,
               ),
               itemStyle: DashboardItemStyle(
-                focusColor:
-                    Colors.indigoAccent, // Border color when focused/selected
-                activeColor:
-                    Colors.deepOrange, // Border color when actively dragged
-                borderRadius: BorderRadius.circular(
-                  12,
-                ), // Match your card's border radius
+                focusColor: theme.colorScheme.primary,
+                activeColor: theme.colorScheme.secondary,
+                borderRadius: BorderRadius.circular(12),
+                // Match your card's border radius
                 // Or provide a fully custom BoxDecoration:
                 // focusDecoration: BoxDecoration(
                 //   border: Border.all(color: Colors.green, width: 4),
@@ -519,10 +566,12 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Widget _buildSliverDemoView() {
-    return ValueListenableBuilder2(
+    final theme = Theme.of(context);
+    return ValueListenableBuilder3(
       useDragHandlesOnly,
       showMinimap,
-      builder: (context, handlesOnly, minimap, _) {
+      animateReflow,
+      builder: (context, handlesOnly, minimap, reflow, _) {
         return Stack(
           children: [
             DashboardOverlay<String>(
@@ -532,14 +581,14 @@ class _DashboardPageState extends State<DashboardPage> {
                   ? DragStartGesture.none
                   : DragStartGesture.longPress,
               gridStyle: GridStyle(
-                fillColor: Colors.white.withValues(alpha: 0.04),
-                handleColor: Colors.indigo.shade400,
-                lineColor: Colors.white.withValues(alpha: 0.08),
+                fillColor: theme.colorScheme.onSurface.withValues(alpha: 0.03),
+                handleColor: theme.colorScheme.primary,
+                lineColor: theme.colorScheme.onSurface.withValues(alpha: 0.08),
                 lineWidth: 1,
               ),
               padding: const EdgeInsets.all(8.0),
               fillViewport: true,
-              itemBuilder: (ctx, item) => _buildCard(ctx, item),
+              itemBuilder: _buildCard,
               onWillDelete: _confirmDeletion,
               trashLayout: const TrashLayout(
                 visible: TrashPosition(bottom: 20, left: 100, right: 100),
@@ -553,20 +602,34 @@ class _DashboardPageState extends State<DashboardPage> {
                     automaticallyImplyLeading: false,
                     pinned: true,
                     expandedHeight: 120,
-                    backgroundColor: Colors.indigo.shade900,
-                    flexibleSpace: const FlexibleSpaceBar(
-                      title: Text('Sliver direct composition'),
+                    backgroundColor: theme.colorScheme.surfaceContainerHighest,
+                    flexibleSpace: FlexibleSpaceBar(
+                      title: Text(
+                        'Sliver direct composition',
+                        style: TextStyle(color: theme.colorScheme.onSurface),
+                      ),
                       centerTitle: false,
                     ),
                   ),
                   SliverPadding(
                     padding: const EdgeInsets.all(8.0),
-                    sliver: SliverDashboard(itemBuilder: _buildCard),
+                    sliver: SliverDashboard(
+                      animateReflow: reflow,
+                      itemBuilder: _buildCard,
+                    ),
                   ),
                   SliverList(
                     delegate: SliverChildBuilderDelegate(
                       (context, index) => ListTile(
-                        leading: CircleAvatar(child: Text('$index')),
+                        leading: CircleAvatar(
+                          backgroundColor: theme.colorScheme.primaryContainer,
+                          child: Text(
+                            '$index',
+                            style: TextStyle(
+                              color: theme.colorScheme.onPrimaryContainer,
+                            ),
+                          ),
+                        ),
                         title: Text('Subsequent List Item $index'),
                         subtitle: const Text(
                           'Rendered natively alongside the grid sliver',
@@ -585,116 +648,45 @@ class _DashboardPageState extends State<DashboardPage> {
     );
   }
 
-  Widget _buildCard(BuildContext context, LayoutItem item) {
-    final editing = isEditing.value;
-    final handlesOnly = useDragHandlesOnly.value;
-
-    return Card(
-      key: ValueKey(item.id),
-      elevation: 3,
-      color: getColorForItem(item.id),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      clipBehavior: Clip.antiAlias,
-      child: Stack(
-        children: [
-          Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(
-                  item.id.startsWith('stress')
-                      ? 'Item ${item.id.substring(7)}'
-                      : item.id,
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-                  overflow: TextOverflow.ellipsis,
-                ),
-                Text(
-                  '(${item.w}x${item.h})',
-                  style: const TextStyle(fontSize: 12, color: Colors.white70),
-                ),
-              ],
-            ),
-          ),
-          if (editing && handlesOnly)
-            Positioned(
-              left: 4,
-              top: 4,
-              child: DashboardDragStartListener(
-                itemId: item.id,
-                child: Container(
-                  padding: const EdgeInsets.all(4),
-                  decoration: BoxDecoration(
-                    color: Colors.black26,
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: const Icon(
-                    Icons.drag_handle,
-                    size: 16,
-                    color: Colors.white,
-                  ),
-                ),
-              ),
-            ),
-          if (editing)
-            Positioned(
-              top: 4,
-              right: 4,
-              child: GestureDetector(
-                onTap: () => _confirmAndDelete(item),
-                child: Container(
-                  padding: const EdgeInsets.all(4),
-                  decoration: const BoxDecoration(
-                    color: Colors.black38,
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(
-                    Icons.close,
-                    size: 14,
-                    color: Colors.redAccent,
-                  ),
-                ),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildTrashBin(
     BuildContext context,
     bool hovered,
     bool active,
     String? activeItemId,
   ) {
+    final theme = Theme.of(context);
+    final activeBg = active
+        ? theme.colorScheme.error
+        : (hovered
+              ? theme.colorScheme.errorContainer
+              : theme.colorScheme.onErrorContainer);
+    final activeFg = active
+        ? theme.colorScheme.onError
+        : (hovered
+              ? theme.colorScheme.onErrorContainer
+              : theme.colorScheme.error);
+
     return Align(
       alignment: Alignment.bottomCenter,
       child: Container(
         height: 60,
         margin: const EdgeInsets.all(20.0),
         decoration: BoxDecoration(
-          color: active
-              ? Colors.red
-              : (hovered ? Colors.orange : Colors.red.shade900),
+          color: activeBg,
           borderRadius: BorderRadius.circular(30),
           boxShadow: const [BoxShadow(blurRadius: 10, color: Colors.black54)],
-          border: hovered ? Border.all(color: Colors.white, width: 2) : null,
+          border: hovered
+              ? Border.all(color: theme.colorScheme.onError, width: 2)
+              : null,
         ),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(
-              active ? Icons.delete_forever : Icons.delete,
-              color: Colors.white,
-            ),
+            Icon(active ? Icons.delete_forever : Icons.delete, color: activeFg),
             const SizedBox(width: 10),
             Text(
               active ? 'Release to Delete!' : 'Drop here to Delete',
-              style: const TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.bold,
-              ),
+              style: TextStyle(color: activeFg, fontWeight: FontWeight.bold),
             ),
           ],
         ),
@@ -703,6 +695,7 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Widget _buildMinimapOverlay() {
+    final theme = Theme.of(context);
     return ValueListenableBuilder<bool>(
       valueListenable: useSliverDemo,
       builder: (context, sliverMode, _) {
@@ -720,7 +713,7 @@ class _DashboardPageState extends State<DashboardPage> {
             child: Container(
               width: 120,
               decoration: BoxDecoration(
-                border: Border.all(color: Colors.grey.shade800),
+                border: Border.all(color: theme.colorScheme.outlineVariant),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: DashboardMinimap(
@@ -734,11 +727,14 @@ class _DashboardPageState extends State<DashboardPage> {
                 mainAxisSpacing: 8.0,
                 crossAxisSpacing: 8.0,
                 padding: const EdgeInsets.all(8.0),
-                style: const MinimapStyle(
-                  backgroundColor: Colors.black54,
-                  itemColor: Colors.indigo,
-                  staticItemColor: Colors.grey,
-                  viewportColor: Color(0x332196F3),
+                style: MinimapStyle(
+                  backgroundColor: theme.colorScheme.surfaceContainerHighest
+                      .withValues(alpha: 0.8),
+                  itemColor: theme.colorScheme.primary,
+                  staticItemColor: theme.colorScheme.outline,
+                  viewportColor: theme.colorScheme.primary.withValues(
+                    alpha: 0.2,
+                  ),
                 ),
                 markers: const [
                   MinimapMarker(
@@ -765,17 +761,21 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 }
 
-class ValueListenableBuilder2<A, B> extends StatelessWidget {
-  const ValueListenableBuilder2(
+/// Utility builder combining three ValueListenables inside standard build context trees.
+class ValueListenableBuilder3<A, B, C> extends StatelessWidget {
+  const ValueListenableBuilder3(
     this.first,
-    this.second, {
+    this.second,
+    this.third, {
     required this.builder,
     super.key,
   });
 
   final ValueListenable<A> first;
   final ValueListenable<B> second;
-  final Widget Function(BuildContext context, A a, B b, Widget? child) builder;
+  final ValueListenable<C> third;
+  final Widget Function(BuildContext context, A a, B b, C c, Widget? child)
+  builder;
 
   @override
   Widget build(BuildContext context) {
@@ -785,7 +785,12 @@ class ValueListenableBuilder2<A, B> extends StatelessWidget {
         return ValueListenableBuilder<B>(
           valueListenable: second,
           builder: (context, b, _) {
-            return builder(context, a, b, null);
+            return ValueListenableBuilder<C>(
+              valueListenable: third,
+              builder: (context, c, _) {
+                return builder(context, a, b, c, null);
+              },
+            );
           },
         );
       },
@@ -802,6 +807,7 @@ class _ConfigPanel extends StatelessWidget {
     required this.useSliverDemo,
     required this.useDragHandlesOnly,
     required this.blockSectionCollision,
+    required this.animateReflow,
     required this.autoShrink,
     required this.compactionType,
     required this.resizeBehavior,
@@ -819,6 +825,7 @@ class _ConfigPanel extends StatelessWidget {
   final ValueNotifier<bool> useSliverDemo;
   final ValueNotifier<bool> useDragHandlesOnly;
   final ValueNotifier<bool> blockSectionCollision;
+  final ValueNotifier<bool> animateReflow;
   final ValueNotifier<bool> autoShrink;
   final ValueNotifier<CompactType> compactionType;
   final ValueNotifier<ResizeBehavior> resizeBehavior;
@@ -841,13 +848,11 @@ class _ConfigPanel extends StatelessWidget {
             'CONFIGURATION PANEL',
             style: theme.textTheme.titleMedium?.copyWith(
               fontWeight: FontWeight.bold,
-              color: Colors.indigo.shade300,
+              color: theme.colorScheme.primary,
             ),
           ),
           const Divider(),
-
-          // Section 1: Visual Mode
-          _SectionTitle('Visual Modes & Structures'),
+          const _SectionTitle('Visual Modes & Structures'),
           _SwitchTile(
             title: 'Edit Mode (Draggable/Resizable)',
             notifier: isEditing,
@@ -865,10 +870,8 @@ class _ConfigPanel extends StatelessWidget {
             title: 'Render Interactive Mini-Map',
             notifier: showMinimap,
           ),
-
           const SizedBox(height: 16),
-          // Section 2: Layout Rules
-          _SectionTitle('Collision & Layout Rules'),
+          const _SectionTitle('Collision & Layout Rules'),
           _SwitchTile(
             title: 'Block Section Header Collisions',
             notifier: blockSectionCollision,
@@ -878,17 +881,24 @@ class _ConfigPanel extends StatelessWidget {
             notifier: autoShrink,
             onChanged: (val) => controller.setAllowAutoShrink(allow: val),
           ),
-
+          _SwitchTile(
+            title: 'Enable Reflow Animations (v2.1)',
+            notifier: animateReflow,
+          ),
           const SizedBox(height: 10),
-          const Text(
+          Text(
             'Compaction Type',
-            style: TextStyle(fontSize: 12, color: Colors.grey),
+            style: TextStyle(
+              fontSize: 12,
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
           ),
           ValueListenableBuilder(
             valueListenable: compactionType,
             builder: (context, value, _) {
               return DropdownButton<CompactType>(
                 isExpanded: true,
+                dropdownColor: theme.colorScheme.surfaceContainerHigh,
                 value: value,
                 items: CompactType.values
                     .map(
@@ -907,41 +917,52 @@ class _ConfigPanel extends StatelessWidget {
               );
             },
           ),
-
           const SizedBox(height: 10),
-          const Text(
+          Text(
             'Resize Behavior',
-            style: TextStyle(fontSize: 12, color: Colors.grey),
+            style: TextStyle(
+              fontSize: 12,
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
           ),
-          DropdownButton<ResizeBehavior>(
-            isExpanded: true,
-            value: resizeBehavior.value,
-            items: ResizeBehavior.values
-                .map(
-                  (v) => DropdownMenuItem(
-                    value: v,
-                    child: Text(v.name.toUpperCase()),
-                  ),
-                )
-                .toList(),
-            onChanged: (v) {
-              if (v != null) {
-                resizeBehavior.value = v;
-                controller.setResizeBehavior(v);
-              }
+          ValueListenableBuilder<ResizeBehavior>(
+            valueListenable: resizeBehavior,
+            builder: (context, value, _) {
+              return DropdownButton<ResizeBehavior>(
+                isExpanded: true,
+                dropdownColor: theme.colorScheme.surfaceContainerHigh,
+                value: value,
+                items: ResizeBehavior.values
+                    .map(
+                      (v) => DropdownMenuItem(
+                        value: v,
+                        child: Text(v.name.toUpperCase()),
+                      ),
+                    )
+                    .toList(),
+                onChanged: (v) {
+                  if (v != null) {
+                    resizeBehavior.value = v;
+                    controller.setResizeBehavior(v);
+                  }
+                },
+              );
             },
           ),
-
           const SizedBox(height: 10),
-          const Text(
+          Text(
             'Auto-placement Strategy',
-            style: TextStyle(fontSize: 12, color: Colors.grey),
+            style: TextStyle(
+              fontSize: 12,
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
           ),
           ValueListenableBuilder(
             valueListenable: placementStrategy,
             builder: (context, value, _) {
               return DropdownButton<AutoPlacementStrategy>(
                 isExpanded: true,
+                dropdownColor: theme.colorScheme.surfaceContainerHigh,
                 value: value,
                 items: AutoPlacementStrategy.values
                     .map(
@@ -959,11 +980,11 @@ class _ConfigPanel extends StatelessWidget {
               );
             },
           ),
-
           const SizedBox(height: 16),
-          _SectionTitle('Stress Tests & Bulk actions'),
+          const _SectionTitle('Stress Tests & Bulk actions'),
           Wrap(
             spacing: 8,
+            runSpacing: 8,
             children: [
               ElevatedButton(
                 onPressed: () => onStressTest(20),
@@ -979,9 +1000,8 @@ class _ConfigPanel extends StatelessWidget {
               ),
             ],
           ),
-
           const SizedBox(height: 16),
-          _SectionTitle('JSON Schema Import/Export'),
+          const _SectionTitle('JSON Schema Import/Export'),
           ValueListenableBuilder<bool>(
             valueListenable: showGenerateButton,
             builder: (context, show, _) {
@@ -1034,14 +1054,15 @@ class _SectionTitle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8.0),
       child: Text(
         title,
-        style: const TextStyle(
+        style: TextStyle(
           fontWeight: FontWeight.bold,
           fontSize: 13,
-          color: Colors.white70,
+          color: theme.colorScheme.onSurfaceVariant,
         ),
       ),
     );
@@ -1074,6 +1095,107 @@ class _SwitchTile extends StatelessWidget {
           },
         );
       },
+    );
+  }
+}
+
+class _DashboardCard extends StatelessWidget {
+  const _DashboardCard({
+    required this.item,
+    required this.isEditing,
+    required this.useDragHandlesOnly,
+    required this.cardColor,
+    required this.textColor,
+    required this.theme,
+    required this.onDelete,
+    super.key,
+  });
+
+  final LayoutItem item;
+  final bool isEditing;
+  final bool useDragHandlesOnly;
+  final Color cardColor;
+  final Color textColor;
+  final ThemeData theme;
+  final VoidCallback onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      elevation: 3,
+      color: cardColor,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.all(Radius.circular(12)),
+      ),
+      clipBehavior: Clip.none,
+      child: Stack(
+        children: [
+          Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  item.id.startsWith('s_')
+                      ? 'Item ${item.id.substring(2)}'
+                      : item.id,
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.bold,
+                    color: textColor,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+                Text(
+                  '(${item.w}x${item.h})',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: textColor.withValues(alpha: 0.7),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (isEditing && useDragHandlesOnly)
+            Positioned(
+              left: 4,
+              top: 4,
+              child: DashboardDragStartListener(
+                itemId: item.id,
+                child: Container(
+                  padding: const EdgeInsets.all(4),
+                  decoration: BoxDecoration(
+                    color: Colors.black26,
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: const Icon(
+                    Icons.drag_handle,
+                    size: 16,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+            ),
+          if (isEditing)
+            Positioned(
+              top: 4,
+              right: 4,
+              child: GestureDetector(
+                onTap: onDelete,
+                child: Container(
+                  padding: const EdgeInsets.all(4),
+                  decoration: const BoxDecoration(
+                    color: Colors.black38,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    Icons.close,
+                    size: 14,
+                    color: theme.colorScheme.error,
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
     );
   }
 }

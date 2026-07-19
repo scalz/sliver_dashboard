@@ -3,50 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:sliver_dashboard/sliver_dashboard.dart';
 
-/// Nested grids demo — a self-contained showcase of every nested-grid
-/// capability, styled to match the main Playground:
-///
-///  * a root dashboard whose `group` item hosts a nested dashboard;
-///  * drag & drop of items between the two levels (and back);
-///  * `sizeToContent` vs fixed-size internal scrolling;
-///  * live `compactType` switching on every grid;
-///  * `subGridDynamic`: hover a plain leaf with a dragged item to turn it
-///    into a brand-new nested grid on the fly;
-///  * save / load of the whole tree, with the JSON shown in the panel.
-///
-/// Run with: flutter run -t lib/nested_example.dart
-void main() => runApp(const NestedExampleApp());
-
-class NestedExampleApp extends StatelessWidget {
-  const NestedExampleApp({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'sliver_dashboard — nested grids',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: Colors.indigo,
-          brightness: Brightness.dark,
-        ),
-        useMaterial3: true,
-      ),
-      home: const NestedExamplePage(),
-    );
-  }
-}
-
-/// A palette with enough contrast for labels on top of the tiles.
-class _Palette {
-  static const hostBackground = Color(0xFFFFF3D6); // pale amber grid backdrop
-  static const hostHeader = Color(0xFFF59E0B); // amber 500
-  static const nestedTile = Color(0xFFFB923C); // orange 400
-  static const leafTile = Color(0xFF4ADE80); // green 400
-  static const dynamicHostTile = Color(0xFF67E8F9); // cyan 300 (was a leaf)
-  static const onTile = Color(0xFF1F2937); // slate 800 — readable on pastels
-}
-
+/// Nested grids demo — a self-contained showcase of nested-grid capability.
 class NestedExamplePage extends StatefulWidget {
   const NestedExamplePage({super.key});
 
@@ -137,7 +94,6 @@ class _NestedExamplePageState extends State<NestedExamplePage> {
     }
     final parsed = int.tryParse(text);
     if (parsed == null) {
-      // Invalid entry: reset to unlimited and clear the field.
       maxNestingDepth.value = null;
       maxDepthController.clear();
       return;
@@ -186,7 +142,7 @@ class _NestedExamplePageState extends State<NestedExamplePage> {
   /// every armed-but-unused leaf stays converted as an empty nested grid).
   void _onNestedGridAbandoned(LayoutItem host, DashboardController hostGrid) {
     final child = _dynamicChildren.remove(host.id);
-    if (child == null) return; // not one of our dynamic conversions
+    if (child == null) return;
 
     coordinator.unlinkChildGrid(child);
     hostGrid.updateItem(
@@ -203,11 +159,11 @@ class _NestedExamplePageState extends State<NestedExamplePage> {
     final tree = exportNestedTree(coordinator, root);
     _savedTree = tree;
     jsonController.text = const JsonEncoder.withIndent('  ').convert(tree);
-    setState(() {}); // enable the restore button
+    setState(() {});
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text('Saved ${tree.length} root items (JSON in the panel)'),
-        backgroundColor: Colors.indigo,
+        backgroundColor: Theme.of(context).colorScheme.primary,
       ),
     );
   }
@@ -217,117 +173,16 @@ class _NestedExamplePageState extends State<NestedExamplePage> {
     if (saved == null) return;
     loadNestedTree(coordinator, root, saved);
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Tree restored from the last save'),
-        backgroundColor: Colors.green,
-      ),
-    );
-  }
-
-  // --- Tile builders -------------------------------------------------------
-
-  Widget _tile(LayoutItem item, Color color) {
-    return Card(
-      color: color,
-      margin: EdgeInsets.zero,
-      child: Center(
-        child: Text(
-          item.id,
-          style: const TextStyle(
-            color: _Palette.onTile,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _nestedHost(
-    BuildContext context,
-    LayoutItem item,
-    DashboardController child,
-  ) {
-    return ValueListenableBuilder<bool>(
-      valueListenable: sizeToContent,
-      builder: (context, stc, _) {
-        return Card(
-          margin: EdgeInsets.zero,
-          color: _Palette.hostBackground,
-          clipBehavior: Clip.antiAlias,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Container(
-                color: _Palette.hostHeader,
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                child: Text(
-                  'Nested grid · ${item.id}',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-              Expanded(
-                child: NestedDashboard(
-                  controller: child,
-                  parentItemId: item.id,
-                  sizeToContent: stc,
-                  chromeExtent: 40, // the header above
-                  itemBuilder: (context, leaf) =>
-                      _tile(leaf, _Palette.nestedTile),
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildDashboard() {
-    return DashboardNestedScope(
-      coordinator: coordinator,
-      subGridDynamic: subGridDynamic.value,
-      subGridDynamicSameGrid: subGridDynamicSameGrid.value,
-      maxNestingDepth: maxNestingDepth.value,
-      onNestedGridRequested: _onNestedGridRequested,
-      onNestedGridRequestAbandoned: _onNestedGridAbandoned,
-      onItemMovedToGrid: (item, from, to) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            duration: const Duration(milliseconds: 900),
-            content: Text('Moved "${item.id}" between grids'),
-          ),
-        );
-      },
-      child: Dashboard<String>(
-        controller: root,
-        slotAspectRatio: 1.0,
-        mainAxisSpacing: 8.0,
-        crossAxisSpacing: 8.0,
-        padding: const EdgeInsets.all(8.0),
-        itemBuilder: (context, item) {
-          // Branch on the declarative flag rather than the id: this is what
-          // keeps hosts portable (a flagged item dropped into another grid
-          // still renders as a grid if that grid's builder does the same).
-          if (item.hasNestedGrid) {
-            final child = item.id == 'group'
-                ? group
-                : _dynamicChildren[item.id];
-            if (child != null) return _nestedHost(context, item, child);
-          }
-          final color = _dynamicChildren.containsKey(item.id)
-              ? _Palette.dynamicHostTile
-              : _Palette.leafTile;
-          return _tile(item, color);
-        },
+      SnackBar(
+        content: const Text('Tree restored from the last save'),
+        backgroundColor: Theme.of(context).colorScheme.primary,
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     final isDesktop = MediaQuery.of(context).size.width >= 950;
 
     final configPanel = _ConfigPanel(
@@ -367,31 +222,88 @@ class _NestedExamplePageState extends State<NestedExamplePage> {
       endDrawer: isDesktop
           ? null
           : Drawer(
-              backgroundColor: Colors.grey.shade900,
+              backgroundColor: theme.colorScheme.surfaceContainerLow,
               child: SafeArea(child: configPanel),
             ),
       body: Row(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Expanded(
-            // subGridDynamic and maxNestingDepth are read in _buildDashboard():
-            // rebuild when either changes.
             child: ListenableBuilder(
               listenable: Listenable.merge([
                 subGridDynamic,
                 subGridDynamicSameGrid,
                 maxNestingDepth,
               ]),
-              builder: (context, _) => _buildDashboard(),
+              builder: (context, _) => DashboardNestedScope(
+                coordinator: coordinator,
+                subGridDynamic: subGridDynamic.value,
+                subGridDynamicSameGrid: subGridDynamicSameGrid.value,
+                maxNestingDepth: maxNestingDepth.value,
+                onNestedGridRequested: _onNestedGridRequested,
+                onNestedGridRequestAbandoned: _onNestedGridAbandoned,
+                onItemMovedToGrid: (item, from, to) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      duration: const Duration(milliseconds: 900),
+                      content: Text('Moved "${item.id}" between grids'),
+                    ),
+                  );
+                },
+                child: Dashboard<String>(
+                  controller: root,
+                  slotAspectRatio: 1.0,
+                  mainAxisSpacing: 8.0,
+                  crossAxisSpacing: 8.0,
+                  padding: const EdgeInsets.all(8.0),
+                  itemBuilder: (context, item) {
+                    if (item.hasNestedGrid) {
+                      // Branch on the declarative flag rather than the id: this is what
+                      // keeps hosts portable (a flagged item dropped into another grid
+                      // still renders as a grid if that grid's builder does the same).
+                      final child = item.id == 'group'
+                          ? group
+                          : _dynamicChildren[item.id];
+                      if (child != null) {
+                        return _NestedHost(
+                          key: ValueKey(item.id),
+                          item: item,
+                          child: child,
+                          sizeToContent: sizeToContent,
+                        );
+                      }
+                    }
+                    final isDynamicHost = _dynamicChildren.containsKey(item.id);
+                    final color = isDynamicHost
+                        ? theme.colorScheme.primaryContainer
+                        : theme.colorScheme.tertiaryContainer;
+                    final textColor = isDynamicHost
+                        ? theme.colorScheme.onPrimaryContainer
+                        : theme.colorScheme.onTertiaryContainer;
+
+                    return _NestedTile(
+                      key: ValueKey(item.id),
+                      item: item,
+                      backgroundColor: color,
+                      textColor: textColor,
+                    );
+                  },
+                ),
+              ),
             ),
           ),
           if (isDesktop)
             Container(
               width: 320,
               decoration: BoxDecoration(
-                border: Border(left: BorderSide(color: Colors.grey.shade800)),
+                border: Border(
+                  left: BorderSide(color: theme.colorScheme.outlineVariant),
+                ),
               ),
-              child: Material(color: Colors.grey.shade900, child: configPanel),
+              child: Material(
+                color: theme.colorScheme.surfaceContainerLow,
+                child: configPanel,
+              ),
             ),
         ],
       ),
@@ -445,20 +357,18 @@ class _ConfigPanel extends StatelessWidget {
             'NESTED GRID PANEL',
             style: theme.textTheme.titleMedium?.copyWith(
               fontWeight: FontWeight.bold,
-              color: Colors.indigo.shade300,
+              color: theme.colorScheme.primary,
             ),
           ),
           const Divider(),
-
-          _SectionTitle('Interaction'),
+          const _SectionTitle('Interaction'),
           _SwitchTile(
             title: 'Edit Mode (Draggable/Resizable)',
             notifier: isEditing,
             onChanged: (_) => onEditModeChanged(),
           ),
-
           const SizedBox(height: 16),
-          _SectionTitle('Nested Behavior'),
+          const _SectionTitle('Nested Behavior'),
           _SwitchTile(
             title: 'sizeToContent (host grows vs internal scroll)',
             notifier: sizeToContent,
@@ -490,17 +400,20 @@ class _ConfigPanel extends StatelessWidget {
               );
             },
           ),
-
           const SizedBox(height: 10),
-          const Text(
+          Text(
             'Compaction Type',
-            style: TextStyle(fontSize: 12, color: Colors.grey),
+            style: TextStyle(
+              fontSize: 12,
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
           ),
           ValueListenableBuilder<CompactType>(
             valueListenable: compactionType,
             builder: (context, value, _) {
               return DropdownButton<CompactType>(
                 isExpanded: true,
+                dropdownColor: theme.colorScheme.surfaceContainerHigh,
                 value: value,
                 items: CompactType.values
                     .map(
@@ -519,11 +432,11 @@ class _ConfigPanel extends StatelessWidget {
               );
             },
           ),
-
           const SizedBox(height: 16),
-          _SectionTitle('Tree Save / Load'),
+          const _SectionTitle('Tree Save / Load'),
           Wrap(
             spacing: 8,
+            runSpacing: 8,
             children: [
               ElevatedButton.icon(
                 onPressed: onSave,
@@ -548,9 +461,8 @@ class _ConfigPanel extends StatelessWidget {
               labelText: 'Exported tree (JSON)',
             ),
           ),
-
           const SizedBox(height: 16),
-          _SectionTitle('How to try it'),
+          const _SectionTitle('How to try it'),
           Text(
             'Drag "nested-*" out into the amber root grid, or a green leaf into '
             'the nested grid. Turn on subGridDynamic, then hold a dragged item '
@@ -569,14 +481,15 @@ class _SectionTitle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8.0),
       child: Text(
         title,
-        style: const TextStyle(
+        style: TextStyle(
           fontWeight: FontWeight.bold,
           fontSize: 13,
-          color: Colors.white70,
+          color: theme.colorScheme.onSurfaceVariant,
         ),
       ),
     );
@@ -607,6 +520,93 @@ class _SwitchTile extends StatelessWidget {
             notifier.value = val;
             onChanged?.call(val);
           },
+        );
+      },
+    );
+  }
+}
+
+class _NestedTile extends StatelessWidget {
+  const _NestedTile({
+    required this.item,
+    required this.backgroundColor,
+    required this.textColor,
+    super.key,
+  });
+
+  final LayoutItem item;
+  final Color backgroundColor;
+  final Color textColor;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      color: backgroundColor,
+      margin: EdgeInsets.zero,
+      elevation: 2,
+      child: Center(
+        child: Text(
+          item.id,
+          style: TextStyle(color: textColor, fontWeight: FontWeight.w600),
+        ),
+      ),
+    );
+  }
+}
+
+class _NestedHost extends StatelessWidget {
+  const _NestedHost({
+    required this.item,
+    required this.child,
+    required this.sizeToContent,
+    super.key,
+  });
+
+  final LayoutItem item;
+  final DashboardController child;
+  final ValueNotifier<bool> sizeToContent;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return ValueListenableBuilder<bool>(
+      valueListenable: sizeToContent,
+      builder: (context, stc, _) {
+        return Card(
+          margin: EdgeInsets.zero,
+          color: theme.colorScheme.surfaceContainerHighest,
+          clipBehavior: Clip.antiAlias,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Container(
+                color: theme.colorScheme.secondary,
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                child: Text(
+                  'Nested grid · ${item.id}',
+                  style: TextStyle(
+                    color: theme.colorScheme.onSecondary,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              Expanded(
+                child: NestedDashboard(
+                  controller: child,
+                  parentItemId: item.id,
+                  sizeToContent: stc,
+                  chromeExtent: 40,
+                  itemBuilder: (context, leaf) => _NestedTile(
+                    key: ValueKey(leaf.id),
+                    item: leaf,
+                    backgroundColor: theme.colorScheme.secondaryContainer,
+                    textColor: theme.colorScheme.onSecondaryContainer,
+                  ),
+                ),
+              ),
+            ],
+          ),
         );
       },
     );
