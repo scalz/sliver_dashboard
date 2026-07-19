@@ -1,8 +1,3 @@
-> **A Note on the Writing Process**
->
-> This document was structured and drafted through a technical interview between the author (who designed the architecture and made the engineering decisions) and an AI writing assistant configured as a technical journalist. Every technical fact, design decision, and engineering challenge described here represents the actual development experience of building `sliver_dashboard`.
-> 
-
 # Building a Dashboard Engine on Flutter Slivers
 
 *Why the hard part wasn't the dashboard — and how 1,000 draggable tiles stay fluid on Flutter Web.*
@@ -25,7 +20,7 @@ So I studied them. Not to port an API one-to-one, but to extract the interaction
 
 ## The real problem: a deterministic layout engine
 
-What's easy to misunderstood at the start, and what most dashboard packages often misunderstand: the challenge is not "a grid widget." The challenge is **a layout engine that stays deterministic under hundreds of mutations per second.**
+What's easy to misunderstand at the start, and what most dashboard packages often misunderstand: the challenge is not "a grid widget." The challenge is **a layout engine that stays deterministic under hundreds of mutations per second.**
 
 Think about what a single drag frame implies. One tile follows the pointer. Its collisions push neighbors, whose collisions push *their* neighbors. A compaction pass pulls everything up. The next pointer event arrives 8 milliseconds later and does it all again — and the result must be **stable**: the same inputs must always produce the same layout, or tiles start "swimming," oscillating between two solutions frame after frame. Every dashboard grid that feels broken feels broken for this exact reason.
 
@@ -73,32 +68,43 @@ The methodology I committed: **all performance work is validated on Flutter Web 
 
 This is the section I wish more package authors wrote, so here's mine.
 
-**The layout lies to you during a drag.** Hit-testing sounds trivial — until you remember that during any drag, the collision cascade is actively pushing tiles *away from the pointer*. Ask the live layout "what's under the cursor?" and the answer changes every frame, because whatever was there has just been shoved aside. Every hover-dependent feature (highlighting a drop target, converting a tile under the cursor into a nested grid) has to hit-test against the *pre-drag snapshot* — the world as it was before the pushes started. The live layout is for rendering; the snapshot is for truth.
+### 1. The layout lies to you during a drag
+Hit-testing sounds trivial—until you remember that during a drag, the collision cascade is actively pushing tiles *away from the pointer*. If you ask the live layout "what's under the cursor?" to highlight a drop target, the answer changes every frame because whatever was there has just been shoved aside.
 
-**Pointer events stop when the pointer stops.** One feature converts a tile into a nested grid when you *pause* on it mid-drag. Obvious implementation: detect the pause. Except there is no "pause event" — when the pointer stops moving, the event stream simply goes silent. Pause detection means a timer restarted on every move… at which point trackpads and touchscreens betray you, emitting sub-pixel jitter continuously, so the timer never fires. So the restart must be jitter-anchored — only real movement counts. And once the pause freezes the collision pushes, the edge auto-scroll — running on its own 16ms tick — happily re-applies them, fighting the freeze until you shut it down. Three interacting subsystems for one micro-interaction.
+The solution was using two distinct states: the live layout for rendering, and the pristine pre-drag snapshot for truth. But this introduced another trap: if the application mutates the layout while a drag is in flight (like flagging a tile as a nested-grid host mid-gesture), rebuilding from the snapshot silently erases that mutation—the freshly created nested grid unmounts with the item that had just been dropped into it. This required to implement a direct write-through to patch both the live layout and the snapshot simultaneously. Any system that rebuilds state from a snapshot has, somewhere, an asynchronous mutation path that bypasses it.
 
-**Immutable snapshots and mid-drag mutations don't mix — until they must.** Remember the rule that every drag frame recomputes from a pristine snapshot? It served flawlessly right up to the feature that lets the *application mutate the layout while a drag is in flight* (flagging a tile as a nested-grid host, mid-gesture). The next recompute rebuilt from the snapshot and silently erased the mutation — the freshly created nested grid unmounted with the item that had just been dropped into it. The fix is a write-through: mid-gesture mutations patch the snapshot too. The general lesson stung: **any system that rebuilds state from a snapshot has, somewhere, a mutation path that bypasses the snapshot.** Find it before your users do.
+### 2. Touchscreens betray your pause detection
+One feature converts a tile into a nested grid when the user pauses on it mid-drag. But there is no "pause event" in pointer streams—when movement stops, the stream simply goes silent. This required to implement a timer restarted on every move.
 
-**Cross-grid drag is a small distributed-systems problem.** Dragging a tile out of one grid and into another — possibly nested three levels deep, possibly created milliseconds ago — means multiple independent grids sharing one gesture. Who owns the pointer? What happens if the target grid gets disposed mid-flight, taking its render objects with it? (Answer: never cache a `RenderBox`; resolve it lazily at every use.) What restores the origin grid if the drop is cancelled? The solution is a coordinator with explicit sessions and a hard guarantee: *any* exit — drop, cancel, teardown — restores or finalizes, never leaks. Getting that guarantee took more tests than the happy path did.
+This is where trackpads and touchscreens betray you, continuously emitting sub-pixel jitter that prevents the timer from ever firing. The timer had to be jitter-anchored to ignore sub-pixel noise. Once the pause freeze took effect, the edge auto-scroll (running on its own 16ms tick) would still try to apply pushes, fighting the freeze until explicitly shutting it down. Three interacting subsystems for one micro-interaction.
 
-**The fastest rebuild is the one you refuse to do.** The content cache has a consequence that looks like a bug and is a contract: changing your `itemBuilder` between frames does *not* rebuild existing tiles. Their content is cached by design; you invalidate a tile's signature explicitly when its meaning changes. Making that a documented API decision — rather than a "sometimes it rebuilds" heuristic — is what keeps rebuilds near zero *predictably*.
+### 3. Multi-grid drag is a distributed state machine
+Dragging a tile out of one grid and into another—nested three levels deep, or created milliseconds ago—means multiple independent grids sharing a single gesture. Who owns the pointer? What happens if a target grid gets virtualized and disposed mid-flight?
 
-**You must never mistake a widget's layout box for its actual visual content boundaries.**
-When we extended the engine to support multiple, asymmetrical grids inside the *same* scroll view (Multi-Sliver Drag & Drop), we nested their respective interaction overlays (`DashboardOverlay`). Under the hood, each overlay provided its controller to its subtree via an `InheritedWidget`.
+The answer is to never cache a `RenderBox`; instead, resolve them lazily at every pointer update. The final solution is a coordinator driving explicit session states with an absolute transactional guarantee: any exit (drop, cancel, or sudden widget teardown) must either restore or commit cleanly, with zero leaks. Designing for the cancellation path took far more engineering and testing than the happy path did.
 
-But because the overlays were nested, the innermost provider shadowed the outer one—making both slivers bind to the exact same controller! Even worse, because the overlays were full-screen box widgets wrapping the scroll view, they *both* claimed the pointer was within their bounds during hit-testing. The depth-resolving coordinator always picked the deepest one, causing tiles in Grid 1 to instantly teleport to Grid 2 the millisecond you started dragging them.
+### 4. Mistaking a layout box for visual boundaries
+When extending the engine to support multiple, asymmetrical grids inside the same scroll view (Multi-Sliver Drag & Drop), first attempt was to nest their respective interaction overlays (`DashboardOverlay`). Because the overlays were nested, the innermost provider shadowed the outer one—making both slivers bind to the exact same controller! Even worse, because both overlays were full-screen boxes wrapping the scroll view, they both claimed the pointer was within their bounds. The coordinator always resolved hit-tests to the deepest overlay, causing tiles in Grid 1 to instantly teleport to Grid 2 the millisecond you started dragging them.
 
-The fix required two interventions: allowing slivers to bypass the ancestor lookup by explicitly binding their controller to their build subtree, and teaching the overlays to hit-test against the **Sliver's actual visible paint boundaries** (using scroll offsets and paint extents) rather than their own full-screen box geometries. It was a stark reminder that in complex composited layouts, visual truth lives in the sliver constraints, not the widget box.
+The fix required: to allow slivers to bypass the ancestor lookup by explicitly binding their controller to their build subtree, and to teach the overlays to hit-test against the **sliver's actual visible paint boundaries** (using scroll offsets and paint extents) rather than their own full-screen box geometries. It was a stark reminder that in complex composited layouts, visual truth lives in the sliver constraints, not the widget box.
+
+## The scale of it
+
+For a sense of what this represents: the v2.0 package is around **eight thousand lines of production Dart** — engine, controllers, views — and the test suite is *larger than the production code* (450 tests, 10K lines), run in CI on every commit. Determinism is a promise you can only keep with regression tests: every story above ended its life as one.
 
 ## The point I actually wanted to make about Flutter
 
-For years, the "Flutter vs. JS-based stacks debate" has been argued with CRUD apps and hello-world benchmarks. Yes, the web ecosystem has a historical headstart in library density for complex tools—rich like dashboard builders. But that is because a decade of library investment landed there.
+For years, the "Flutter vs. JS-based stacks debate" has been argued with CRUD apps and hello-world benchmarks. Yes, the web ecosystem has a historical headstart in library density for complex tools—rich like editors, whiteboards, or dashboard builders. But that is because a decade of library investment landed there.
 
-That's the gap `sliver_dashboard` is aimed at. Nothing in this article required heroics from the framework — slivers, repaint boundaries, and a pure Dart engine are all ordinary Flutter and ordinary software engineering. Flutter, gives us a raw, native graphics engine (Skia/Impeller) and sliver virtualization out of the box. We aren't negotiating with a browser's layout engine; we are painting directly to the GPU. The performance ceiling was never the framework's.  When you combine Flutter’s direct metal painting with a disciplined, allocation-free Dart engine, you don't just match JS performance—you easily surpass it. So the performance ceiling was ours to claim, one hard component at a time — cross-platform, from a single codebase.
+That's the gap `sliver_dashboard` is aimed at. Nothing in this article required heroics from the framework — slivers, repaint boundaries, and a pure Dart engine are all ordinary Flutter and ordinary software engineering. Flutter, gives us a raw, native graphics engine (Skia/Impeller) and sliver virtualization out of the box on mobile, desktop, and web alike. We aren't negotiating with a browser's layout engine, a virtual DOM, or an asynchronous runtime bridge; we are painting directly to the GPU.
+
+The performance ceiling was never the framework's.  When you combine Flutter’s direct metal painting with a disciplined, allocation-free Dart engine, you don't just match JS-based cross-platform performance—you easily surpass it, across all platforms from a single codebase.
 
 ## What's in the box
 
-No need to catalog the API here — the README documents more than twenty-five capabilities, each with a runnable example: nested grids with seamless cross-grid drag & drop, edit mode, external drag sources, drag-to-delete, multi-selection with cluster drag, responsive breakpoints, section barriers, a minimap, a bin-packing layout optimizer, import/export, custom compaction strategies, and keyboard navigation with screen-reader support. Getting started is deliberately boring:
+No need to catalog the API here — the README documents more than twenty-five capabilities, each with a runnable example: nested grids with seamless cross-grid drag & drop, edit mode, external drag sources, drag-to-delete, multi-selection with cluster drag, responsive breakpoints, section barriers, a minimap, a bin-packing layout optimizer, import/export, custom compaction strategies, and keyboard navigation with screen-reader support. 
+
+Getting started is deliberately boring:
 
 ```dart
 final controller = DashboardController(
@@ -121,3 +127,9 @@ Scaffold(
 No sliver in sight — `Dashboard` owns its scroll view. Drag, resize, collisions and compaction included; everything else is opt-in. And the day you need a collapsing app bar or a grid mixed with other slivers, the same engine and the same controller are available as a real sliver (`DashboardOverlay` + `SliverDashboard`) — you graduate to the composition API without rewriting anything.
 
 If you've been burned by dashboard grids before, this was built for you: not another grid widget, but an engine you can hold to account. And if you find a case where it doesn't hold up — open an issue, feel free to contribute. Keeping this engine robust and optimized under real-world scenarios is an ongoing priority, and every reported edge case is a welcome opportunity to make the test suite even stronger.
+
+
+> **A Note on the Writing Process**
+>
+> This document was structured and drafted through a technical interview between the author (who designed the architecture and made the engineering decisions) and an AI writing assistant configured as a technical journalist. Every technical fact, design decision, and engineering challenge described here represents the actual development experience of building `sliver_dashboard`.
+> 

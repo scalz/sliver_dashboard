@@ -1273,6 +1273,8 @@ Contributions are welcome! To ensure the project remains high-quality, reliable,
 
 ### Architecture & AI-Assisted Contributions
 
+For a comprehensive look at the engine's core design philosophy and layout pipeline, you can read this design decisions document: [Building a Dashboard Engine on Flutter Slivers](DESIGN_DECISIONS.md).
+
 The development of `sliver_dashboard` can be assisted using AI coding assistants under a disciplined, structured framework to ensure code quality and performance:
 
 *   **Strict Architectural Constraints:** All contributions must align with the State, Logic, and View layers detailed in [architecture.md](architecture.md). AI assistants are further guided by the rules in [AGENTS.md](AGENTS.md) file, which dictates core invariants (such as avoiding allocations during layout phases, enforcing proper tree isolation via `RepaintBoundary`, and maintaining row-index consistency).
