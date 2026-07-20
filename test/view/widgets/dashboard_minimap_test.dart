@@ -981,5 +981,177 @@ void main() {
       expect(internal.viewMainAxisContentExtent, greaterThanOrEqualTo(598 - 1));
       expect(internal.viewMainAxisLeadingExtent, isNotNull);
     });
+
+    group('Minimap — widget markers & item tap (opt-in)', () {
+      testWidgets(
+          'markerBuilder positions widgets over item rects, skips null, '
+          'and mounts no layer when absent', (tester) async {
+        final controller = DashboardController(
+          initialSlotCount: 4,
+          initialLayout: const [
+            LayoutItem(id: 'alert', x: 0, y: 0, w: 2, h: 2),
+            LayoutItem(id: 'calm', x: 2, y: 0, w: 2, h: 2),
+          ],
+        );
+        addTearDown(controller.dispose);
+        final scrollController = ScrollController();
+        addTearDown(scrollController.dispose);
+
+        Widget host({Widget? Function(BuildContext, LayoutItem)? builder}) => MaterialApp(
+              home: Scaffold(
+                body: Column(
+                  children: [
+                    Expanded(
+                      child: Dashboard<String>(
+                        controller: controller,
+                        scrollController: scrollController,
+                        itemBuilder: (context, item) => Text(item.id),
+                      ),
+                    ),
+                    SizedBox(
+                      width: 200,
+                      height: 200,
+                      child: DashboardMinimap(
+                        controller: controller,
+                        scrollController: scrollController,
+                        markerBuilder: builder,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+
+        await tester.pumpWidget(host());
+        await tester.pumpAndSettle();
+        expect(find.byIcon(Icons.warning), findsNothing);
+
+        await tester.pumpWidget(
+          host(
+            builder: (context, item) => item.id == 'alert'
+                ? const Align(child: Icon(Icons.warning, size: 10))
+                : null, // 'calm' is skipped
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(find.byIcon(Icons.warning), findsOneWidget);
+
+        // The icon sits inside the 'alert' half of the minimap (left half).
+        final minimapRect = tester.getRect(find.byType(DashboardMinimap));
+        final iconCenter = tester.getCenter(find.byIcon(Icons.warning));
+        expect(iconCenter.dx, lessThan(minimapRect.center.dx));
+      });
+
+      testWidgets(
+          'onItemTap fires with the tapped item and suppresses tap-to-scroll; '
+          'empty-area taps still scroll', (tester) async {
+        final controller = DashboardController(
+          initialSlotCount: 4,
+          initialLayout: [
+            // Enough content to make the scroll view scrollable.
+            for (var i = 0; i < 40; i++) LayoutItem(id: 'i$i', x: i % 4, y: i ~/ 4, w: 1, h: 1),
+          ],
+        );
+        addTearDown(controller.dispose);
+        final scrollController = ScrollController();
+        addTearDown(scrollController.dispose);
+        final taps = <String>[];
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: Column(
+                children: [
+                  Expanded(
+                    child: Dashboard<String>(
+                      controller: controller,
+                      scrollController: scrollController,
+                      itemBuilder: (context, item) => Text(item.id),
+                    ),
+                  ),
+                  SizedBox(
+                    width: 120,
+                    height: 160,
+                    child: DashboardMinimap(
+                      controller: controller,
+                      scrollController: scrollController,
+                      onItemTap: (item) => taps.add(item.id),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        // Tap the very top-left of the minimap: item i0's rectangle.
+        final minimapTopLeft = tester.getTopLeft(find.byType(DashboardMinimap));
+        await tester.tapAt(minimapTopLeft + const Offset(4, 4));
+        await tester.pumpAndSettle();
+        expect(taps, ['i0']);
+        expect(
+          scrollController.offset,
+          0,
+          reason: 'an item hit suppresses the default tap-to-scroll',
+        );
+      });
+    });
+
+    group('Desktop hover — spatial bucket index', () {
+      testWidgets(
+          'itemAtGlobal resolves via the bucket index on dense layouts '
+          '(>= threshold) with identical semantics', (tester) async {
+        // 40 items >= threshold (16): the bucket path is exercised.
+        final controller = DashboardController(
+          initialSlotCount: 4,
+          initialLayout: [
+            for (var i = 0; i < 40; i++) LayoutItem(id: 'i$i', x: i % 4, y: i ~/ 4, w: 1, h: 1),
+          ],
+        )..setEditMode(true);
+        addTearDown(controller.dispose);
+        final scrollController = ScrollController();
+        addTearDown(scrollController.dispose);
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: DashboardOverlay<String>(
+                controller: controller,
+                scrollController: scrollController,
+                itemBuilder: (context, item) => Text(item.id),
+                child: CustomScrollView(
+                  controller: scrollController,
+                  slivers: [
+                    SliverDashboard(
+                      itemBuilder: (context, item) => Text(item.id),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        final state = tester.state<State<DashboardOverlay<String>>>(
+          find.byType(DashboardOverlay<String>),
+        );
+        final target = state as CrossGridDragTarget;
+
+        // 800 px viewport, 4 columns, 8 px spacing: slot ~194 px, stride 202.
+        // (100, 100) lies inside cell (0, 0) -> 'i0'.
+        expect(target.itemAtGlobal(const Offset(100, 100))?.id, 'i0');
+        // (300, 100) lies inside cell (1, 0) -> 'i1'.
+        expect(target.itemAtGlobal(const Offset(300, 100))?.id, 'i1');
+        // Excluding the hit id yields null (overlap-free invariant).
+        expect(
+          target.itemAtGlobal(const Offset(100, 100), excludeId: 'i0'),
+          isNull,
+        );
+        // Far outside any cell: null.
+        expect(target.itemAtGlobal(const Offset(-50, -50)), isNull);
+      });
+    });
   });
 }

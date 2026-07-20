@@ -1107,6 +1107,28 @@ Markers live in their own cached layer (one batched `Path` per distinct
 color) and only re-rasterize when the marker list changes by value — scroll
 ticks still repaint nothing but the thin viewport layer.
 
+Need real widgets instead of painted dots? `markerBuilder` is the opt-in
+escape hatch — and `onItemTap` makes the minimap navigable:
+
+```dart
+DashboardMinimap(
+  controller: controller,
+  scrollController: scrollController,
+  // Widget markers: for SMALL sets (~50). Prefer `markers` beyond that —
+  // the Path layer adds zero objects per marker and never repaints on
+  // scroll, while widgets are re-reconciled every minimap rebuild.
+  markerBuilder: (context, item) => alerts.contains(item.id)
+      ? const Align(
+           alignment: Alignment.centerLeft, 
+           child: Icon(Icons.warning, size: 8, color: Colors.red),
+        )
+      : null, // null = no marker for this item
+  // Tap an item on the minimap: select it, scroll to it, open it…
+  // (suppresses tap-to-scroll for that tap; empty areas still scroll)
+  onItemTap: (item) => controller.scrollToItem(item.id),
+)
+```
+
 ### Desktop Hover Fine-Tuning
 
 On dense layouts (>= 16 items) pointer-to-item resolution uses an O(1)

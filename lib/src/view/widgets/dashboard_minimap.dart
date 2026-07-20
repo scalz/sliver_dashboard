@@ -28,6 +28,8 @@ class DashboardMinimap extends StatelessWidget {
     this.viewportIndicators,
     this.mainAxisLeadingExtent,
     this.mainAxisContentExtent,
+    this.markerBuilder,
+    this.onItemTap,
   });
 
   /// The dashboard controller containing the layout data.
@@ -78,6 +80,26 @@ class DashboardMinimap extends StatelessWidget {
   /// the exact extent here if that approximation is off for your tree.
   /// Ignored when [viewportIndicators] is provided.
   final double? mainAxisContentExtent;
+
+  /// Opt-in WIDGET markers: builds an arbitrary widget (an [Icon], a badge,
+  /// an animated indicator…) positioned over each item's minimap rectangle.
+  /// Return null to skip an item.
+  ///
+  /// Cost model — prefer [markers] for large sets: the batched-`Path` layer
+  /// adds ZERO objects per marker and never re-rasterizes on scroll, while
+  /// this layer mounts one Element + RenderObject per built marker (~1-2 KB
+  /// and a layout pass each) and is re-reconciled on every minimap rebuild
+  /// (i.e. every scroll tick). Imperceptible below ~50 markers; measurable
+  /// on every frame at 500+. Live widgets also invite animated content and
+  /// gesture detectors, whose per-frame cost is yours to budget.
+  final Widget? Function(BuildContext context, LayoutItem item)? markerBuilder;
+
+  /// Called when the user taps an item's rectangle on the minimap. When
+  /// provided and an item is hit, the default tap-to-scroll is SUPPRESSED
+  /// for that tap (call `scrollToItem` yourself if desired); taps on empty
+  /// minimap area still scroll. Hit-testing is a single O(N) pass on tap
+  /// only — nothing on the pointer-move or paint hot paths.
+  final void Function(LayoutItem item)? onItemTap;
 
   /// The viewport indicators to paint. When null (default), one indicator is
   /// derived from [scrollController], mapped onto the *grid's own scroll
@@ -229,13 +251,35 @@ class DashboardMinimap extends StatelessWidget {
             final drawnHeight = logicalGridHeight * scale;
 
             return GestureDetector(
-              onTapUp: (details) => _handleInteraction(
-                details.localPosition,
-                isVertical ? drawnHeight : drawnWidth,
-                isVertical,
-                segmentExtent: segmentExtent,
-                segmentLeading: segmentLeading,
-              ),
+              onTapUp: (details) {
+                // Item-tap resolution: O(N) once per tap, first-in-list wins
+                // (mirrors the painters' draw order). Suppresses the default
+                // tap-to-scroll only when an item is actually hit.
+                if (onItemTap != null) {
+                  for (final item in layout) {
+                    final rect = minimapItemRect(
+                      item,
+                      scale: scale,
+                      unitWidth: unitWidth,
+                      unitHeight: unitHeight,
+                      spacingRatioMain: spacingRatioMain,
+                      spacingRatioCross: spacingRatioCross,
+                      isVertical: isVertical,
+                    );
+                    if (rect.contains(details.localPosition)) {
+                      onItemTap!(item);
+                      return;
+                    }
+                  }
+                }
+                _handleInteraction(
+                  details.localPosition,
+                  isVertical ? drawnHeight : drawnWidth,
+                  isVertical,
+                  segmentExtent: segmentExtent,
+                  segmentLeading: segmentLeading,
+                );
+              },
               onPanUpdate: (details) => _handleInteraction(
                 details.localPosition,
                 isVertical ? drawnHeight : drawnWidth,
@@ -282,6 +326,30 @@ class DashboardMinimap extends StatelessWidget {
                             spacingRatioMain: spacingRatioMain,
                             spacingRatioCross: spacingRatioCross,
                             isVertical: isVertical,
+                          ),
+                        ),
+                      ),
+                    if (markerBuilder != null)
+                      Positioned.fill(
+                        child: RepaintBoundary(
+                          child: Stack(
+                            clipBehavior: Clip.hardEdge,
+                            children: [
+                              for (final item in layout)
+                                if (markerBuilder!(context, item) case final marker?)
+                                  Positioned.fromRect(
+                                    rect: minimapItemRect(
+                                      item,
+                                      scale: scale,
+                                      unitWidth: unitWidth,
+                                      unitHeight: unitHeight,
+                                      spacingRatioMain: spacingRatioMain,
+                                      spacingRatioCross: spacingRatioCross,
+                                      isVertical: isVertical,
+                                    ),
+                                    child: marker,
+                                  ),
+                            ],
                           ),
                         ),
                       ),
@@ -504,6 +572,47 @@ class _MinimapViewportPainter extends CustomPainter {
   }
 }
 
+/// Paints the custom overlay markers in an isolated cached layer.
+///
+/// Performance contract (see the v2.2 guideline):
+///  * all markers of a given color are batched into ONE [Path] — the number
+///    of canvas commands is the number of distinct colors, not of markers;
+///  * one reusable [Paint] for the whole layer, mutated per color group;
+///  * the layer is behind its own `RepaintBoundary` and `shouldRepaint`
+///    short-circuits on value equality, so scroll ticks and unrelated
+///    rebuilds cost zero raster work here.
+/// Computes the minimap rectangle of one [item] in minimap logical pixels.
+/// Single source of truth shared by the markers painter, the widget-marker
+/// layer and the item tap hit-test — keep the math identical to the item
+/// layer's painter.
+@visibleForTesting
+Rect minimapItemRect(
+  LayoutItem item, {
+  required double scale,
+  required double unitWidth,
+  required double unitHeight,
+  required double spacingRatioMain,
+  required double spacingRatioCross,
+  required bool isVertical,
+}) {
+  final double x;
+  final double y;
+  final double w;
+  final double h;
+  if (isVertical) {
+    x = (item.x * unitWidth + item.x * spacingRatioCross) * scale;
+    y = (item.y * unitHeight + item.y * spacingRatioMain) * scale;
+    w = (item.w * unitWidth + (max(0, item.w - 1) * spacingRatioCross)) * scale;
+    h = (item.h * unitHeight + (max(0, item.h - 1) * spacingRatioMain)) * scale;
+  } else {
+    x = (item.x * unitWidth + item.x * spacingRatioMain) * scale;
+    y = (item.y * unitHeight + item.y * spacingRatioCross) * scale;
+    w = (item.w * unitWidth + (max(0, item.w - 1) * spacingRatioMain)) * scale;
+    h = (item.h * unitHeight + (max(0, item.h - 1) * spacingRatioCross)) * scale;
+  }
+  return Rect.fromLTWH(x, y, w, h);
+}
+
 /// Maps the scrollable's visible window onto a minimap of one scroll
 /// segment. Returns `(indicatorStart, indicatorLength)` in minimap logical
 /// pixels, or null when nothing of the segment is visible.
@@ -578,21 +687,19 @@ class _MinimapMarkersPainter extends CustomPainter {
       }
       if (item == null) continue; // unknown id: ignore silently
 
-      final double x;
-      final double y;
-      final double w;
-      final double h;
-      if (isVertical) {
-        x = (item.x * unitWidth + item.x * spacingRatioCross) * scale;
-        y = (item.y * unitHeight + item.y * spacingRatioMain) * scale;
-        w = (item.w * unitWidth + (max(0, item.w - 1) * spacingRatioCross)) * scale;
-        h = (item.h * unitHeight + (max(0, item.h - 1) * spacingRatioMain)) * scale;
-      } else {
-        x = (item.x * unitWidth + item.x * spacingRatioMain) * scale;
-        y = (item.y * unitHeight + item.y * spacingRatioCross) * scale;
-        w = (item.w * unitWidth + (max(0, item.w - 1) * spacingRatioMain)) * scale;
-        h = (item.h * unitHeight + (max(0, item.h - 1) * spacingRatioCross)) * scale;
-      }
+      final rect = minimapItemRect(
+        item,
+        scale: scale,
+        unitWidth: unitWidth,
+        unitHeight: unitHeight,
+        spacingRatioMain: spacingRatioMain,
+        spacingRatioCross: spacingRatioCross,
+        isVertical: isVertical,
+      );
+      final x = rect.left;
+      final y = rect.top;
+      final w = rect.width;
+      final h = rect.height;
 
       // Cap the marker to the item's minimap rectangle: a 24 px marker on a
       // 15 px 1x1 tile would otherwise invert the clamp bounds below

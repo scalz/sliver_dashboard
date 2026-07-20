@@ -1,9 +1,9 @@
 name: sliver_dashboard
-description: "High-performance, sliver-based draggable and resizable grid engine for Flutter. Supports responsive layouts and collision handling."
+description: "Smooth, sliver-based drag & resize grid engine. Supports nested grids, cross-sliver DND, responsive layouts. Native Flutter alternative to GridStack & react-grid-layout."
 homepage: https://github.com/scalz/sliver_dashboard
 repository: https://github.com/scalz/sliver_dashboard
 issue_tracker: https://github.com/scalz/sliver_dashboard/issues
-version: 2.0.2
+version: 2.1.0
 
 environment:
   sdk:  ">=3.0.0 <4.0.0"

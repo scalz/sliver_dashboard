@@ -1,10 +1,26 @@
+## 2.1.0
+### Features
+
+- **Widget minimap markers** (`DashboardMinimap.markerBuilder`, opt-in):
+  build any widget (an `Icon`, a badge, an animated indicator) positioned
+  over an item's minimap rectangle; return null to skip an item. The
+  batched-`Path` `markers` layer remains the default and the recommended
+  choice for large sets (zero objects per marker, never re-rasterizes on
+  scroll); the widget layer mounts one Element/RenderObject per marker and
+  is re-reconciled on every minimap rebuild — imperceptible below ~50
+  markers, measurable at 500+.
+- **Minimap item taps** (`DashboardMinimap.onItemTap`): tap an item's
+  rectangle to get the `LayoutItem` (select it, scroll to it…). When an
+  item is hit the default tap-to-scroll is suppressed for that tap; empty
+  areas still scroll.
+
 ## 2.0.2
 Reduced gif size for pub dev
 
 ## 2.0.1
 Fix README.md gif
 
-## 2.0.0
+## 2.0.0 - 2026-07-20
 
 ### Highlights
 
@@ -255,7 +271,7 @@ Easily create per-item breakpoints. The grid already computes every item's pixel
 - **Compaction Determinism**: Introduced alphabetical ID-sorting tie-breakers to `sortLayoutItems` and Skyline compactors to ensure deterministic placement on multi-collision overlaps.
 - **Boundary painting bounds**: Optimized row painting inside the grid background custom painter to clamp drawn lines strictly within the visible viewport.
 
-## 1.0.0
+## 1.0.0 - 2026-06-16
 
 ### New Features
 - **DashboardPolicy API**: Introduced a declarative interaction policy interface (`DashboardPolicy`). You can now intercept, validate, and block drag/resize starts, coordinate moves, or granular item-to-item collisions (e.g. blocking charts from pushing KPIs) on-the-fly without having to write a full custom compaction delegate.

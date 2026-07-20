@@ -736,6 +736,7 @@ class _DashboardPageState extends State<DashboardPage> {
                     alpha: 0.2,
                   ),
                 ),
+                onItemTap: (item) => controller.scrollToItem(item.id),
                 markers: const [
                   MinimapMarker(
                     itemId: 'sec_sys',
@@ -752,6 +753,21 @@ class _DashboardPageState extends State<DashboardPage> {
                     alignment: Alignment.centerLeft,
                   ),
                 ],
+                // markerBuilder: (ctx, item) {
+                //   if (item.id == 'sec_sys') {
+                //     return Align(
+                //       alignment: Alignment.centerRight,
+                //       child: FittedBox(fit: BoxFit.fitHeight, child: Icon(Icons.star)),
+                //     );
+                //   }
+                //   if (item.id == 'sec_usr') {
+                //     return Align(
+                //       alignment: Alignment.centerLeft,
+                //       child: FittedBox(fit: BoxFit.fitHeight, child: Icon(Icons.person)),
+                //     );
+                //   }
+                //   return null;
+                // },
               ),
             ),
           ),
