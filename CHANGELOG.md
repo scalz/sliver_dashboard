@@ -1,3 +1,6 @@
+## 2.0.2
+Reduced gif size for pub dev
+
 ## 2.0.1
 Fix README.md gif
 
