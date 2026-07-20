@@ -10,7 +10,9 @@
 
 Ideal for analytics platforms, IoT control panels, project management tools, no-code builders, and any application requiring complex, interactive layouts across mobile, desktop, and web.
 
-![Sliver Dashboard Demo](https://raw.githubusercontent.com/scalz/sliver_dashboard/main/img/single_grid.gif)
+<p align="center">
+  <img src="https://raw.githubusercontent.com/scalz/sliver_dashboard/main/img/single_grid.gif" alt="Sliver Dashboard Demo" width="500"/>
+</p>
 
 ## Features
 
