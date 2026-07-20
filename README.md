@@ -10,37 +10,37 @@
 
 Ideal for analytics platforms, IoT control panels, project management tools, no-code builders, and any application requiring complex, interactive layouts across mobile, desktop, and web.
 
-![Sliver Dashboard Demo](https://raw.githubusercontent.com/scalz/sliver_dashboard/main/img/demo.gif)
+![Sliver Dashboard Demo](https://raw.githubusercontent.com/scalz/sliver_dashboard/main/img/single_grid.gif)
 
 ## Features
 
-- 🚀 **High Performance:** Built on Flutter's `Sliver` protocol with **smart caching**. It only renders visible items and prevents unnecessary rebuilds of children during drag/resize operations.
-- 🧩 **Sliver Composition:** Integrate the dashboard's grid seamlessly with other slivers like `SliverAppBar` and `SliverList` within a single `CustomScrollView`.
-- 🪆 **Nested Grids:** Embed full dashboards inside grid items (`NestedDashboard`) at any depth, and **drag items between grids** (parent ↔ child ↔ siblings) with a live push-preview placeholder. Supports auto-sizing hosts, dynamic sub-grid creation, and one-call recursive save/load.
-- 🔀 **Cross-Sliver Drag & Drop:** drag tiles between independent sibling `SliverDashboard`s sharing one `CustomScrollView`, with **dimension projection policies** (`preserveLogicalSize`, `preserveVisualProportion`, or a custom callback) translating item sizes between grids of different column counts.
-- 🎨 **Fully Customizable:** Control the number of columns, aspect ratio, spacing, grid and handles style. Items can be draggable, resizable, and static. Support for dedicated **Drag Handles** (`DashboardDragStartListener`) and configurable mobile drag start gestures (long-press, tap, or handle-only).
-- 🛡️ **Declarative Interaction Policies (`DashboardPolicy`):** Inject granular business rules (e.g., "charts cannot push system KPIs", "block dragging on Row 0") on-the-fly without having to write custom compaction delegates.
-- 📌 **Segmented Grids (Section Barriers):** Divide your grid into organized visual sections using static section barriers with custom header builders while maintaining strict collision boundaries.
-- ↔️ **Horizontal & Vertical Layouts:** Supports both vertical (default) and horizontal scrolling directions.
-- 💥 **Smart Collision Detection:** Choose your desired behavior:
+- **High Performance:** Built on Flutter's `Sliver` protocol with **smart caching**. It only renders visible items and prevents unnecessary rebuilds of children during drag/resize operations.
+- **Sliver Composition:** Integrate the dashboard's grid seamlessly with other slivers like `SliverAppBar` and `SliverList` within a single `CustomScrollView`.
+- **Nested Grids:** Embed full dashboards inside grid items (`NestedDashboard`) at any depth, and **drag items between grids** (parent ↔ child ↔ siblings) with a live push-preview placeholder. Supports auto-sizing hosts, dynamic sub-grid creation, and one-call recursive save/load.
+- **Cross-Sliver Drag & Drop:** drag tiles between independent sibling `SliverDashboard`s sharing one `CustomScrollView`, with **dimension projection policies** (`preserveLogicalSize`, `preserveVisualProportion`, or a custom callback) translating item sizes between grids of different column counts.
+- **Fully Customizable:** Control the number of columns, aspect ratio, spacing, grid and handles style. Items can be draggable, resizable, and static. Support for dedicated **Drag Handles** (`DashboardDragStartListener`) and configurable mobile drag start gestures (long-press, tap, or handle-only).
+- **Declarative Interaction Policies (`DashboardPolicy`):** Inject granular business rules (e.g., "charts cannot push system KPIs", "block dragging on Row 0") on-the-fly without having to write custom compaction delegates.
+- **Segmented Grids (Section Barriers):** Divide your grid into organized visual sections using static section barriers with custom header builders while maintaining strict collision boundaries.
+- **Horizontal & Vertical Layouts:** Supports both vertical (default) and horizontal scrolling directions.
+- **Smart Collision Detection:** Choose your desired behavior:
   - **Push:** Items push each other out of the way to avoid overlap.
   - **Push or Shrink:** Items can be shrinked or pushed when resizing a neighbour item.
   - **Auto-Shrink on Drag:** Move large widgets over smaller items, and the engine automatically contracts neighboring elements to clear room.
-- 🧲 **Compaction:** Choose your desired behavior:
+- **Compaction:** Choose your desired behavior:
   - **None:** Free positioning. Items are not compacted.
   - **Vertical:** Items are compacted to top.
   - **Horizontal:** Items are compacted to left.
   - **Custom:** Implement `CompactorDelegate` to define custom rules (e.g., specific gravity, fixed zones).
-- 🗑️ **Built-in Trash:** Easy-to-implement drag-to-delete functionality. Or implement your own using available callbacks.
-- ✨ **Custom Feedback:** Customize the appearance of items while they are being dragged. Use onInteractionStart callback for haptic feedback...
-- 🎞️ **Reflow Animations:** pushed/compacted tiles slide to their new slot.
-- 📥 **Drag From Outside:** Drop new items from external sources directly into the grid with auto-scrolling support.
-- 💡 **Guidance:** Optional contextual tooltips/guidance messages.
-- 📱 **Responsive Layouts:** Automatically adapt the number of columns (`slotCount`) based on the screen width using the built-in `breakpoints` property.
-- ♿ **Accessibility:** Full keyboard navigation support (Tab, Arrows, Space, Enter, customizable keys) and Screen Reader announcements (TalkBack/VoiceOver).
-- 🗺️ **Mini-Map:** A customizable widget to visualize the entire dashboard layout and current viewport, perfect for large grids. Supports **overlay markers** (status dots/badges per item) and **multiple viewport indicators** for multi-sliver scroll views.
-- 🖱️ **Multi-Selection:** Select and move multiple items at once using `Shift` + Click (customizable keys).
-- 💾 **Utilities**: Import/Export, find free cells, get last row, Auto Layout & Bulk Add.
+- **Built-in Trash:** Easy-to-implement drag-to-delete functionality. Or implement your own using available callbacks.
+- **Custom Feedback:** Customize the appearance of items while they are being dragged. Use onInteractionStart callback for haptic feedback...
+- **Reflow Animations:** pushed/compacted tiles slide to their new slot.
+- **Drag From Outside:** Drop new items from external sources directly into the grid with auto-scrolling support.
+- **Guidance:** Optional contextual tooltips/guidance messages.
+- **Responsive Layouts:** Automatically adapt the number of columns (`slotCount`) based on the screen width using the built-in `breakpoints` property.
+- **Accessibility:** Full keyboard navigation support (Tab, Arrows, Space, Enter, customizable keys) and Screen Reader announcements (TalkBack/VoiceOver).
+- **Mini-Map:** A customizable widget to visualize the entire dashboard layout and current viewport, perfect for large grids. Supports **overlay markers** (status dots/badges per item) and **multiple viewport indicators** for multi-sliver scroll views.
+- **Multi-Selection:** Select and move multiple items at once using `Shift` + Click (customizable keys).
+- **Utilities**: Import/Export, find free cells, get last row, Auto Layout & Bulk Add.
 
 ## Try the Demo
 
@@ -753,10 +753,6 @@ Dashboard(
 
 For large dashboards, you can add a Mini-Map to visualize the layout and the current viewport.
 
-<p align="center">
-  <img src="https://raw.githubusercontent.com/scalz/sliver_dashboard/main/img/minimap.gif" alt="Mini map" width="400"/>
-</p>
-
 ```dart
 Stack(
   children: [
@@ -859,11 +855,6 @@ Deeper integrations: sliver composition, nested dashboards, and custom engine st
 
 For advanced layouts (e.g., collapsing app bars, mixed lists and grids), use `DashboardOverlay` and `SliverDashboard`.
 
-<p align="center">
-  <img src="https://raw.githubusercontent.com/scalz/sliver_dashboard/main/img/demo_sliver.gif" alt="Native SliverDashboard" width="400"/>
-</p>
-
-
 1.  **`DashboardOverlay`**: Wraps your `CustomScrollView`. It handles gestures, auto-scrolling, the background grid, and the trash bin.
 2.  **`SliverDashboard`**: Renders the grid items inside the scroll view.
 
@@ -935,6 +926,10 @@ Embed a full dashboard inside a grid item, and let users drag items **between**
 grids — parent ↔ nested ↔ siblings, at any depth. The item leaves its source
 grid live, a push-preview placeholder follows the cursor in whichever grid is
 hovered, and dropping outside every grid restores the source layout.
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/scalz/sliver_dashboard/main/img/nested_grids.gif" alt="Nested grids" width="400"/>
+</p>
 
 ```dart
 final root  = DashboardController(initialLayout: [...]);
@@ -1008,6 +1003,10 @@ their grid), and item ids must be unique across the tree. See
 documented behaviors.
 
 #### Multi-Sliver Drag & Drop (Sibling Grids)
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/scalz/sliver_dashboard/main/img/multi_sliver_cross_drag.gif" alt="Cross drag&drop in Multi Sliver" width="400"/>
+</p>
 
 You can also coordinate drag-and-drop operations across completely separate sibling grids (e.g., separated by a collapsing `SliverAppBar` or a normal native `SliverList`) inside the same `CustomScrollView`.
 

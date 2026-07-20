@@ -882,7 +882,7 @@ class _ConfigPanel extends StatelessWidget {
             onChanged: (val) => controller.setAllowAutoShrink(allow: val),
           ),
           _SwitchTile(
-            title: 'Enable Reflow Animations (v2.1)',
+            title: 'Enable Reflow Animations',
             notifier: animateReflow,
           ),
           const SizedBox(height: 10),
