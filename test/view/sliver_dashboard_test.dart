@@ -232,6 +232,73 @@ void main() {
     expect(capturedH, greaterThan(0));
   });
 
+  // Geometric child ordering (materialization bound).
+  //
+  // The sliver mounts a CONTIGUOUS child-index window. If children were fed
+  // in ID order and ids do not correlate with geometry (uuids, unpadded
+  // counters), the visible tiles have scattered indices and the window can
+  // span hundreds of children — localized fast-scroll jank. The view layer
+  // now feeds a geometrically sorted view, so the window stays tight
+  // regardless of id scheme.
+  testWidgets(
+      'ids anti-correlated with geometry do not inflate the materialized '
+      'child window', (tester) async {
+    // 300 items, 4 columns, one item per cell; ids DESCEND while y ascends:
+    // the worst possible id-vs-geometry scramble.
+    final controller = DashboardController(
+      initialSlotCount: 4,
+      initialLayout: [
+        for (var i = 0; i < 300; i++)
+          LayoutItem(
+            id: 'itm_${(299 - i).toString().padLeft(3, '0')}',
+            x: i % 4,
+            y: i ~/ 4,
+            w: 1,
+            h: 1,
+          ),
+      ],
+    );
+    addTearDown(controller.dispose);
+    final scrollController = ScrollController();
+    addTearDown(scrollController.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Dashboard<String>(
+            controller: controller,
+            scrollController: scrollController,
+            itemBuilder: (context, item) => Text(item.id),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    int mounted() => find.textContaining('itm_').evaluate().length;
+
+    // 800x600 test viewport, slot ~194 px: ~4 visible rows (+ cache extent).
+    // With ID-ordered children this would be ~all 300; the geometric view
+    // keeps it near the visible window.
+    expect(
+      mounted(),
+      lessThan(80),
+      reason: 'materialized window must track geometry, not id order',
+    );
+    expect(mounted(), greaterThan(0));
+
+    // Same bound after a deep scroll (different index region).
+    scrollController.jumpTo(scrollController.position.maxScrollExtent / 2);
+    await tester.pumpAndSettle();
+    expect(mounted(), lessThan(80));
+
+    // Items on the first visible row are the geometrically-top ones,
+    // regardless of their (high) ids.
+    scrollController.jumpTo(0);
+    await tester.pumpAndSettle();
+    expect(find.text('itm_299'), findsOneWidget); // at (0,0): highest id
+  });
+
   // Helper to generate a large layout
   List<LayoutItem> generateItems(int count, int cols) {
     final items = <LayoutItem>[];

@@ -1,3 +1,12 @@
+## 2.1.1
+
+### Performance Bug Fixes
+
+- **Engine optimizations**: for faster resize on large grids.
+- **Smooth scrolling regardless of item ids**: fast scrolling on large
+  grids could jank when item ids didn't follow their position on screen
+  (uuid ids, timestamped ids).
+
 ## 2.1.0
 ### Features
 

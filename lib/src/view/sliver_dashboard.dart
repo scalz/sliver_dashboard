@@ -160,6 +160,52 @@ class SliverDashboard extends StatefulWidget {
 }
 
 class _SliverDashboardState extends State<SliverDashboard> with TickerProviderStateMixin {
+  // ==========================================================================
+  // Geometric child ordering
+  // ==========================================================================
+  // The sliver protocol materializes a CONTIGUOUS child-index window: to
+  // paint the visible tiles, every index between the first and the last
+  // visible one is mounted (the layout pass fills index gaps). The
+  // controller's list is ID-ordered, and when ids do not correlate with
+  // geometry (uuid ids, timestamp ids with unpadded counters…), the visible
+  // tiles have SCATTERED indices — a 30-tile viewport can force hundreds of
+  // children alive, with localized fast-scroll jank wherever the scramble is
+  // worst (observed: two 500-item stress batches lagged where forty 100-item
+  // batches did not, the scramble radius being bounded by the batch size).
+  //
+  // The view layer therefore feeds the sliver a GEOMETRICALLY sorted view of
+  // the layout (main axis, then cross axis, then id for determinism), so the
+  // visible window is index-contiguous by construction. Element identity is
+  // preserved across reorders by the existing ValueKeys +
+  // findChildIndexCallback. The view is memoized per layout list instance,
+  // keeping every identity guard downstream (render-object items setter,
+  // reflow seed pass) behaving exactly as before: a new view instance
+  // appears if and only if the layout instance changed.
+  List<LayoutItem>? _geoViewSrc;
+  late List<LayoutItem>? _geoViewCache;
+  Axis? _geoViewAxis;
+
+  List<LayoutItem> _geometricViewOf(List<LayoutItem> src) {
+    if (identical(_geoViewSrc, src) && _geoViewAxis == widget.scrollDirection) {
+      return _geoViewCache!;
+    }
+    final isVertical = widget.scrollDirection == Axis.vertical;
+    final view = List<LayoutItem>.of(src)
+      ..sort((a, b) {
+        final mainA = isVertical ? a.y : a.x;
+        final mainB = isVertical ? b.y : b.x;
+        if (mainA != mainB) return mainA.compareTo(mainB);
+        final crossA = isVertical ? a.x : a.y;
+        final crossB = isVertical ? b.x : b.y;
+        if (crossA != crossB) return crossA.compareTo(crossB);
+        return a.id.compareTo(b.id);
+      });
+    _geoViewSrc = src;
+    _geoViewCache = view;
+    _geoViewAxis = widget.scrollDirection;
+    return view;
+  }
+
   /// Publishes the sliver's exact layout metrics onto the controller (plain
   /// fields — written during layout, so no beacon/notify is allowed here).
   /// Consumed by DashboardMinimap to map its viewport indicator and
@@ -240,7 +286,7 @@ class _SliverDashboardState extends State<SliverDashboard> with TickerProviderSt
 
     final ctrlSlotCount = _controller.slotCount.watch(context);
 
-    final layout = _controller.layout.value;
+    final layout = _geometricViewOf(_controller.layout.value);
     final keyToIndex = _getOrUpdateKeyToIndex(layout);
 
     // Use SliverLayoutBuilder instead of LayoutBuilder to return a RenderSliver
@@ -282,7 +328,7 @@ class _SliverDashboardState extends State<SliverDashboard> with TickerProviderSt
         }
 
         return SliverDashboardLayout(
-          items: _controller.layout.value,
+          items: layout,
           slotCount: _controller.slotCount.value,
           scrollDirection: widget.scrollDirection,
           slotAspectRatio: widget.slotAspectRatio,
@@ -296,7 +342,9 @@ class _SliverDashboardState extends State<SliverDashboard> with TickerProviderSt
           onLayoutMetrics: _publishLayoutMetrics,
           delegate: SliverChildBuilderDelegate(
             (context, index) {
-              final item = _controller.layout.value[index];
+              // The captured geometric view — never re-read the controller
+              // here: a mid-frame mutation would skew index-to-item mapping.
+              final item = layout[index];
 
               // Calculate exact dimensions analytically only if a responsive builder is active.
               final double? itemWidth;

@@ -488,3 +488,59 @@ per grid in multi-sliver scroll views.
   flicker the highlight or restart the `nestHoverDelay` timer. The anchor
   survives `_clearNestHover` deliberately — it anchors the filter across the
   very transition it debounces.
+
+### Batch scaling
+
+- **Closed-form compaction rise/slide:** when an item's start position is
+  collision-free, its rest position equals the max lower/right edge among
+  already-compacted items overlapping it on the cross axis — computed in one
+  O(|compareWith|) scan instead of a one-cell-at-a-time walk with a full
+  collision scan per step (O(items x travel x items), ~70M tests for a
+  500-into-500 batch). Colliding starts keep the historical path verbatim;
+  output equivalence is proven in the code comment and pinned by
+  `test/engine/batch_scaling_test.dart`.
+- **Occupancy-set placement:** `placeNewItems` marks covered cells in a
+  `Set<int>` (packed `(y << 20) | x`) and tests candidates in O(w*h);
+  identical scan order and results.
+- **Minimap widget markers:** `markerBuilder` mounts a `Positioned` per
+  built marker inside its own `RepaintBoundary`, sharing `minimapItemRect`
+  with the Path markers painter and the `onItemTap` hit-test (single source
+  of truth for the rect math). Cost model documented on the API: prefer the
+  Path layer beyond ~50 markers.
+
+### Geometric child ordering
+
+`_SliverDashboardState` feeds the sliver a memoized, geometrically sorted
+view of the controller's ID-ordered layout (main axis, cross axis, id
+tiebreak). Rationale: the sliver protocol materializes a contiguous
+child-index window, so visible tiles with scattered indices (ids
+uncorrelated with geometry) force the window to span far beyond the
+viewport. The view is identity-memoized per layout instance — downstream
+identity guards (render-object items setter, reflow seed pass) see a new
+instance iff the layout actually changed. The controller list itself stays
+ID-ordered (engine invariant untouched); only the view adapts. Element
+state survives reorders via ValueKeys + `findChildIndexCallback`.
+
+### Skyline vertical compaction
+
+`VerticalCompactor.compact` maintains an occupancy `Set<int>` of covered
+cells and a per-column skyline (`colHeights`). Fast path per item:
+start-collision in O(w*h), rest position = max skyline over the item's
+columns in O(w) — valid only when that max is <= the item's y (a static
+BELOW the item dominates its columns' skyline without bounding its rise;
+that case, like colliding starts, takes the historical `_compactItemVertical`
+path verbatim). Total O(N*w*h) vs the previous O(N^2): resizeItem runs a
+full compact per pointer event, which froze the web UI at N=1000. Exact
+positional equivalence with the historical algorithm is pinned by a
+randomized oracle in `test/engine/batch_scaling_test.dart`. Known remaining
+waste (untouched): `resolveCompactionCollision`'s recursion discards its
+return values — dead code inherited from the JS original.
+
+### Push-cascade integrity
+
+`moveElement`'s safety cap now reflects the true worst case
+(~N*(N/cols) re-enqueues when pushing near the top of a dense grid) instead
+of 4N, which broke silently in release and returned overlapping layouts —
+the root trigger of the top-of-grid resize freeze.
+`resolveCompactionCollision` is reduced to its effective semantics (a pure
+single-axis move).

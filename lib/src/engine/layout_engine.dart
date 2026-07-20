@@ -70,14 +70,67 @@ class VerticalCompactor extends CompactorDelegate {
     final sorted = sortLayoutItems(layout, CompactType.vertical);
     final out = List<LayoutItem?>.filled(layout.length, null);
 
+    final indexOf = <String, int>{
+      for (var i = 0; i < layout.length; i++) layout[i].id: i,
+    };
+
+    // Occupancy set + per-column skyline over already-placed items.
+    final occupied = <int>{};
+    final colHeights = List<int>.filled(max(cols, 1), 0);
+    void markPlaced(LayoutItem p) {
+      for (var dy = 0; dy < p.h; dy++) {
+        final rowBase = (p.y + dy) << 20;
+        for (var dx = 0; dx < p.w; dx++) {
+          occupied.add(rowBase | (p.x + dx));
+        }
+      }
+      final bottomEdge = p.y + p.h;
+      final xEnd = min(p.x + p.w, colHeights.length);
+      for (var x = max(p.x, 0); x < xEnd; x++) {
+        if (bottomEdge > colHeights[x]) colHeights[x] = bottomEdge;
+      }
+    }
+
+    bool startCollides(LayoutItem p) {
+      for (var dy = 0; dy < p.h; dy++) {
+        final rowBase = (p.y + dy) << 20;
+        for (var dx = 0; dx < p.w; dx++) {
+          if (occupied.contains(rowBase | (p.x + dx))) return true;
+        }
+      }
+      return false;
+    }
+
+    compareWith.forEach(markPlaced);
+
     for (final l in sorted) {
       var newL = l;
       if (!l.isStatic) {
-        newL = _compactItemVertical(compareWith, l, cols, sorted);
+        var restY = -1;
+        if (!startCollides(l)) {
+          restY = 0;
+          final xEnd = min(l.x + l.w, colHeights.length);
+          for (var x = max(l.x, 0); x < xEnd; x++) {
+            if (colHeights[x] > restY) restY = colHeights[x];
+          }
+        }
+        if (restY >= 0 && restY <= l.y) {
+          // Fast path: every skyline contribution in l's columns sits at or
+          // above l, so the per-column max equals the closed-form
+          // max-lower-edge rise bound exactly.
+          newL = restY < l.y ? l.copyWith(y: restY) : l;
+        } else {
+          // Historical path. Two cases land here: a colliding start
+          // (overlapping input), and restY > l.y — a STATIC placed BELOW l
+          // dominates the skyline of its columns, which says nothing about
+          // how far l may rise; the verbatim resolution handles both.
+          newL = _compactItemVertical(compareWith, l, cols, sorted);
+        }
         compareWith.add(newL);
+        markPlaced(newL);
       }
 
-      final index = layout.indexWhere((item) => item.id == l.id);
+      final index = indexOf[l.id]!;
       if (newL.x == l.x && newL.y == l.y && !l.moved) {
         out[index] = l;
       } else {
@@ -101,9 +154,27 @@ class VerticalCompactor extends CompactorDelegate {
   ) {
     var currentItem = l;
 
-    // Move up
-    while (currentItem.y > 0 && getFirstCollision(compareWith, currentItem) == null) {
-      currentItem = currentItem.copyWith(y: currentItem.y - 1);
+    // Closed-form rise.
+    // When the start position is collision-free, rising stops exactly at the
+    // max lower edge among horizontally-overlapping items whose lower edge
+    // is at or above the start — a single O(|compareWith|) scan with a
+    // provably identical result (any item that could block below that bound
+    // would already collide at the start, which the guard excludes). When
+    // the start DOES collide, the historical behavior (no rise, then the
+    // down-resolution loop) is preserved unchanged.
+    if (getFirstCollision(compareWith, currentItem) == null) {
+      var restY = 0;
+      for (final other in compareWith) {
+        if (other.x < currentItem.x + currentItem.w && currentItem.x < other.x + other.w) {
+          final bottomEdge = other.y + other.h;
+          if (bottomEdge <= currentItem.y && bottomEdge > restY) {
+            restY = bottomEdge;
+          }
+        }
+      }
+      if (restY < currentItem.y) {
+        currentItem = currentItem.copyWith(y: restY);
+      }
     }
 
     // Resolve collisions by moving down
@@ -138,6 +209,10 @@ class HorizontalCompactor extends CompactorDelegate {
     final sorted = sortLayoutItems(layout, CompactType.horizontal);
     final out = List<LayoutItem?>.filled(layout.length, null);
 
+    final indexOf = <String, int>{
+      for (var i = 0; i < layout.length; i++) layout[i].id: i,
+    };
+
     for (final l in sorted) {
       var newL = l;
       if (!l.isStatic) {
@@ -145,7 +220,7 @@ class HorizontalCompactor extends CompactorDelegate {
         compareWith.add(newL);
       }
 
-      final index = layout.indexWhere((item) => item.id == l.id);
+      final index = indexOf[l.id]!;
       if (newL.x == l.x && newL.y == l.y && !l.moved) {
         out[index] = l;
       } else {
@@ -169,9 +244,22 @@ class HorizontalCompactor extends CompactorDelegate {
   ) {
     var currentItem = l;
 
-    // 1. Move left as far as possible
-    while (currentItem.x > 0 && getFirstCollision(compareWith, currentItem) == null) {
-      currentItem = currentItem.copyWith(x: currentItem.x - 1);
+    // 1. Move left as far as possible — closed form, mirror of the vertical
+    // compactor's rise (see _compactItemVertical for the equivalence proof
+    // and the complexity rationale).
+    if (getFirstCollision(compareWith, currentItem) == null) {
+      var restX = 0;
+      for (final other in compareWith) {
+        if (other.y < currentItem.y + currentItem.h && currentItem.y < other.y + other.h) {
+          final rightEdge = other.x + other.w;
+          if (rightEdge <= currentItem.x && rightEdge > restX) {
+            restX = rightEdge;
+          }
+        }
+      }
+      if (restX < currentItem.x) {
+        currentItem = currentItem.copyWith(x: restX);
+      }
     }
 
     // 2. Resolve collisions AND overflows
@@ -579,27 +667,9 @@ LayoutItem resolveCompactionCollision(
   int moveToCoord,
   String axis,
 ) {
-  var currentItem = item;
-  final sizeProp = axis == 'x' ? currentItem.w : currentItem.h;
-  currentItem = currentItem.copyWith(
-    x: axis == 'x' ? currentItem.x + 1 : currentItem.x,
-    y: axis == 'y' ? currentItem.y + 1 : currentItem.y,
-  );
-
-  final itemIndex = layout.indexWhere((element) => element.id == currentItem.id);
-
-  for (var i = itemIndex + 1; i < layout.length; i++) {
-    final otherItem = layout[i];
-    if (otherItem.isStatic) continue;
-
-    if (collides(currentItem, otherItem)) {
-      resolveCompactionCollision(layout, otherItem, moveToCoord + sizeProp, axis);
-    }
-  }
-
-  return currentItem.copyWith(
-    x: axis == 'x' ? moveToCoord : currentItem.x,
-    y: axis == 'y' ? moveToCoord : currentItem.y,
+  return item.copyWith(
+    x: axis == 'x' ? moveToCoord : item.x,
+    y: axis == 'y' ? moveToCoord : item.y,
   );
 }
 
@@ -826,7 +896,7 @@ Layout moveElement(
   // an item's `y` (or the current item's `y` on a static jump), so the loop
   // terminates; the cap is a belt-and-braces guard only.
   var safetyLoop = 0;
-  final maxLoops = max(5000, layout.length * 4);
+  final maxLoops = max(10000, layout.length * layout.length ~/ max(cols, 1));
 
   while (queue.isNotEmpty) {
     if (safetyLoop++ > maxLoops) {
@@ -1145,6 +1215,37 @@ List<LayoutItem> placeNewItems({
   // SAFETY: Allow searching at least 1000 rows down, or 10k iterations minimum.
   final maxIterations = max(10000, cols * 1000);
 
+  // Occupancy set of covered cells, packed (y << 20) | x (x < 2^20 by
+  // construction, safe on dart2js).
+  final occupied = <int>{};
+  for (final existing in finalLayout) {
+    for (var dy = 0; dy < existing.h; dy++) {
+      final rowBase = (existing.y + dy) << 20;
+      for (var dx = 0; dx < existing.w; dx++) {
+        occupied.add(rowBase | (existing.x + dx));
+      }
+    }
+  }
+
+  bool cellsFree(int x, int y, int w, int h) {
+    for (var dy = 0; dy < h; dy++) {
+      final rowBase = (y + dy) << 20;
+      for (var dx = 0; dx < w; dx++) {
+        if (occupied.contains(rowBase | (x + dx))) return false;
+      }
+    }
+    return true;
+  }
+
+  void markCells(int x, int y, int w, int h) {
+    for (var dy = 0; dy < h; dy++) {
+      final rowBase = (y + dy) << 20;
+      for (var dx = 0; dx < w; dx++) {
+        occupied.add(rowBase | (x + dx));
+      }
+    }
+  }
+
   for (final item in itemsToPlace) {
     var placed = false;
     var safetyLoop = 0;
@@ -1164,21 +1265,12 @@ List<LayoutItem> placeNewItems({
         continue; // Retry at the start of the new row
       }
 
-      // 2. Create a candidate item at the current position
-      final candidate = item.copyWith(x: currentX, y: currentY);
-
-      // 3. Check for collisions with all currently placed items
-      var hasCollision = false;
-      for (final existing in finalLayout) {
-        if (collides(existing, candidate)) {
-          hasCollision = true;
-          break;
-        }
-      }
-
-      if (!hasCollision) {
+      // Same scan order as before; the occupancy set answers the
+      // collision question in O(w*h).
+      if (cellsFree(currentX, currentY, item.w, item.h)) {
         // Valid spot found
-        finalLayout.add(candidate);
+        finalLayout.add(item.copyWith(x: currentX, y: currentY));
+        markCells(currentX, currentY, item.w, item.h);
         placed = true;
         // Advance cursor by the item's width to optimize the next search
         currentX += item.w;
