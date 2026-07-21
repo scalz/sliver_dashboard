@@ -299,6 +299,162 @@ void main() {
     expect(find.text('itm_299'), findsOneWidget); // at (0,0): highest id
   });
 
+  testWidgets('SliverDashboard geometricViewOf handles identical coordinates with ID sorting',
+      (tester) async {
+    final controller = DashboardController(
+      initialSlotCount: 4,
+      initialLayout: const [
+        LayoutItem(id: 'b_item', x: 0, y: 0, w: 1, h: 1),
+        LayoutItem(id: 'a_item', x: 0, y: 0, w: 1, h: 1), // Identical coordinates
+      ],
+    );
+    addTearDown(controller.dispose);
+    final scrollController = ScrollController();
+    addTearDown(scrollController.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: CustomScrollView(
+            controller: scrollController,
+            slivers: [
+              SliverDashboard(
+                controller: controller,
+                itemBuilder: (context, item) => Text(item.id),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // Under geometric sorting, 'a_item' must be sorted before 'b_item' alphabetically
+    expect(find.text('a_item'), findsOneWidget);
+  });
+
+  testWidgets('SliverDashboard geometricViewOf handles identical coordinates with ID sorting',
+      (tester) async {
+    final controller = DashboardController(
+      initialSlotCount: 4,
+      initialLayout: const [
+        LayoutItem(id: 'b_item', x: 0, y: 0, w: 1, h: 1),
+        LayoutItem(id: 'a_item', x: 0, y: 0, w: 1, h: 1), // Identical coordinates
+      ],
+    );
+    addTearDown(controller.dispose);
+    final scrollController = ScrollController();
+    addTearDown(scrollController.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: CustomScrollView(
+            controller: scrollController,
+            slivers: [
+              SliverDashboard(
+                controller: controller,
+                itemBuilder: (context, item) => Text(item.id),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // Under geometric sorting, 'a_item' must be sorted before 'b_item' alphabetically
+    expect(find.text('a_item'), findsOneWidget);
+  });
+
+  testWidgets('SliverDashboard computes reactive metrics under horizontal scroll direction',
+      (tester) async {
+    final controller = DashboardController(
+      initialSlotCount: 4,
+      initialLayout: const [
+        LayoutItem(id: 'a', x: 0, y: 0, w: 2, h: 2),
+      ],
+    );
+    addTearDown(controller.dispose);
+    controller.scrollDirection.value = Axis.horizontal;
+
+    final scrollController = ScrollController();
+    addTearDown(scrollController.dispose);
+
+    double? capturedW;
+    double? capturedH;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: CustomScrollView(
+            controller: scrollController,
+            scrollDirection: Axis.horizontal,
+            slivers: [
+              SliverDashboard(
+                controller: controller,
+                scrollDirection: Axis.horizontal,
+                itemLayoutBuilder: (context, item, width, height, slotCount) {
+                  capturedW = width;
+                  capturedH = height;
+                  return Text(item.id);
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(capturedW, isNotNull);
+    expect(capturedH, isNotNull);
+    expect(capturedW, greaterThan(0));
+    expect(capturedH, greaterThan(0));
+  });
+
+  testWidgets('SliverDashboard handles layout when scrolled completely past all items',
+      (tester) async {
+    final controller = DashboardController(
+      initialSlotCount: 4,
+      initialLayout: const [
+        LayoutItem(id: 'a', x: 0, y: 0, w: 1, h: 1),
+      ],
+    );
+    addTearDown(controller.dispose);
+    final scrollController = ScrollController();
+    addTearDown(scrollController.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: CustomScrollView(
+            controller: scrollController,
+            slivers: [
+              SliverDashboard(
+                controller: controller,
+                itemBuilder: (context, item) => Text(item.id),
+              ),
+              // Add a very tall trailing sliver so we can scroll past the dashboard
+              const SliverToBoxAdapter(
+                child: SizedBox(height: 2000),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // Scroll way past the first item (first item height is approx 200px)
+    scrollController.jumpTo(1500);
+    await tester.pumpAndSettle();
+
+    // Verify scroll offset updated safely without causing any layout exceptions
+    expect(scrollController.offset, 1500);
+    expect(find.byType(CustomScrollView), findsOneWidget);
+  });
+
   // Helper to generate a large layout
   List<LayoutItem> generateItems(int count, int cols) {
     final items = <LayoutItem>[];

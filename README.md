@@ -1280,12 +1280,12 @@ For a comprehensive look at the engine's core design philosophy and layout pipel
 
 The development of `sliver_dashboard` can be assisted using AI coding assistants under a disciplined, structured framework to ensure code quality and performance:
 
-*   **Strict Architectural Constraints:** All contributions must align with the State, Logic, and View layers detailed in [architecture.md](architecture.md). AI assistants are further guided by the rules in [AGENTS.md](AGENTS.md) file, which dictates core invariants (such as avoiding allocations during layout phases, enforcing proper tree isolation via `RepaintBoundary`, and maintaining row-index consistency).
+*   **Strict Architectural Constraints:** All contributions must align with the State, Logic, and View layers detailed in [ARCHITECTURE.md](ARCHITECTURE.md). AI assistants are further guided by the rules in [AGENTS.md](AGENTS.md) file, which dictates core invariants (such as avoiding allocations during layout phases, enforcing proper tree isolation via `RepaintBoundary`, and maintaining row-index consistency).
 *   **Systematic Human Review:** No generated code is merged without manual review to verify algorithmic efficiency, readability, and overall design cohesion.
-*   **CI Test Verification:** The suite of 400+ regression tests running in CI serves as the final validator. Every contribution, whether handwritten or co-authored with an AI, must pass all tests and respect documented performance budgets.
+*   **CI Test Verification:** The suite of 500+ regression tests running in CI serves as the final validator. Every contribution, whether handwritten or co-authored with an AI, must pass all tests and respect documented performance budgets.
 
 #### How to Contribute:
-1. **Understand the System:** Read [architecture.md](architecture.md) to familiarize yourself with the declarative UI, reactive state management, and nested grids protocol.
+1. **Understand the System:** Read [ARCHITECTURE.md](ARCHITECTURE.md) to familiarize yourself with the declarative UI, reactive state management, and nested grids protocol.
 2. **Setup your AI Assistant:** If you plan to contribute using AI tools (such as Cursor, Copilot, or custom LLM prompts), please ensure you point your assistant to the instructions in [AGENTS.md](AGENTS.md) before writing any code.
 
 #### Quality Standards
@@ -1294,7 +1294,7 @@ This package tries to maintain strict code quality standards with high test cove
 
 - **Core Engine (`LayoutEngine`):** > 95% coverage
 - **Controller (`DashboardController`):** > 95% coverage
-- **Global Package:** > 90% coverage
+- **Global Package:** > 95% coverage
 
 #### Code Style and Linting:
 

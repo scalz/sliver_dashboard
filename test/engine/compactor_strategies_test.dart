@@ -542,4 +542,167 @@ void main() {
       });
     });
   });
+
+  test('FastVerticalCompactor & FastHorizontalCompactor comparator', () {
+    const vCompactor = FastVerticalCompactor();
+    const hCompactor = FastHorizontalCompactor();
+
+    final layout1 = [
+      const LayoutItem(id: 'same', x: 0, y: 0, w: 1, h: 1, isStatic: false),
+      const LayoutItem(id: 'same', x: 0, y: 0, w: 1, h: 1, isStatic: true),
+    ];
+    vCompactor.compact(layout1, 4);
+    hCompactor.compact(layout1, 4);
+
+    final layout2 = [
+      const LayoutItem(id: 'same', x: 0, y: 0, w: 1, h: 1, isStatic: true),
+      const LayoutItem(id: 'same', x: 0, y: 0, w: 1, h: 1, isStatic: false),
+    ];
+    vCompactor.compact(layout2, 4);
+    hCompactor.compact(layout2, 4);
+  });
+
+  group('LayoutEngine - Core Paths', () {
+    test('HorizontalCompactor ensureRows grows rowRights dynamically', () {
+      const compactor = HorizontalCompactor();
+      // Item placed at y = 70 (exceeds initial rowRights size of 64)
+      final layout = [
+        const LayoutItem(id: 'a', x: 0, y: 70, w: 2, h: 2),
+      ];
+      final compacted = compactor.compact(layout, 10);
+      expect(compacted.length, equals(1));
+      expect(compacted.first.y, equals(70));
+    });
+
+    test('HorizontalCompactor compacts negative rows using historical path fallback', () {
+      const compactor = HorizontalCompactor();
+      final layout = [
+        // Item at y = -1 (negative row)
+        const LayoutItem(id: 'a', x: 2, y: -1, w: 2, h: 2),
+      ];
+      final compacted = compactor.compact(layout, 10);
+      expect(compacted.length, equals(1));
+    });
+
+    test('HorizontalCompactor cellOwner collision and push-right resolution', () {
+      const compactor = HorizontalCompactor();
+      // Item 'b' is placed to collide with 'a' (static) on the left
+      final layout = [
+        const LayoutItem(id: 'a', x: 0, y: 0, w: 2, h: 2, isStatic: true),
+        const LayoutItem(id: 'b', x: 1, y: 0, w: 2, h: 2), // overlaps columns 1-2
+      ];
+      final compacted = compactor.compact(layout, 10);
+
+      // 'b' should be pushed right past 'a' (to x: 2)
+      final b = compacted.firstWhere((i) => i.id == 'b');
+      expect(b.x, equals(2));
+    });
+
+    test('sortLayoutItems horizontal sorting tie-breaker handles identical coordinates', () {
+      final layout = [
+        const LayoutItem(id: 'b', x: 0, y: 0, w: 1, h: 1),
+        const LayoutItem(id: 'a', x: 0, y: 0, w: 1, h: 1),
+      ];
+      // Triggers the horizontal tie-breaker
+      final sorted = sortLayoutItems(layout, CompactType.horizontal);
+      expect(sorted.first.id, equals('a'));
+    });
+
+    test('_resolveCollisionsDefault horizontal sort handles multiple collisions', () {
+      const compactor = HorizontalCompactor();
+      // item 'c' collides with two static obstacles at once
+      final layout = [
+        const LayoutItem(id: 'a', x: 0, y: 0, w: 2, h: 1, isStatic: true),
+        const LayoutItem(id: 'b', x: 2, y: 0, w: 2, h: 1, isStatic: true),
+        const LayoutItem(id: 'c', x: 1, y: 0, w: 1, h: 1),
+      ];
+      final compacted = compactor.compact(layout, 10);
+      expect(compacted.length, equals(3));
+    });
+
+    test('correctBounds resolves overlaps of multiple static items', () {
+      final layout = [
+        const LayoutItem(id: 'a', x: 0, y: 0, w: 2, h: 2, isStatic: true),
+        const LayoutItem(id: 'b', x: 0, y: 0, w: 2, h: 2, isStatic: true), // overlapping static
+      ];
+      final corrected = correctBounds(layout, 10);
+
+      // 'b' should be pushed down below 'a' (to y: 2)
+      final b = corrected.firstWhere((i) => i.id == 'b');
+      expect(b.y, equals(2));
+    });
+
+    test('optimizeLayout ensureRowCounts grows rowCounts dynamically', () {
+      // Static item placed at y = 70 (exceeds initial rowCounts size of 64)
+      final layout = [
+        const LayoutItem(id: 'a', x: 0, y: 70, w: 2, h: 2, isStatic: true),
+        const LayoutItem(id: 'b', x: 0, y: 0, w: 1, h: 1), // dynamic item
+      ];
+      final optimized = optimizeLayout(layout, 10);
+      expect(optimized.length, equals(2));
+      expect(optimized.firstWhere((i) => i.id == 'a').y, equals(70)); // static stays at 70
+    });
+
+    test(
+        'moveElement triggers residual overlap fallback when pre-existing overlaps remain untouched',
+        () {
+      final layout = [
+        // Pre-existing overlaps untouched by the moved item's cascade
+        const LayoutItem(id: 'a', x: 0, y: 0, w: 1, h: 1),
+        const LayoutItem(id: 'b', x: 0, y: 0, w: 1, h: 1),
+        // The item being moved
+        const LayoutItem(id: 'c', x: 3, y: 3, w: 1, h: 1),
+      ];
+
+      // Moving 'c' triggers moveElement with preventCollision: true
+      final result = moveElement(
+        layout,
+        const LayoutItem(id: 'c', x: 3, y: 3, w: 1, h: 1),
+        4, 4, // Move 'c' to 4,4
+        cols: 10,
+        compactType: CompactType.none,
+        preventCollision: true,
+        force: true,
+      );
+
+      expect(result.length, equals(3));
+    });
+
+    test('resolveCollisions horizontal Default handles multiple collisions sorting', () {
+      // Item 'c' (w: 2) collides with both static obstacles 'a' and 'b' on the horizontal axis
+      // This forces a 2-element list inside hits.sort and covers the horizontal ternary branch
+      final layout = [
+        const LayoutItem(id: 'a', x: 0, y: 0, w: 2, h: 1, isStatic: true),
+        const LayoutItem(id: 'b', x: 2, y: 0, w: 2, h: 1, isStatic: true),
+        const LayoutItem(id: 'c', x: 1, y: 0, w: 2, h: 1), // overlaps with a at x=1 and b at x=2
+      ];
+
+      final resolved = resolveCollisions(layout, CompactType.horizontal);
+      expect(resolved.length, equals(3));
+    });
+
+    test('correctBounds clamps item height when h < 1', () {
+      final layout = [
+        const LayoutItem(id: 'a', x: 0, y: 0, w: 2, h: 0),
+      ];
+
+      final corrected = correctBounds(layout, 10);
+      expect(corrected.first.h, equals(1)); // clamped to 1
+    });
+
+    test('resolveCollisions horizontal default handles multiple preceding collisions', () {
+      final layout = [
+        const LayoutItem(id: 'a', x: 0, y: 0, w: 2, h: 1, isStatic: true),
+        const LayoutItem(id: 'b', x: 0, y: 1, w: 2, h: 1, isStatic: true),
+        const LayoutItem(id: 'c', x: 1, y: 0, w: 2, h: 2),
+      ];
+
+      final resolved = resolveCollisions(layout, CompactType.horizontal);
+      expect(resolved.length, equals(3));
+      final c = resolved.firstWhere((i) => i.id == 'c');
+
+      // The item should be pushed past the static obstacles on the horizontal axis
+      expect(c.x, equals(2));
+    });
+  });
 }

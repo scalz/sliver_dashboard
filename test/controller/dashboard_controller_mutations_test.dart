@@ -113,6 +113,28 @@ void main() {
       expect(a.isResizable, isFalse);
       expect(a.maxW, 3);
     });
+
+    test('updateItem with compactionType none and recompact true resolves collisions', () {
+      controller
+        ..setCompactionType(CompactType.none)
+        ..updateItem('a', (i) => i.copyWith(w: 4));
+
+      // Should fallback to vertical collision resolution by default
+      expect(controller.layout.value.firstWhere((i) => i.id == 'a').w, 4);
+    });
+
+    test('updateItem handles defensive ID fallback when assert is bypassed', () {
+      debugBypassUpdateItemIdAssert = true;
+      try {
+        controller.updateItem('a', (i) => i.copyWith(id: 'zzz'), recompact: false);
+
+        // The ID must be defensively restored back to 'a'
+        expect(controller.layout.value.any((i) => i.id == 'a'), isTrue);
+        expect(controller.layout.value.any((i) => i.id == 'zzz'), isFalse);
+      } finally {
+        debugBypassUpdateItemIdAssert = false;
+      }
+    });
   });
 
   group('DashboardController - replaceItem Invariants', () {

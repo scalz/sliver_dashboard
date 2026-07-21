@@ -24,6 +24,11 @@ import 'package:sliver_dashboard/src/view/resize_handle.dart';
 import 'package:sliver_dashboard/src/view/sliver_dashboard.dart';
 import 'package:state_beacon/state_beacon.dart';
 
+/// Internal flag to allow overriding kIsWeb during unit tests
+/// to safely execute and cover the Web throttle mechanism.
+@visibleForTesting
+bool debugOverrideIsWeb = false;
+
 /// The gesture used to trigger a drag operation on mobile platforms.
 enum DragStartGesture {
   /// Dragging is initiated by holding/long-pressing an item.
@@ -1009,7 +1014,7 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
     // Using a Stopwatch avoids allocating garbage (DateTime.now() objects) while remaining
     // completely independent of Flutter's frame rendering cycles, avoiding visual lockups
     // when sub-slot moves are bypassed.
-    if (kIsWeb) {
+    if (kIsWeb || debugOverrideIsWeb) {
       if (_throttleStopwatch.elapsedMilliseconds < 16) {
         // Keep the freshest position and flush it after the throttle window,
         // otherwise the item settles one event behind the cursor when the

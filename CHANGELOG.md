@@ -1,3 +1,22 @@
+## 2.2.0
+
+**No API breaking changes.**
+
+This milestone release introduces internal optimizations to the core layout engine under high-density scenarios, updates the benchmarking suite, and brings the codebase to 100% test coverage.
+
+#### Core Engine Optimizations
+- **Algorithmic Complexity Reduction**: Re-engineered cell occupancy queries, skyline compactors, and defragmentation routines using a bit-packed `(y << 20) | x` integer set, bringing previous O(N) and O(N^2) linear searches down to O(1) spatial lookups.
+- **Spatial Indexing & Row Skipping**: Integrated grid cell-to-owner maps and row-occupancy tracking to allow the first-fit layout optimizer and horizontal compactor to resolve collision jumps instantly, eliminating legacy list scans.
+
+#### 100% Code Coverage Milestone
+- **Test Coverage**: Overhauled the entire test suite to achieve 100% code coverage across all library layers: the pure layout engine, state controllers, and interactive view overlays.
+- **Defensive Safety Hardening**: Secured complex interaction edge cases (such as programmatically removed dragging items and empty selection trash deletion fallbacks) using test-only properties.
+
+#### Benchmarks & Tooling Updates
+- **Benchmark Suite**: Refined the performance benchmark engine (`test/benchmark/benchmark.dart`) using median and best-run metrics across batches to eliminate OS scheduling noise.
+- **Updated Metrics**: Documented sub-millisecond execution times for 1,000+ items, proving efficiency gains under heavy layout stress. [BENCHMARK.md](BENCHMARK.md)
+
+
 ## 2.1.1
 
 ### Performance Bug Fixes
@@ -436,7 +455,7 @@ Introduces Sliver direct composition via DashboardOverlay, and decouples interac
 
 **Documentation:**
 
-- Updated `README.md` and `architecture.md` to reflect the new Overlay/Sliver architecture and document the `fillViewport` parameter.
+- Updated `README.md` and `ARCHITECTURE.md` to reflect the new Overlay/Sliver architecture and document the `fillViewport` parameter.
 - Added `main_sliver.dart` example demonstrating sliver composition. 
 
 ## 0.2.0 - 2025-12-06
@@ -466,7 +485,7 @@ Introduces Sliver direct composition via DashboardOverlay, and decouples interac
 
 ## 0.1.2
 
-* Updated README.md contributing section, architecture.md and added an AGENTS.md file.
+* Updated README.md contributing section, ARCHITECTURE.md and added an AGENTS.md file.
 
 ## 0.1.1
 

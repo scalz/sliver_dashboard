@@ -954,7 +954,7 @@ void main() {
   });
 
   group('LayoutEngine - Edge Case', () {
-    test('optimizeLayout should append too-wide items at the bottom (Line 1251)', () {
+    test('optimizeLayout should append too-wide items at the bottom', () {
       final layout = [
         const LayoutItem(id: 'item_1', x: 0, y: 0, w: 2, h: 1),
         // Item is wider (w=4) than grid columns (cols=3)
@@ -1151,6 +1151,37 @@ void main() {
           reason: 'Layout array was not sorted alphabetically by ID, violating index stability',
         );
       }
+    });
+
+    test('moveElement terminates safely and breaks the cascade when safety loop limit is reached',
+        () {
+      // Stack 11,000 items vertically to force a cascade longer than the safety limit
+      final layout = List.generate(
+        11000,
+        (i) => LayoutItem(id: 'item_$i', x: 0, y: i, w: 1, h: 1),
+      );
+
+      final result = moveElement(
+        layout,
+        layout.first,
+        0,
+        1,
+        cols: 1000000, // Large column space to keep maxLoops clamped at 10,000
+        compactType: CompactType.none,
+        preventCollision: false,
+        force: true,
+      );
+
+      expect(result, isA<List<LayoutItem>>());
+      expect(result.length, equals(11000));
+
+      // Verify that the early items were successfully pushed down
+      final item0 = result.firstWhere((i) => i.id == 'item_0');
+      expect(item0.y, equals(1)); // Original y: 0 -> pushed to 1
+
+      // Verify that items past the 10,000 limit were untouched due to early break
+      final item10010 = result.firstWhere((i) => i.id == 'item_10010');
+      expect(item10010.y, equals(10010)); // Original y: 10010 -> remains untouched at 10010
     });
   });
 }

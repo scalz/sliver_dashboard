@@ -383,8 +383,8 @@ class DashboardMinimap extends StatelessWidget {
     Offset localPosition,
     double minimapMainAxisSize,
     bool isVertical, {
+    required double segmentLeading,
     double? segmentExtent,
-    double? segmentLeading,
   }) {
     if (!scrollController.hasClients || !scrollController.position.haveDimensions) return;
 
@@ -398,7 +398,7 @@ class DashboardMinimap extends StatelessWidget {
     // Same coordinate space as the painted items and the default viewport
     // indicator: the minimap depicts the grid's scroll segment
     // [leading, leading + segmentLen], not the whole scrollable.
-    final leading = segmentLeading ?? mainAxisLeadingExtent ?? 0.0;
+    final leading = segmentLeading;
     final segmentLen = segmentExtent ?? (totalContentSize - leading);
     if (segmentLen <= 0) return;
 

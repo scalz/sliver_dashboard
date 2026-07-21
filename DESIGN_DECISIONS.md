@@ -90,7 +90,7 @@ The fix required: to allow slivers to bypass the ancestor lookup by explicitly b
 
 ## The scale of it
 
-For a sense of what this represents: the v2.0 package is around **eight thousand lines of production Dart** — engine, controllers, views — and the test suite is *larger than the production code* (450 tests, 10K lines), run in CI on every commit. Determinism is a promise you can only keep with regression tests: every story above ended its life as one.
+For a sense of what this represents: the v2 package is around **eight thousand lines of production Dart** — engine, controllers, views — and the test suite is *larger than the production code* (+500 tests, 12K lines), run in CI on every commit. Determinism is a promise you can only keep with regression tests: every story above ended its life as one.
 
 ## The point I actually wanted to make about Flutter
 

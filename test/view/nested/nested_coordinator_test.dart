@@ -210,6 +210,16 @@ void main() {
       expect(placed!.x, 1);
     });
 
+    test('moveItemToGrid asserts if target grid already contains the item id', () {
+      // Add a duplicate item to the target grid beforehand
+      other.addItem(const LayoutItem(id: 'x1', x: 0, y: 0, w: 1, h: 1));
+
+      expect(
+        () => coordinator.moveItemToGrid(from: origin, to: other, itemId: 'x1'),
+        throwsAssertionError,
+      );
+    });
+
     testWidgets('session lifecycle: enter, hover, leave, drop into another grid', (tester) async {
       final boxKey = GlobalKey();
       await tester.pumpWidget(
@@ -1453,6 +1463,44 @@ void main() {
       await tester.pumpWidget(build(coordinator: coordinator, sameGrid: false));
       expect(coordinator.subGridDynamicSameGrid, isFalse);
     });
+
+    testWidgets('same-grid pause move sequence covers anchor distance checks', (tester) async {
+      await runOnDesktop(() async {
+        final coordinator = DashboardNestedCoordinator();
+        addTearDown(coordinator.dispose);
+
+        await tester.pumpWidget(
+          build(
+            coordinator: coordinator,
+            sameGrid: true,
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        final aCenter = tester.getCenter(find.text('T-a'));
+
+        final gesture = await tester.startGesture(aCenter);
+        await tester.pump();
+
+        // Initial move (sets anchor to pos1)
+        final pos1 = aCenter + const Offset(10, 0);
+        await gesture.moveTo(pos1);
+        await tester.pump();
+
+        // Micro-move (2px <= tolerance, condition is false)
+        final pos2 = pos1 + const Offset(2, 0);
+        await gesture.moveTo(pos2);
+        await tester.pump();
+
+        // Real move (15px > tolerance, condition is true with non-null anchor)
+        final pos3 = pos1 + const Offset(15, 0);
+        await gesture.moveTo(pos3);
+        await tester.pump();
+
+        await gesture.up();
+        await tester.pumpAndSettle();
+      });
+    });
   });
 
   group('DashboardNestedCoordinator - Proportional & Custom Projection', () {
@@ -1496,6 +1544,19 @@ void main() {
       );
       expect(projected.w, equals(2)); // Clamped to minW
       expect(projected.h, equals(2)); // Ratio 0.5 -> 2
+    });
+
+    test('projectItem enforces minW constraint when projected width is smaller than minW', () {
+      final localCoordinator = DashboardNestedCoordinator(
+        projectionPolicy: DimensionProjectionPolicy.preserveVisualProportion,
+      );
+      const item = LayoutItem(id: 'a', x: 0, y: 0, w: 2, h: 2, minW: 2);
+      final projected = localCoordinator.projectItem(
+        item,
+        sourceSlotCount: 8,
+        targetSlotCount: 4,
+      );
+      expect(projected.w, equals(2)); // Calculated width is 1, clamped to minW (2)
     });
 
     test('projectItem supports custom projection callback', () {

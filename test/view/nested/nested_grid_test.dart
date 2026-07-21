@@ -168,6 +168,40 @@ void main() {
         await tester.pumpAndSettle();
       });
     });
+
+    testWidgets(
+        'cross-grid drag hover near the bottom edge triggers auto-scroll and re-anchors the placeholder',
+        (tester) async {
+      await runOnDesktop(() async {
+        // Set up a scrollable area for grid B by making it taller with a static item
+        gridB.layout.value = [
+          const LayoutItem(id: 'b1', x: 0, y: 0, w: 2, h: 1),
+          const LayoutItem(id: 'b_anchor', x: 0, y: 15, w: 1, h: 1, isStatic: true),
+        ];
+
+        await tester.pumpWidget(buildTwoGrids());
+        await tester.pumpAndSettle();
+
+        final gesture = await tester.startGesture(tester.getCenter(find.text('A-a1')));
+        await tester.pump();
+        await gesture.moveBy(const Offset(0, 10)); // engage drag
+        await tester.pump();
+
+        // Drag into the bottom hot-zone of grid B
+        final gridBFinder = find.byType(Dashboard<String>).last;
+        final rect = tester.getRect(gridBFinder);
+        final gridBBottomCenter = rect.bottomCenter - const Offset(0, 20);
+
+        await gesture.moveTo(gridBBottomCenter);
+        await tester.pump();
+
+        // Wait for auto-scroll timer ticks to trigger the _foreignDragItem re-anchoring branch
+        await tester.pump(const Duration(milliseconds: 500));
+
+        await gesture.up();
+        await tester.pumpAndSettle();
+      });
+    });
   });
 
   group('Nested grid interactions', () {

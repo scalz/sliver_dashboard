@@ -53,9 +53,7 @@ void main() {
         expect(areas.first.h, equals(1));
       });
 
-      test(
-          'availableFreeAreas should trigger the sorting tie-breaker by X when Ys match (Covers Line 98)',
-          () {
+      test('availableFreeAreas should trigger the sorting tie-breaker by X when Ys match', () {
         // By blocking the center column of a 3-column grid, we generate
         // two maximal free areas (columns 0 and 2) starting at the same top-left row (y=0).
         // This forces maximalRects.sort() to execute the tie-breaker 'return a.x.compareTo(b.x);'

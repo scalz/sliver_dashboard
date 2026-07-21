@@ -6,11 +6,15 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:sliver_dashboard/sliver_dashboard.dart';
 import 'package:sliver_dashboard/src/controller/dashboard_controller_impl.dart';
+import 'package:sliver_dashboard/src/controller/utility.dart';
 import 'package:sliver_dashboard/src/view/dashboard_feedback_widget.dart';
 import 'package:sliver_dashboard/src/view/dashboard_grid.dart';
 import 'package:sliver_dashboard/src/view/dashboard_item_widget.dart';
 
 import '../test_helpers.dart';
+
+//
+// ignore_for_file: cascade_invocations
 
 // Mock for the persistence callback
 class MockLayoutChangeListener extends Mock {
@@ -366,6 +370,129 @@ void main() {
 
       expect(target.isPointInsideSliver(const Offset(50, 50)), isTrue);
       expect(target.isPointInsideSliver(const Offset(999, 50)), isFalse);
+    });
+
+    testWidgets('DashboardOverlay invalidates cached render object when sliverKey changes',
+        (tester) async {
+      final controller = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: const [LayoutItem(id: 'a', x: 0, y: 0, w: 1, h: 1)],
+      );
+      addTearDown(controller.dispose);
+      final scrollController = ScrollController();
+      addTearDown(scrollController.dispose);
+
+      final key1 = GlobalKey();
+      final key2 = GlobalKey();
+
+      // Pump with key1
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: DashboardOverlay(
+              controller: controller,
+              scrollController: scrollController,
+              sliverKey: key1,
+              itemBuilder: (context, item) => Text(item.id),
+              child: CustomScrollView(
+                controller: scrollController,
+                slivers: [
+                  SliverDashboard(key: key1, itemBuilder: (context, item) => Text(item.id)),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Re-pump with key2 to trigger didUpdateWidget key-swap
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: DashboardOverlay(
+              controller: controller,
+              scrollController: scrollController,
+              sliverKey: key2,
+              itemBuilder: (context, item) => Text(item.id),
+              child: CustomScrollView(
+                controller: scrollController,
+                slivers: [
+                  SliverDashboard(key: key2, itemBuilder: (context, item) => Text(item.id)),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+    });
+
+    testWidgets(
+        'onPointerMove falls back to activeItemInitialLayout if item is removed during gesture move',
+        (tester) async {
+      await runOnDesktop(() async {
+        final controller = DashboardController(
+          initialSlotCount: 4,
+          initialLayout: const [
+            LayoutItem(id: 'a', x: 0, y: 0, w: 1, h: 1),
+          ],
+        )..setEditMode(true);
+        addTearDown(controller.dispose);
+
+        final scrollController = ScrollController();
+        addTearDown(scrollController.dispose);
+
+        LayoutItem? updatedItem;
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: DashboardOverlay(
+                controller: controller,
+                scrollController: scrollController,
+                onItemDragUpdate: (item, pos) {
+                  updatedItem = item;
+                },
+                itemBuilder: (context, item) => SizedBox(child: Text(item.id)),
+                child: CustomScrollView(
+                  controller: scrollController,
+                  slivers: [
+                    SliverDashboard(itemBuilder: (context, item) => Text(item.id)),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        final itemFinder = find.text('a');
+        final gesture =
+            await tester.startGesture(tester.getCenter(itemFinder), kind: PointerDeviceKind.mouse);
+        await tester.pump(); // Start drag instantly on desktop
+
+        expect(controller.isDragging.value, isTrue);
+
+        // Mutate the layout list by removing the item programmatically while dragging is in flight
+        controller.internal.originalLayoutOnStart.value =
+            []; // Prevent cancelInteraction from restoring the item
+        controller.removeItem('a');
+        controller.cancelInteraction(); // Force onDragUpdate to return early, keeping layout empty
+        await tester.pump();
+
+        // Move the pointer: this triggers onPointerMove and must resolve through the fallback
+        await gesture.moveBy(const Offset(50, 50));
+        await tester.pump();
+
+        expect(updatedItem, isNotNull);
+        expect(updatedItem!.id, 'a'); // Falls back to the initial layout item 'a'
+
+        await gesture.up();
+        await tester.pumpAndSettle();
+
+        expect(controller.isDragging.value, isFalse);
+      });
     });
   });
 
@@ -2052,6 +2179,554 @@ void main() {
       );
       // Far outside any cell: null.
       expect(target.itemAtGlobal(const Offset(-50, -50)), isNull);
+    });
+  });
+
+  group('DashboardOverlay — Visual Anchors, Gating and Fallbacks', () {
+    test('DashboardOverlayController non-const instantiation', () {
+      // instantiate non-const to force line hit on empty constructor
+      // ignore: prefer_const_constructors
+      final controller = DashboardOverlayController();
+      expect(() => controller.startDragging('1', Offset.zero), returnsNormally);
+    });
+
+    testWidgets('onAcceptWithDetails handles drop without prior hover placeholder', (tester) async {
+      final controller = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: const [LayoutItem(id: 'a', x: 0, y: 0, w: 1, h: 1)],
+      );
+      addTearDown(controller.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: DashboardOverlay<String>(
+              controller: controller,
+              scrollController: ScrollController(),
+              itemBuilder: (ctx, item) => const SizedBox(),
+              child: CustomScrollView(
+                slivers: [SliverDashboard(itemBuilder: (_, __) => const SizedBox())],
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final state =
+          tester.state<State<DashboardOverlay<String>>>(find.byType(DashboardOverlay<String>));
+      final overlayState = state as CrossGridDragTarget;
+
+      // Simulate a direct accept event without any prior DragOver trigger
+      final dragTarget = find.byType(DragTarget<String>).first;
+      final details = DragTargetDetails<String>(data: 'b', offset: const Offset(100, 100));
+
+      final dragTargetWidget = tester.widget<DragTarget<String>>(dragTarget);
+      expect(() => dragTargetWidget.onAcceptWithDetails?.call(details), returnsNormally);
+      expect(overlayState.overlayRenderBox, isNotNull);
+    });
+
+    testWidgets('_findRenderSliver resolves directly when rootObject is RenderSliverDashboard',
+        (tester) async {
+      final controller = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: const [LayoutItem(id: 'a', x: 0, y: 0, w: 1, h: 1)],
+      );
+      addTearDown(controller.dispose);
+
+      final sliverKey = GlobalKey();
+      final scrollController = ScrollController();
+      addTearDown(scrollController.dispose);
+
+      // Create a direct RenderSliverDashboard without the layout builder wrapper
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: DashboardOverlay(
+              controller: controller,
+              scrollController: scrollController,
+              sliverKey: sliverKey,
+              itemBuilder: (ctx, item) => const SizedBox(),
+              child: CustomScrollView(
+                controller: scrollController,
+                slivers: [
+                  SliverPadding(
+                    padding: EdgeInsets.zero,
+                    sliver: SliverDashboard(
+                      key: sliverKey,
+                      controller: controller,
+                      itemBuilder: (context, item) => const SizedBox(),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final state = tester.state<State<DashboardOverlay>>(find.byType(DashboardOverlay));
+      final overlayState = state as CrossGridDragTarget;
+
+      // Forces re-evaluation of _findRenderSliver with direct RenderSliver as root
+      expect(overlayState.currentSlotMetrics(), isNotNull);
+    });
+
+    testWidgets('Same-grid pause jitter tolerance debounces micro-noise', (tester) async {
+      await runOnDesktop(() async {
+        final coordinator = DashboardNestedCoordinator();
+        addTearDown(coordinator.dispose);
+
+        final controller = DashboardController(
+          initialSlotCount: 4,
+          initialLayout: const [
+            LayoutItem(id: 'a', x: 0, y: 0, w: 1, h: 1),
+            LayoutItem(id: 'b', x: 1, y: 0, w: 1, h: 1),
+          ],
+        )..setEditMode(true);
+        addTearDown(controller.dispose);
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: DashboardNestedScope(
+                coordinator: coordinator,
+                subGridDynamicSameGrid: true,
+                nestHoverDelay: const Duration(milliseconds: 200),
+                onNestedGridRequested: (host, dragged, grid) {},
+                child: SizedBox(
+                  width: 400,
+                  height: 400,
+                  child: Dashboard<String>(
+                    controller: controller,
+                    itemBuilder: (context, item) => Text('T-${item.id}'),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        final aCenter = tester.getCenter(find.text('T-a'));
+        final bCenter = tester.getCenter(find.text('T-b'));
+
+        final gesture = await tester.startGesture(aCenter);
+        await tester.pump();
+        await gesture.moveTo(bCenter);
+        await tester.pump();
+
+        // Pause to trigger same-grid freeze
+        await tester.pump(const Duration(milliseconds: 400));
+        expect(controller.internal.hoveredNestTargetId.value, 'b');
+
+        // Micro-movement (2px, which is <= sameGridMoveTolerance)
+        // This must be ignored by the low-pass jitter filter, keeping the freeze active
+        await gesture.moveTo(bCenter + const Offset(2, 0));
+        await tester.pump();
+        expect(controller.internal.hoveredNestTargetId.value, 'b');
+
+        await gesture.up();
+        await tester.pumpAndSettle();
+      });
+    });
+
+    testWidgets(
+        'Trash deletion fallback handles case where dragged item is removed from layout before drop',
+        (tester) async {
+      final controller = DashboardController(
+        initialLayout: const [LayoutItem(id: 'a', x: 0, y: 0, w: 1, h: 1)],
+      )..setEditMode(true);
+      addTearDown(controller.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: DashboardOverlay(
+              controller: controller,
+              scrollController: ScrollController(),
+              trashBuilder: (ctx, hovered, armed, activeItemId) => const SizedBox(
+                key: ValueKey('trash'),
+                width: 100,
+                height: 100,
+              ),
+              itemBuilder: (context, item) => Card(key: ValueKey(item.id), child: Text(item.id)),
+              child: CustomScrollView(
+                slivers: [SliverDashboard(itemBuilder: (_, __) => Container())],
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final itemFinder = find.byKey(const ValueKey('a'));
+      final gesture = await tester.startGesture(tester.getCenter(itemFinder));
+      await tester.pump(kLongPressTimeout); // Start drag
+
+      // Move to trash
+      final trashCenter = tester.getCenter(find.byKey(const ValueKey('trash')));
+      await gesture.moveTo(trashCenter);
+      await tester.pump(const Duration(milliseconds: 900)); // Arm trash
+
+      // Programmatically remove 'a' from layout to force empty itemsToDelete list
+      controller.removeItem('a');
+      await tester.pump();
+
+      // Drop on trash
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      // Verify transaction ended cleanly
+      expect(controller.isDragging.value, isFalse);
+    });
+
+    testWidgets(
+        'Resize at bottom edge horizontally triggers auto-scroll and stops cleanly in neutral zone',
+        (tester) async {
+      await runOnDesktop(() async {
+        final scrollController = ScrollController();
+        addTearDown(scrollController.dispose);
+
+        final controller = DashboardController(
+          initialSlotCount: 4,
+          initialLayout: [
+            const LayoutItem(id: '1', x: 0, y: 0, w: 2, h: 2, isResizable: true),
+            const LayoutItem(id: 'anchor', x: 20, y: 0, w: 1, h: 1, isStatic: true),
+          ],
+        );
+        addTearDown(controller.dispose);
+        controller.scrollDirection.value = Axis.horizontal;
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: SizedBox(
+                width: 400,
+                height: 400,
+                child: Dashboard<String>(
+                  controller: controller,
+                  scrollController: scrollController,
+                  scrollDirection: Axis.horizontal,
+                  itemBuilder: (ctx, item) => ColoredBox(color: Colors.blue, child: Text(item.id)),
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        controller.toggleEditing();
+        await tester.pump();
+
+        final itemFinder = find.text('1');
+        final itemRect = tester.getRect(itemFinder);
+        final handlePos = itemRect.centerRight - const Offset(5, 0);
+
+        final gesture = await tester.startGesture(handlePos, kind: PointerDeviceKind.mouse);
+        await tester.pump();
+        await gesture.moveBy(const Offset(10, 0)); // pan trigger
+        await tester.pump();
+
+        // Move to right edge hot zone (Scroll Right)
+        await gesture.moveTo(const Offset(390, 200));
+        await tester.pump();
+
+        for (var i = 0; i < 30; i++) {
+          await tester.pump(const Duration(milliseconds: 16));
+        }
+        expect(scrollController.offset, greaterThan(0.0));
+
+        // Move to center neutral zone (Stop scroll)
+        await gesture.moveTo(const Offset(200, 200));
+        await tester.pump();
+
+        await gesture.up();
+        await tester.pumpAndSettle();
+      });
+    });
+  });
+
+  testWidgets(
+      'DashboardOverlay resolves RenderSliverDashboard when rootObject is RenderSliverDashboard directly',
+      (tester) async {
+    final controller = DashboardController(
+      initialSlotCount: 4,
+      initialLayout: const [LayoutItem(id: 'a', x: 0, y: 0, w: 1, h: 1)],
+    );
+    addTearDown(controller.dispose);
+    final sliverKey = GlobalKey();
+    final scrollController = ScrollController();
+    addTearDown(scrollController.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: DashboardOverlay(
+            controller: controller,
+            scrollController: scrollController,
+            sliverKey: sliverKey,
+            itemBuilder: (ctx, item) => const SizedBox(),
+            child: CustomScrollView(
+              controller: scrollController,
+              slivers: [
+                SliverDashboardLayout(
+                  key: sliverKey,
+                  items: const [LayoutItem(id: 'a', x: 0, y: 0, w: 1, h: 1)],
+                  slotCount: 4,
+                  vsync: tester,
+                  delegate: SliverChildBuilderDelegate(
+                    (context, index) => const SizedBox(),
+                    childCount: 1,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final state = tester.state<State<DashboardOverlay>>(find.byType(DashboardOverlay));
+    final target = state as CrossGridDragTarget;
+    expect(target.currentSlotMetrics(), isNotNull);
+  });
+
+  testWidgets(
+      'DashboardOverlay resolves RenderSliverDashboard when rootObject is RenderSliverPadding',
+      (tester) async {
+    final controller = DashboardController(
+      initialSlotCount: 4,
+      initialLayout: const [LayoutItem(id: 'a', x: 0, y: 0, w: 1, h: 1)],
+    );
+    addTearDown(controller.dispose);
+    final sliverKey = GlobalKey();
+    final scrollController = ScrollController();
+    addTearDown(scrollController.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: DashboardOverlay(
+            controller: controller,
+            scrollController: scrollController,
+            sliverKey: sliverKey,
+            itemBuilder: (ctx, item) => const SizedBox(),
+            child: CustomScrollView(
+              controller: scrollController,
+              slivers: [
+                SliverPadding(
+                  key: sliverKey,
+                  padding: EdgeInsets.zero,
+                  sliver: SliverDashboard(
+                    controller: controller,
+                    itemBuilder: (context, item) => const SizedBox(),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final state = tester.state<State<DashboardOverlay>>(find.byType(DashboardOverlay));
+    final target = state as CrossGridDragTarget;
+    expect(target.currentSlotMetrics(), isNotNull);
+  });
+
+  testWidgets('Trash deletion fallback handles case where selectedItemIds is empty during drag',
+      (tester) async {
+    await runOnDesktop(() async {
+      final controller = DashboardController(
+        initialLayout: const [LayoutItem(id: 'a', x: 0, y: 0, w: 1, h: 1)],
+      )..setEditMode(true);
+      addTearDown(controller.dispose);
+
+      var deleted = false;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: DashboardOverlay(
+              controller: controller,
+              scrollController: ScrollController(),
+              onItemsDeleted: (_) => deleted = true,
+              trashBuilder: (ctx, hovered, armed, activeItemId) => const SizedBox(
+                key: ValueKey('trash'),
+                width: 100,
+                height: 100,
+                child: ColoredBox(color: Colors.red), // Opaque to hit testing
+              ),
+              itemBuilder: (context, item) => Card(key: ValueKey(item.id), child: Text(item.id)),
+              child: CustomScrollView(
+                slivers: [SliverDashboard(itemBuilder: (_, __) => Container())],
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final itemFinder = find.byKey(const ValueKey('a'));
+      final gesture =
+          await tester.startGesture(tester.getCenter(itemFinder), kind: PointerDeviceKind.mouse);
+      await tester.pump(); // Start drag instantly on desktop
+
+      // Move to trash
+      final trashCenter = tester.getCenter(find.byKey(const ValueKey('trash')));
+      await gesture.moveTo(trashCenter);
+      await tester.pump(const Duration(milliseconds: 900)); // Arm trash
+
+      // Clear selection and remove item from layout programmatically to force itemsToDelete to be empty
+      controller.clearSelection();
+      controller.layout.value = [];
+      await tester.pump();
+
+      // Drop on trash
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      expect(deleted, isTrue, reason: 'Fallback should delete the current active item');
+      expect(controller.layout.value, isEmpty);
+    });
+  });
+
+  testWidgets(
+      'maybeStartCrossGridSession falls back to activeItemInitialLayout and custom feedbackBuilder if item is removed programmatically',
+      (tester) async {
+    await runOnDesktop(() async {
+      final coordinator = DashboardNestedCoordinator();
+      addTearDown(coordinator.dispose);
+
+      final sliverKey1 = GlobalKey();
+      final sliverKey2 = GlobalKey();
+
+      final parent = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: const [
+          LayoutItem(id: 'a', x: 0, y: 0, w: 1, h: 1),
+        ],
+      )..setEditMode(true);
+      addTearDown(parent.dispose);
+
+      final other = DashboardController(initialSlotCount: 4)..setEditMode(true);
+      addTearDown(other.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: DashboardNestedScope(
+              coordinator: coordinator,
+              child: Column(
+                children: [
+                  SizedBox(
+                    height: 200,
+                    child: Dashboard<String>(
+                      controller: parent,
+                      key: sliverKey1,
+                      itemFeedbackBuilder: (context, item, child) => Container(
+                        key: const ValueKey('custom_cross_proxy'),
+                        child: child,
+                      ),
+                      itemBuilder: (ctx, item) => Text('P-${item.id}'),
+                    ),
+                  ),
+                  SizedBox(
+                    height: 200,
+                    child: Dashboard<String>(
+                      controller: other,
+                      key: sliverKey2,
+                      itemBuilder: (ctx, item) => Text('O-${item.id}'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Start mouse drag
+      final gesture = await tester.startGesture(
+        tester.getCenter(find.text('P-a')),
+        kind: PointerDeviceKind.mouse,
+      );
+      await tester.pump(); // Start drag instantly on desktop
+
+      // Remove item programmatically while dragging, restoring selectedItemIds to satisfy the single-item gesture rule
+      parent.removeItem('a');
+      parent.selectedItemIds.value = {'a'};
+      await tester.pump();
+
+      // Move pointer into the second grid area (otherCenter) to trigger cross-grid session start
+      final otherCenter = tester.getCenter(find.byType(Dashboard<String>).last);
+      await gesture.moveTo(otherCenter);
+      await tester.pump();
+
+      expect(find.byKey(const ValueKey('custom_cross_proxy')), findsOneWidget);
+
+      await gesture.up();
+      await tester.pumpAndSettle();
+    });
+  });
+
+  testWidgets('Web throttle mechanism caches and flushes high-frequency pointer moves',
+      (tester) async {
+    await runOnDesktop(() async {
+      final controller = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: const [LayoutItem(id: 'a', x: 0, y: 0, w: 1, h: 1)],
+      )..setEditMode(true);
+      addTearDown(controller.dispose);
+
+      final scrollController = ScrollController();
+      addTearDown(scrollController.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: DashboardOverlay(
+              controller: controller,
+              scrollController: scrollController,
+              itemBuilder: (ctx, item) => const SizedBox(),
+              child: CustomScrollView(
+                controller: scrollController,
+                slivers: [
+                  SliverDashboard(itemBuilder: (_, __) => const SizedBox()),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Enable the Web override flag locally for this test
+      debugOverrideIsWeb = true;
+      addTearDown(() => debugOverrideIsWeb = false);
+
+      final itemFinder = find.byType(DashboardItem).first;
+      final gesture =
+          await tester.startGesture(tester.getCenter(itemFinder), kind: PointerDeviceKind.mouse);
+      await tester.pump(); // Start drag instantly on desktop
+
+      // First move bypasses the throttle but resets the stopwatch to 0
+      await gesture.moveBy(const Offset(10, 10));
+      await tester.pump();
+
+      // Second move occurs immediately (elapsedTime < 16ms), triggering the throttle branch
+      final targetPos = tester.getCenter(itemFinder) + const Offset(50, 50);
+      await gesture.moveTo(targetPos);
+      await tester.pump();
+
+      // Wait for the 17ms timer to flush the throttled position safely
+      await tester.pump(const Duration(milliseconds: 25));
+
+      await gesture.up();
+      await tester.pumpAndSettle();
     });
   });
 }

@@ -23,6 +23,11 @@ typedef ScrollRequest = ({
   Completer<void> completer
 });
 
+/// Internal flag to allow bypassing the ID assertion during unit tests
+/// to cover the defensive ID restoration logic.
+@visibleForTesting
+bool debugBypassUpdateItemIdAssert = false;
+
 /// The concrete implementation of [DashboardController].
 /// Manages the state and interactions of the dashboard.
 ///
@@ -376,8 +381,11 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     // (it would silently create a duplicate or orphan). In debug this is a
     // hard error; in release we defensively restore the id so the layout
     // cannot be corrupted by misuse.
+    //
+    // The check is bypassed during unit tests when debugBypassUpdateItemIdAssert is true
+    // to allow coverage of the defensive ID restoration line below.
     assert(
-      updated.id == itemId,
+      updated.id == itemId || debugBypassUpdateItemIdAssert,
       'updateItem: transform must not change the item id '
       '(expected "$itemId", got "${updated.id}").',
     );

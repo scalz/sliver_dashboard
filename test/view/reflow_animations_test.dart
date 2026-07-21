@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sliver_dashboard/sliver_dashboard.dart';
 
@@ -283,4 +284,105 @@ void main() {
     await tester.pump();
     expect(sliverOf(tester).debugActiveReflowTransitionCount, 0);
   });
+
+  testWidgets('changing viewport width during in-flight reflow clears transitions', (tester) async {
+    final controller = DashboardController(
+      initialSlotCount: 4,
+      initialLayout: const [
+        LayoutItem(id: 'a', x: 0, y: 0, w: 1, h: 1),
+        LayoutItem(id: 'b', x: 1, y: 0, w: 1, h: 1),
+      ],
+    );
+    addTearDown(controller.dispose);
+    final scrollController = ScrollController();
+    addTearDown(scrollController.dispose);
+
+    Widget buildWithWidth(double width) {
+      return MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: width,
+            child: CustomScrollView(
+              controller: scrollController,
+              slivers: [
+                SliverDashboard(
+                  controller: controller,
+                  animateReflow: true,
+                  itemBuilder: (context, item) => Text(item.id),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    await tester.pumpWidget(buildWithWidth(400));
+    await tester.pumpAndSettle();
+
+    // Trigger a reflow transition
+    controller.updateItem('b', (i) => i.copyWith(x: 3), recompact: false);
+    await tester.pump();
+    await tester.pump(); // Relayout to seed transition
+
+    final sliver = sliverOf(tester);
+    expect(sliver.debugActiveReflowTransitionCount, 1);
+
+    // Rebuild with different width to trigger metricsChanged in the same render object
+    await tester.pumpWidget(buildWithWidth(300));
+    await tester.pump();
+
+    expect(sliver.debugActiveReflowTransitionCount, 0);
+  });
+
+  testWidgets('RenderSliverDashboard getters and setters coverage', (tester) async {
+    final controller = DashboardController(
+      initialSlotCount: 4,
+      initialLayout: const [
+        LayoutItem(id: 'a', x: 0, y: 0, w: 1, h: 1),
+        LayoutItem(id: 'b', x: 1, y: 0, w: 1, h: 1),
+      ],
+    );
+    addTearDown(controller.dispose);
+    final scrollController = ScrollController();
+    addTearDown(scrollController.dispose);
+
+    await tester.pumpWidget(host(controller, scrollController));
+    await tester.pumpAndSettle();
+
+    final renderSliver = sliverOf(tester)
+
+      // Verify slotCount setter and getter
+      ..slotCount = 6;
+    expect(renderSliver.slotCount, 6);
+
+    // Verify standard getters
+    expect(renderSliver.animateReflow, isTrue);
+    expect(renderSliver.reflowDuration, const Duration(milliseconds: 150));
+    expect(renderSliver.vsync, isNotNull);
+
+    // Verify reflowDuration setter
+    renderSliver.reflowDuration = const Duration(milliseconds: 300);
+    expect(renderSliver.reflowDuration, const Duration(milliseconds: 300));
+
+    // Trigger a transition to make internal transition list non-empty
+    controller.updateItem('b', (i) => i.copyWith(x: 3), recompact: false);
+    await tester.pump();
+    await tester.pump(); // Relayout to seed transition
+
+    expect(renderSliver.debugActiveReflowTransitionCount, 1);
+
+    // Verify vsync setter with active transitions
+    final originalVsync = renderSliver.vsync;
+    renderSliver.vsync = _DummyTickerProvider();
+    expect(renderSliver.vsync, isA<_DummyTickerProvider>());
+
+    // Restore vsync to prevent leaking tickers during teardown
+    renderSliver.vsync = originalVsync;
+  });
+}
+
+class _DummyTickerProvider implements TickerProvider {
+  @override
+  Ticker createTicker(TickerCallback onTick) => Ticker(onTick);
 }

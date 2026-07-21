@@ -313,6 +313,79 @@ void main() {
 
         expect(controller.activeItem.value, isNull);
       });
+
+      test('setItemSize with compactionType none resolves collisions instead of compacting', () {
+        controller.setCompactionType(CompactType.none);
+        controller.internal.setItemSize('a', h: 3);
+
+        // Verifies the collision resolver handles the resize pass instead of full compaction
+        expect(controller.layout.value.firstWhere((i) => i.id == 'a').h, 3);
+      });
+
+      test('onResizeUpdate clamps negative Y and adjusts height during non-top resize', () {
+        controller.layout.value = [
+          const LayoutItem(id: 'a', x: 0, y: -1, w: 2, h: 2, minH: 1),
+        ];
+        controller.onResizeStart('a');
+        controller.onResizeUpdate(
+          'a',
+          ResizeHandle.bottom,
+          Offset.zero, // 0 delta to check initial mapping logic
+          slotWidth: 100,
+          slotHeight: 100,
+          crossAxisSpacing: 0,
+          mainAxisSpacing: 0,
+        );
+
+        final item = controller.layout.value.firstWhere((i) => i.id == 'a');
+        // Negative Y should be clamped to 0 and the height adjusted by the Y difference
+        expect(item.y, equals(0));
+        expect(item.h, equals(1));
+      });
+
+      test('onResizeUpdate respects static boundaries on the left during left resize', () {
+        controller.layout.value = [
+          const LayoutItem(id: 's', x: 0, y: 0, w: 2, h: 2, isStatic: true),
+          const LayoutItem(id: 'a', x: 3, y: 0, w: 2, h: 2, minW: 1),
+        ];
+        controller.onResizeStart('a');
+        controller.onResizeUpdate(
+          'a',
+          ResizeHandle.left,
+          const Offset(-200, 0), // Attempt to expand left past the static item s
+          slotWidth: 100,
+          slotHeight: 100,
+          crossAxisSpacing: 0,
+          mainAxisSpacing: 0,
+        );
+
+        final item = controller.layout.value.firstWhere((i) => i.id == 'a');
+        // originalRight was 3 + 2 = 5. Boundary is s.x + s.w = 2.
+        // Clamped x should be 2, and w should adjust to originalRight - x = 3.
+        expect(item.x, equals(2));
+        expect(item.w, equals(3));
+      });
+
+      test('onResizeUpdate clamps negative X and adjusts width during non-left resize', () {
+        controller.layout.value = [
+          const LayoutItem(id: 'a', x: -1, y: 0, w: 2, h: 2, minW: 1),
+        ];
+        controller.onResizeStart('a');
+        controller.onResizeUpdate(
+          'a',
+          ResizeHandle.right,
+          Offset.zero, // 0 delta to check initial mapping logic
+          slotWidth: 100,
+          slotHeight: 100,
+          crossAxisSpacing: 0,
+          mainAxisSpacing: 0,
+        );
+
+        final item = controller.layout.value.firstWhere((i) => i.id == 'a');
+        // Negative X should be clamped to 0 and the width adjusted by the X difference
+        expect(item.x, equals(0));
+        expect(item.w, equals(1));
+      });
     });
 
     group('External Drag Logic', () {

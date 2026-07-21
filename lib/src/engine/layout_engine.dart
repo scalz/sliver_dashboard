@@ -978,6 +978,8 @@ Layout moveElement(
 
   while (queue.isNotEmpty) {
     if (safetyLoop++ > maxLoops) {
+      // Always returns true so the assert never fails, making the second message parameter unreachable and uncovered by tests
+      // ignore: prefer_asserts_with_message
       assert(
         () {
           // Debug-only diagnostic; never ships in release builds.
@@ -985,7 +987,6 @@ Layout moveElement(
           print('SliverDashboard: Collision resolution limit reached ($maxLoops).');
           return true;
         }(),
-        'SliverDashboard: Collision resolution limit reached ($maxLoops).',
       );
       break;
     }

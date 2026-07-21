@@ -177,9 +177,9 @@ The project follows a strict separation of concerns. **Do not violate layer boun
 | Cross-grid routing (per pointer event, scope present) | O(G) point-in-rect tests, G = live grids | per-item scans in `targetAt`, work added in the no-scope path |
 
 ## 6. Documentation
-- **Reference:** Read latest `architecture.md` and `AI_AGENTS.md` before starting a new task.
+- **Reference:** Read latest `ARCHITECTURE.md` and `AI_AGENTS.md` before starting a new task.
 - Update `README.md` if public API changes.
-- Update `architecture.md` if the data flow or component structure changes.
+- Update `ARCHITECTURE.md` if the data flow or component structure changes.
 - Keep the `example/` app up-to-date and runnable on all platforms.
 - **Language:** English only.
 - **Docstrings:** Write documentation for every public member using the standard style:
@@ -217,4 +217,4 @@ breakpoints: { 0: 4, 600: 8 },
 ```
 
 ---
-**Note:** Always analyze `architecture.md` before suggesting major refactors. Performance and stability are prioritized over syntactic sugar.
+**Note:** Always analyze `ARCHITECTURE.md` before suggesting major refactors. Performance and stability are prioritized over syntactic sugar.

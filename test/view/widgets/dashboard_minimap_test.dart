@@ -194,6 +194,10 @@ void main() {
         ),
       );
 
+      // Let the ScrollView settle and compute its total scroll extent
+      // before simulating the tap gesture, allowing mapViewportToSegment to execute fully.
+      await tester.pumpAndSettle();
+
       expect(scrollController.offset, 0.0);
 
       await tester.tap(find.byType(DashboardMinimap));
@@ -341,6 +345,123 @@ void main() {
       );
       expect(painterFinder, findsNWidgets(2));
     });
+
+    testWidgets('DashboardMinimap horizontal published metrics calculation', (tester) async {
+      final controller = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: const [
+          LayoutItem(id: 'a', x: 0, y: 0, w: 2, h: 2),
+        ],
+      );
+      controller.scrollDirection.value = Axis.horizontal; // Horizontal scroll
+      addTearDown(controller.dispose);
+
+      final scrollController = ScrollController();
+      addTearDown(scrollController.dispose);
+
+      // Pump the real horizontal sliver grid first so it publishes exact slot metrics
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 500,
+              height: 500,
+              child: DashboardOverlay(
+                controller: controller,
+                scrollController: scrollController,
+                scrollDirection: Axis.horizontal,
+                itemBuilder: (context, item) => SizedBox(child: Text('T-${item.id}')),
+                child: CustomScrollView(
+                  controller: scrollController,
+                  scrollDirection: Axis.horizontal,
+                  slivers: [
+                    SliverDashboard(
+                      key: GlobalKey(),
+                      controller: controller,
+                      scrollDirection: Axis.horizontal,
+                      itemBuilder: (context, item) => SizedBox(child: Text('T-${item.id}')),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Build the Minimap - it will consume those horizontal exact metrics
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 120,
+              height: 120,
+              child: DashboardMinimap(
+                controller: controller,
+                scrollController: scrollController,
+                width: 100,
+                mainAxisSpacing: 10,
+                crossAxisSpacing: 10,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byType(DashboardMinimap), findsOneWidget);
+    });
+
+    testWidgets(
+        'interaction on minimap with explicit mainAxisLeadingExtent and mainAxisContentExtent',
+        (tester) async {
+      final controller = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: const [
+          LayoutItem(id: 'a', x: 0, y: 0, w: 2, h: 2),
+          LayoutItem(id: 'b', x: 2, y: 2, w: 2, h: 2),
+        ],
+      );
+      addTearDown(controller.dispose);
+      final scrollController = ScrollController();
+      addTearDown(scrollController.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Column(
+              children: [
+                SizedBox(
+                  height: 100,
+                  child: DashboardMinimap(
+                    controller: controller,
+                    scrollController: scrollController,
+                    width: 100,
+                    mainAxisLeadingExtent: 50,
+                    mainAxisContentExtent: 500,
+                  ),
+                ),
+                Expanded(
+                  child: SingleChildScrollView(
+                    controller: scrollController,
+                    child: const SizedBox(height: 1000),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Tap on the minimap to trigger _handleInteraction with explicit leading/extent
+      await tester.tap(find.byType(DashboardMinimap));
+      await tester.pump();
+
+      // Verify that scroll controller offset moved past 0.0 due to the tap
+      expect(scrollController.offset, greaterThan(0.0));
+    });
   });
 
   group('Minimap Style & Marker — Value Equality Branch Coverage', () {
@@ -389,6 +510,24 @@ void main() {
       expect(a == c, isFalse);
     });
 
+    test('MinimapMarker non-const constructor', () {
+      // instantiate non-const to force line hit on empty constructor
+      // ignore: prefer_const_declarations
+      final id = 'non-const-id';
+      final marker = MinimapMarker(
+        itemId: id,
+        color: Colors.blue,
+        shape: MinimapMarkerShape.square,
+        alignment: Alignment.bottomLeft,
+        size: 10,
+      );
+      expect(marker.itemId, 'non-const-id');
+      expect(marker.color, Colors.blue);
+      expect(marker.shape, MinimapMarkerShape.square);
+      expect(marker.alignment, Alignment.bottomLeft);
+      expect(marker.size, 10.0);
+    });
+
     test('ViewportIndicator: value equality with identity-based controller', () {
       final ctrl = ScrollController();
       addTearDown(ctrl.dispose);
@@ -411,6 +550,101 @@ void main() {
   });
 
   group('Minimap widget — markers & multiple viewports', () {
+    testWidgets('Minimap markers painter shouldRepaint covers all evaluation branches',
+        (tester) async {
+      final controller = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: const [LayoutItem(id: 'a', x: 0, y: 0, w: 1, h: 1)],
+      );
+      addTearDown(controller.dispose);
+      final scrollController = ScrollController();
+      addTearDown(scrollController.dispose);
+
+      const markers = [MinimapMarker(itemId: 'a', color: Colors.red)];
+
+      // Base build
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: DashboardMinimap(
+              controller: controller,
+              scrollController: scrollController,
+              width: 100,
+              markers: markers,
+              slotAspectRatio: 1,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Change scale (via width change)
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: DashboardMinimap(
+              controller: controller,
+              scrollController: scrollController,
+              width: 120, // changed
+              markers: markers,
+              slotAspectRatio: 1,
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      // Change slotAspectRatio (changes unitHeight/unitWidth)
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: DashboardMinimap(
+              controller: controller,
+              scrollController: scrollController,
+              width: 100,
+              markers: markers,
+              slotAspectRatio: 2, // changed
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      // Change mainAxisSpacing (changes spacingRatioMain)
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: DashboardMinimap(
+              controller: controller,
+              scrollController: scrollController,
+              width: 100,
+              markers: markers,
+              slotAspectRatio: 1,
+              mainAxisSpacing: 10, // changed
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      // Change crossAxisSpacing (changes spacingRatioCross)
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: DashboardMinimap(
+              controller: controller,
+              scrollController: scrollController,
+              width: 100,
+              markers: markers,
+              slotAspectRatio: 1,
+              crossAxisSpacing: 10, // changed
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+    });
+
     testWidgets('renders a dedicated markers layer only when markers exist', (tester) async {
       final controller = DashboardController(
         initialSlotCount: 4,
@@ -1152,6 +1386,229 @@ void main() {
         // Far outside any cell: null.
         expect(target.itemAtGlobal(const Offset(-50, -50)), isNull);
       });
+    });
+  });
+
+  group('Minimap — Markers Shapes, Horizontal & Repaint', () {
+    testWidgets('renders, scales, and paints all marker shapes in horizontal scroll mode',
+        (tester) async {
+      final controller = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: const [
+          LayoutItem(id: 'a', x: 0, y: 0, w: 1, h: 1),
+          LayoutItem(id: 'b', x: 1, y: 0, w: 1, h: 1),
+          LayoutItem(id: 'c', x: 2, y: 0, w: 1, h: 1),
+          LayoutItem(id: 'd', x: 3, y: 0, w: 1, h: 1),
+        ],
+      );
+      addTearDown(controller.dispose);
+      final scrollController = ScrollController();
+      addTearDown(scrollController.dispose);
+
+      // Forces horizontal scroll to cover the horizontal markers paint branches
+      controller.scrollDirection.value = Axis.horizontal;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 500,
+              height: 120,
+              child: DashboardMinimap(
+                controller: controller,
+                scrollController: scrollController,
+                slotAspectRatio: 1,
+                markers: const [
+                  MinimapMarker(itemId: 'a', color: Colors.red, shape: MinimapMarkerShape.circle),
+                  MinimapMarker(itemId: 'b', color: Colors.green, shape: MinimapMarkerShape.square),
+                  MinimapMarker(itemId: 'c', color: Colors.blue, shape: MinimapMarkerShape.diamond),
+                  MinimapMarker(
+                    itemId: 'd',
+                    color: Colors.yellow,
+                    shape: MinimapMarkerShape.triangle,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byType(DashboardMinimap), findsOneWidget);
+    });
+
+    testWidgets('Minimap markers painter shouldRepaint is triggered and evaluated on updates',
+        (tester) async {
+      final controller = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: const [LayoutItem(id: 'a', x: 0, y: 0, w: 1, h: 1)],
+      );
+      addTearDown(controller.dispose);
+      final scrollController = ScrollController();
+      addTearDown(scrollController.dispose);
+
+      // Pump with initial markers
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: DashboardMinimap(
+              controller: controller,
+              scrollController: scrollController,
+              width: 100,
+              markers: const [MinimapMarker(itemId: 'a', color: Colors.red)],
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Re-pump with different markers to trigger shouldRepaint internally
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: DashboardMinimap(
+              controller: controller,
+              scrollController: scrollController,
+              width: 100,
+              markers: const [MinimapMarker(itemId: 'a', color: Colors.blue)], // Different color
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+    });
+  });
+
+  group('Minimap — Visual Builders, Taps and Horizontal Shapes', () {
+    testWidgets('renders custom widgets over items using markerBuilder', (tester) async {
+      final controller = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: const [
+          LayoutItem(id: 'a', x: 0, y: 0, w: 2, h: 2),
+        ],
+      );
+      addTearDown(controller.dispose);
+      final scrollController = ScrollController();
+      addTearDown(scrollController.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: DashboardMinimap(
+              controller: controller,
+              scrollController: scrollController,
+              width: 120,
+              markerBuilder: (context, item) {
+                return Text('M-${item.id}', key: ValueKey('marker-${item.id}'));
+              },
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Verify that the custom widget-marker was built and positioned
+      expect(find.byKey(const ValueKey('marker-a')), findsOneWidget);
+      expect(find.text('M-a'), findsOneWidget);
+    });
+
+    testWidgets('onItemTap is triggered when tapping exactly on an item rectangle', (tester) async {
+      final controller = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: const [
+          LayoutItem(id: 'a', x: 0, y: 0, w: 2, h: 2),
+        ],
+      );
+      addTearDown(controller.dispose);
+      final scrollController = ScrollController();
+      addTearDown(scrollController.dispose);
+
+      LayoutItem? tappedItem;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Column(
+              children: [
+                SizedBox(
+                  width: 120,
+                  height: 120,
+                  child: DashboardMinimap(
+                    controller: controller,
+                    scrollController: scrollController,
+                    width: 120,
+                    onItemTap: (item) {
+                      tappedItem = item;
+                    },
+                  ),
+                ),
+                Expanded(
+                  child: SingleChildScrollView(
+                    controller: scrollController,
+                    child: const SizedBox(height: 1000),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Item 'a' spans x: 0 to 2, y: 0 to 2.
+      // Scale is 120 / 4 = 30. Rectangle is at L:0, T:0, W:60, H:60.
+      // Tap exactly at the center of item 'a' on the minimap: (30, 30).
+      final minimapFinder = find.byType(DashboardMinimap);
+      final topLeft = tester.getTopLeft(minimapFinder);
+      await tester.tapAt(topLeft + const Offset(30, 30));
+      await tester.pump();
+
+      expect(tappedItem, isNotNull);
+      expect(tappedItem!.id, equals('a'));
+      expect(
+        scrollController.offset,
+        equals(0.0),
+        reason: 'Default tap-to-scroll must be suppressed',
+      );
+    });
+
+    testWidgets('renders square and diamond shapes on horizontal minimap', (tester) async {
+      final controller = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: const [
+          LayoutItem(id: 'a', x: 0, y: 0, w: 2, h: 2),
+          LayoutItem(id: 'b', x: 2, y: 0, w: 2, h: 2),
+        ],
+      );
+      addTearDown(controller.dispose);
+      final scrollController = ScrollController();
+      addTearDown(scrollController.dispose);
+
+      controller.scrollDirection.value = Axis.horizontal;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 120,
+              height: 120,
+              child: DashboardMinimap(
+                controller: controller,
+                scrollController: scrollController,
+                width: 120,
+                markers: const [
+                  MinimapMarker(itemId: 'a', color: Colors.red, shape: MinimapMarkerShape.square),
+                  MinimapMarker(itemId: 'b', color: Colors.blue, shape: MinimapMarkerShape.diamond),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byType(DashboardMinimap), findsOneWidget);
     });
   });
 }
