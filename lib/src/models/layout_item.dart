@@ -1,4 +1,4 @@
-import 'package:flutter/foundation.dart';
+import 'package:meta/meta.dart';
 
 /// Defines how new items with undefined coordinates (x: -1, y: -1)
 /// are automatically positioned in the grid.

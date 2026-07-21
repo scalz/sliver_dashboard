@@ -75,15 +75,8 @@ class VerticalCompactor extends CompactorDelegate {
     };
 
     // Occupancy set + per-column skyline over already-placed items.
-    final occupied = <int>{};
     final colHeights = List<int>.filled(max(cols, 1), 0);
     void markPlaced(LayoutItem p) {
-      for (var dy = 0; dy < p.h; dy++) {
-        final rowBase = (p.y + dy) << 20;
-        for (var dx = 0; dx < p.w; dx++) {
-          occupied.add(rowBase | (p.x + dx));
-        }
-      }
       final bottomEdge = p.y + p.h;
       final xEnd = min(p.x + p.w, colHeights.length);
       for (var x = max(p.x, 0); x < xEnd; x++) {
@@ -91,30 +84,22 @@ class VerticalCompactor extends CompactorDelegate {
       }
     }
 
-    bool startCollides(LayoutItem p) {
-      for (var dy = 0; dy < p.h; dy++) {
-        final rowBase = (p.y + dy) << 20;
-        for (var dx = 0; dx < p.w; dx++) {
-          if (occupied.contains(rowBase | (p.x + dx))) return true;
-        }
-      }
-      return false;
-    }
-
     compareWith.forEach(markPlaced);
 
     for (final l in sorted) {
       var newL = l;
       if (!l.isStatic) {
-        var restY = -1;
-        if (!startCollides(l)) {
-          restY = 0;
-          final xEnd = min(l.x + l.w, colHeights.length);
-          for (var x = max(l.x, 0); x < xEnd; x++) {
-            if (colHeights[x] > restY) restY = colHeights[x];
-          }
+        var restY = 0;
+        final xEnd = min(l.x + l.w, colHeights.length);
+        for (var x = max(l.x, 0); x < xEnd; x++) {
+          if (colHeights[x] > restY) restY = colHeights[x];
         }
-        if (restY >= 0 && restY <= l.y) {
+        // The fast path additionally requires the item to sit fully inside
+        // the tracked columns: an item partially or fully beyond [0, cols)
+        // (horizontally-scrolling vertical grids) would get a truncated —
+        // or empty — skyline reading and a bogus collision-free verdict.
+        // Out-of-range items take the historical, collision-scan path.
+        if (restY <= l.y && l.x >= 0 && l.x + l.w <= colHeights.length) {
           // Fast path: every skyline contribution in l's columns sits at or
           // above l, so the per-column max equals the closed-form
           // max-lower-edge rise bound exactly.
@@ -213,11 +198,79 @@ class HorizontalCompactor extends CompactorDelegate {
       for (var i = 0; i < layout.length; i++) layout[i].id: i,
     };
 
+    // Per-row skyline (max right edge of placed items per row) — mirror of
+    // the vertical compactor's colHeights, same soundness argument by
+    // symmetry: restX <= l.x guarantees a collision-free slide to restX;
+    // start collisions and statics placed RIGHT of the item force
+    // restX > l.x and route to the historical resolution verbatim. The fast
+    // path additionally requires the item not to overflow the columns,
+    // because the historical path owns the wrap-to-next-row semantics.
+    var rowRights = List<int>.filled(64, 0);
+    void ensureRows(int rowEnd) {
+      if (rowEnd <= rowRights.length) return;
+      final grown = List<int>.filled(max(rowEnd, rowRights.length * 2), 0)
+        ..setRange(0, rowRights.length, rowRights);
+      rowRights = grown;
+    }
+
+    void markPlaced(LayoutItem p) {
+      if (p.y < 0) return;
+      ensureRows(p.y + p.h);
+      final rightEdge = p.x + p.w;
+      for (var y = p.y; y < p.y + p.h; y++) {
+        if (rightEdge > rowRights[y]) rowRights[y] = rightEdge;
+      }
+    }
+
+    // Cell -> index (in compareWith) of the item covering it. Placed items
+    // never overlap each other (each is fully resolved before insertion),
+    // so every cell has a single owner and "first collision in list order"
+    // — the exact contract of getFirstCollision, whose result drives the
+    // push-right jumps — is the MINIMUM owner index over the probe's cells:
+    // an O(w*h) query. Cells at negative coordinates are not
+    // tracked; queries touching them fall back to the legacy scan.
+    final cellOwner = <int, int>{};
+    void ownCells(LayoutItem p, int index) {
+      if (p.y < 0 || p.x < 0) return;
+      for (var dy = 0; dy < p.h; dy++) {
+        final rowBase = (p.y + dy) << 20;
+        for (var dx = 0; dx < p.w; dx++) {
+          cellOwner[rowBase | (p.x + dx)] = index;
+        }
+      }
+    }
+
+    for (var i = 0; i < compareWith.length; i++) {
+      markPlaced(compareWith[i]);
+      ownCells(compareWith[i], i);
+    }
+
     for (final l in sorted) {
       var newL = l;
       if (!l.isStatic) {
-        newL = _compactItemHorizontal(compareWith, l, cols, sorted);
+        var restX = 0;
+        if (l.y >= 0) {
+          ensureRows(l.y + l.h);
+          for (var y = l.y; y < l.y + l.h; y++) {
+            if (rowRights[y] > restX) restX = rowRights[y];
+          }
+        } else {
+          restX = l.x + 1; // negative rows: historical path decides
+        }
+        if (restX <= l.x && l.x + l.w <= cols) {
+          newL = restX < l.x ? l.copyWith(x: restX) : l;
+        } else {
+          newL = _compactItemHorizontal(
+            compareWith,
+            l,
+            cols,
+            sorted,
+            cellOwner: cellOwner,
+          );
+        }
         compareWith.add(newL);
+        markPlaced(newL);
+        ownCells(newL, compareWith.length - 1);
       }
 
       final index = indexOf[l.id]!;
@@ -240,14 +293,35 @@ class HorizontalCompactor extends CompactorDelegate {
     List<LayoutItem> compareWith,
     LayoutItem l,
     int cols,
-    List<LayoutItem> fullLayout,
-  ) {
+    List<LayoutItem> fullLayout, {
+    Map<int, int>? cellOwner,
+  }) {
+    // First collision in compareWith list order — via the owner map when
+    // available and the probe is fully inside tracked space, else the
+    // legacy O(N) scan (also used by the deprecated compactItem helper).
+    LayoutItem? firstCollision(LayoutItem probe) {
+      if (cellOwner == null || probe.y < 0 || probe.x < 0) {
+        return getFirstCollision(compareWith, probe);
+      }
+      var minIndex = -1;
+      for (var dy = 0; dy < probe.h; dy++) {
+        final rowBase = (probe.y + dy) << 20;
+        for (var dx = 0; dx < probe.w; dx++) {
+          final owner = cellOwner[rowBase | (probe.x + dx)];
+          if (owner != null && (minIndex == -1 || owner < minIndex)) {
+            minIndex = owner;
+          }
+        }
+      }
+      return minIndex == -1 ? null : compareWith[minIndex];
+    }
+
     var currentItem = l;
 
     // 1. Move left as far as possible — closed form, mirror of the vertical
     // compactor's rise (see _compactItemVertical for the equivalence proof
     // and the complexity rationale).
-    if (getFirstCollision(compareWith, currentItem) == null) {
+    if (firstCollision(currentItem) == null) {
       var restX = 0;
       for (final other in compareWith) {
         if (other.y < currentItem.y + currentItem.h && currentItem.y < other.y + other.h) {
@@ -264,7 +338,7 @@ class HorizontalCompactor extends CompactorDelegate {
 
     // 2. Resolve collisions AND overflows
     while (true) {
-      final collidesWith = getFirstCollision(compareWith, currentItem);
+      final collidesWith = firstCollision(currentItem);
 
       if (collidesWith != null) {
         // Collision: Push right
@@ -896,6 +970,10 @@ Layout moveElement(
   // an item's `y` (or the current item's `y` on a static jump), so the loop
   // terminates; the cap is a belt-and-braces guard only.
   var safetyLoop = 0;
+  // The real worst case is not 4N: in a dense grid, pushing near the TOP
+  // re-enqueues each obstacle once per pusher stacked above it — up to
+  // ~N * (N / cols) pops (125k at N=1000, cols=8). Each pop is a
+  // cheap row-indexed query, so the bound stays a few ms.
   final maxLoops = max(10000, layout.length * layout.length ~/ max(cols, 1));
 
   while (queue.isNotEmpty) {
@@ -1304,6 +1382,52 @@ List<LayoutItem> optimizeLayout(List<LayoutItem> layout, int columns) {
   // 3. Initialize placed items with statics (obstacles)
   final placedItems = List<LayoutItem>.from(statics);
 
+  // Occupancy set of covered cells, packed (y << 20) | x — same technique as
+  // placeNewItems and the skyline compactors.
+  // The set answers each candidate in O(w*h) with an IDENTICAL
+  // scan order, so placements are bit-identical (pinned by the oracle test).
+  final occupied = <int>{};
+  // In-range occupied-cell count per row: lets the first-fit scan skip a
+  // whole row in O(1) when it cannot possibly host the item (free in-range
+  // cells < item.w — a necessary condition, so no placeable position is
+  // ever skipped and placements stay bit-identical). On a nearly-full board
+  // most rows are full.
+  var rowCounts = List<int>.filled(64, 0);
+  void ensureRowCounts(int rowEnd) {
+    if (rowEnd <= rowCounts.length) return;
+    final grown = List<int>.filled(max(rowEnd, rowCounts.length * 2), 0)
+      ..setRange(0, rowCounts.length, rowCounts);
+    rowCounts = grown;
+  }
+
+  void markCells(LayoutItem p) {
+    if (p.y >= 0) ensureRowCounts(p.y + p.h);
+    for (var dy = 0; dy < p.h; dy++) {
+      final rowBase = (p.y + dy) << 20;
+      for (var dx = 0; dx < p.w; dx++) {
+        occupied.add(rowBase | (p.x + dx));
+        // Count only cells inside [0, columns): too-wide fallback items spill
+        // beyond, and counting their overflow would over-skip rows that
+        // still hold a valid slot — breaking placement equality.
+        if (p.y + dy >= 0 && p.x + dx >= 0 && p.x + dx < columns) {
+          rowCounts[p.y + dy]++;
+        }
+      }
+    }
+  }
+
+  bool cellsFree(int x, int y, int w, int h) {
+    for (var dy = 0; dy < h; dy++) {
+      final rowBase = (y + dy) << 20;
+      for (var dx = 0; dx < w; dx++) {
+        if (occupied.contains(rowBase | (x + dx))) return false;
+      }
+    }
+    return true;
+  }
+
+  placedItems.forEach(markCells);
+
   // 4. Place each dynamic item in the first available spot
   for (final item in dynamics) {
     var placed = false;
@@ -1311,22 +1435,18 @@ List<LayoutItem> optimizeLayout(List<LayoutItem> layout, int columns) {
 
     // Safety limit to prevent infinite loops if an item is wider than columns
     while (!placed && y < 10000) {
+      // O(1) row skip: not enough free in-range cells for this width.
+      if (y < rowCounts.length && columns - rowCounts[y] < item.w) {
+        y++;
+        continue;
+      }
       // Try every column in this row
       for (var x = 0; x <= columns - item.w; x++) {
-        final candidate = item.copyWith(x: x, y: y);
-
-        // Check collision with ALL already placed items (statics + previously placed dynamics)
-        var hasCollision = false;
-        for (final obstacle in placedItems) {
-          if (collides(candidate, obstacle)) {
-            hasCollision = true;
-            break;
-          }
-        }
-
-        if (!hasCollision) {
+        if (cellsFree(x, y, item.w, item.h)) {
           // Found a spot!
+          final candidate = item.copyWith(x: x, y: y);
           placedItems.add(candidate);
+          markCells(candidate);
           placed = true;
           break; // Stop checking X, move to next item
         }
@@ -1339,7 +1459,9 @@ List<LayoutItem> optimizeLayout(List<LayoutItem> layout, int columns) {
     // Edge case: If item was too wide for the grid, it wasn't placed.
     // We add it at the end to avoid losing data, even if layout is broken.
     if (!placed) {
-      placedItems.add(item.copyWith(y: bottom(placedItems)));
+      final fallback = item.copyWith(y: bottom(placedItems));
+      placedItems.add(fallback);
+      markCells(fallback);
     }
   }
 
