@@ -1258,37 +1258,17 @@ if (spotInLastRow != null) {
 ```
 
 ## Benchmark
-- Setup: /test/engine/benchmark.dart in AOT mode, on Ryzen 2600, Windows 11. Dart only, requires to comment immutable annotation in layout_item.dart
 
-```
-┌──────────────────────────────────────────────────────────────────────────┐
-│                         BENCHMARK RESULTS                                │
-├──────────────────────────────────────────────────────┬───────────────────┤
-│ Test                                                 │ Time              │
-├──────────────────────────────────────────────────────┼───────────────────┤
-│ COMPACTION                                           │                   │
-├──────────────────────────────────────────────────────┼───────────────────┤
-│   Vertical (100 items)                               │             17 µs │
-│   Horizontal (100 items)                             │             17 µs │
-│   Vertical (500 items)                               │            100 µs │
-│   Horizontal (500 items)                             │            101 µs │
-│   Vertical (1000 items)                              │            238 µs │
-│   Horizontal (1000 items)                            │            223 µs │
-│ MOVE                                                 │                   │
-├──────────────────────────────────────────────────────┼───────────────────┤
-│   Move Element (100 items)                           │             73 µs │
-│   Move Element (500 items)                           │           1.41 ms │
-│ SORT                                                 │                   │
-├──────────────────────────────────────────────────────┼───────────────────┤
-│   Sort Layout (100 items)                            │              6 µs │
-│   Sort Layout (500 items)                            │             43 µs │
-│   Sort Layout (1000 items)                           │            103 µs │
-│ OPTIMIZE                                             │                   │
-├──────────────────────────────────────────────────────┼───────────────────┤
-│   Defrag (100 items)                                 │           4.78 ms │
-│   Defrag (500 items)                                 │         849.88 ms │
-└──────────────────────────────────────────────────────┴───────────────────┘
-```
+`sliver_dashboard` is designed for raw execution speed. Even under extreme stress tests, all real-time interactive operations (dragging, resizing, compaction) execute in microseconds under native Dart AOT—well within a 120 Hz frame budget (8.33 ms) even with thousands of items.
+
+| Operation (1,000 items)     | Standard Compactor | Fast/Tide Compactor |
+|:----------------------------| :--- | :--- |
+| **Vertical Compaction**     | ~532 µs | ~497 µs |
+| **Horizontal Compaction**   | ~944 µs | ~520 µs |
+| **Interactive Resize**      | ~749 µs | *N/A* |
+| **Interactive Drag (Move)** | ~701 µs | *N/A* |
+
+**View Detailed Benchmarks:** For the complete, high-density performance breakdown (up to 10,000 items), algorithmic analysis, and instructions on how to compile and run the benchmark suite on your own machine, see the dedicated [BENCHMARK.md](BENCHMARK.md) document.
 
 ## Contributing
 
