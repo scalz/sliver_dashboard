@@ -1,8 +1,13 @@
 # Sliver Dashboard
 
+[![pub package](https://img.shields.io/pub/v/sliver_dashboard.svg)](https://pub.dev/packages/sliver_dashboard)
+[![pub points](https://img.shields.io/pub/points/sliver_dashboard)](https://pub.dev/packages/sliver_dashboard/score)
+[![pub downloads](https://img.shields.io/pub/dm/sliver_dashboard)](https://pub.dev/packages/sliver_dashboard)
 ![Coverage](https://raw.githubusercontent.com/scalz/sliver_dashboard/main/coverage_badge.svg)
 [![style: very good analysis](https://img.shields.io/badge/style-very_good_analysis-B22C89.svg)](https://pub.dev/packages/very_good_analysis)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+
+> ⭐️ **Enjoying `sliver_dashboard`?** Consider giving it a star on [GitHub](https://github.com/scalz/sliver_dashboard) and a 👍 on [pub.dev](https://pub.dev/packages/sliver_dashboard) — it helps other developers discover the package!
 
 **A high-performance and scalable dashboard engine for Flutter, built on Slivers.**
 
