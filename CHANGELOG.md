@@ -1,3 +1,10 @@
+## 2.2.1
+
+### Documentation
+
+- **README Badges**: Added dynamic status badges highlighting pub.dev version, quality score, and monthly downloads.
+- **Community Callout**: Included a callout encouraging users to support the project via GitHub stars and pub.dev likes.
+
 ## 2.2.0
 
 **No API breaking changes.**
