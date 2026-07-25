@@ -1321,15 +1321,31 @@ List<LayoutItem> placeNewItems({
 
   // SAFETY: Allow searching at least 1000 rows down, or 10k iterations minimum.
   final maxIterations = max(10000, cols * 1000);
+  var runningBottom = bottom(finalLayout);
+
+  // Per-row occupied-cell counts (in-range cells only), mirroring
+  // optimizeLayout: lets firstFit skip full rows in O(1) instead of
+  // attempting every x — the dominant cost on dense boards.
+  var rowCounts = List<int>.filled(64, 0);
+  void ensureRowCounts(int rowEnd) {
+    if (rowEnd <= rowCounts.length) return;
+    final grown = List<int>.filled(max(rowEnd, rowCounts.length * 2), 0)
+      ..setRange(0, rowCounts.length, rowCounts);
+    rowCounts = grown;
+  }
 
   // Occupancy set of covered cells, packed (y << 20) | x (x < 2^20 by
   // construction, safe on dart2js).
   final occupied = <int>{};
   for (final existing in finalLayout) {
+    if (existing.y >= 0) ensureRowCounts(existing.y + existing.h);
     for (var dy = 0; dy < existing.h; dy++) {
       final rowBase = (existing.y + dy) << 20;
       for (var dx = 0; dx < existing.w; dx++) {
         occupied.add(rowBase | (existing.x + dx));
+        if (existing.y + dy >= 0 && existing.x + dx >= 0 && existing.x + dx < cols) {
+          rowCounts[existing.y + dy]++;
+        }
       }
     }
   }
@@ -1345,12 +1361,17 @@ List<LayoutItem> placeNewItems({
   }
 
   void markCells(int x, int y, int w, int h) {
+    if (y >= 0) ensureRowCounts(y + h);
     for (var dy = 0; dy < h; dy++) {
       final rowBase = (y + dy) << 20;
       for (var dx = 0; dx < w; dx++) {
         occupied.add(rowBase | (x + dx));
+        if (y + dy >= 0 && x + dx >= 0 && x + dx < cols) {
+          rowCounts[y + dy]++;
+        }
       }
     }
+    if (y + h > runningBottom) runningBottom = y + h;
   }
 
   for (final item in itemsToPlace) {
@@ -1369,8 +1390,19 @@ List<LayoutItem> placeNewItems({
     // places the item past the cap — never losing data, mirroring the
     // historical too-wide fallback semantics.
     final boundedRows = maxRows != null;
-    while (
-        !placed && safetyLoop < maxIterations && (!boundedRows || currentY + item.h <= maxRows)) {
+    // runningBottom is captured per item: rows [runningBottom, ...) are
+    // free, so a placeable item is guaranteed to land by then.
+    final searchBottom = runningBottom;
+    while (!placed &&
+        safetyLoop < maxIterations &&
+        currentY <= searchBottom &&
+        (!boundedRows || currentY + item.h <= maxRows)) {
+      // O(1) full-row skip (firstFit's dominant cost on dense boards).
+      if (currentX == 0 && currentY < rowCounts.length && cols - rowCounts[currentY] < item.w) {
+        currentY++;
+        safetyLoop++;
+        continue;
+      }
       // 1. Check grid boundaries (Wrap to next row if needed)
       if (currentX + item.w > cols) {
         currentX = 0;

@@ -345,5 +345,77 @@ void main() {
       final compacted = const VerticalCompactor().compact(placed, 8);
       expect(overlapFree(compacted), isTrue);
     });
+
+    test(
+        'firstFit reaches gaps deep in a large dense board instead of '
+        'exhausting the budget into the single-column fallback', () {
+      // Playground repro in miniature: the iteration budget
+      // (max(10000, cols*1000)) was exhausted by a legitimate deep scan,
+      // so every subsequent item took the never-drop fallback at x=0 —
+      // stacking one per row (the "single-column tail" on the minimap).
+      // 4000 dense rows at cols=2 needs ~12k attempts pre-skip: past the
+      // old 10k budget.
+      final existing = <LayoutItem>[
+        for (var row = 0; row < 4000; row++)
+          if (row == 3900)
+            LayoutItem(id: 'gap_$row', x: 0, y: row, w: 1, h: 1)
+          else
+            LayoutItem(id: 'full_$row', x: 0, y: row, w: 2, h: 1),
+      ];
+
+      final placed = placeNewItems(
+        existingLayout: existing,
+        newItems: const [LayoutItem(id: 'n', x: -1, y: -1, w: 1, h: 1)],
+        cols: 2,
+        strategy: AutoPlacementStrategy.firstFit,
+      );
+      final n = placed.firstWhere((i) => i.id == 'n');
+      expect(
+        (n.x, n.y),
+        (1, 3900),
+        reason: 'the deep gap must be found, not the bottom fallback',
+      );
+    });
+
+    test(
+        'appendBottom batches pack rows on a large board — no one-per-row '
+        'tail', () {
+      final existing = <LayoutItem>[
+        for (var row = 0; row < 3000; row++) LayoutItem(id: 'full_$row', x: 0, y: row, w: 4, h: 1),
+      ];
+      final placed = placeNewItems(
+        existingLayout: existing,
+        newItems: [
+          for (var i = 0; i < 40; i++) LayoutItem(id: 'n$i', x: -1, y: -1, w: 2, h: 1),
+        ],
+        cols: 4,
+      );
+      // 40 half-width items pack TWO per row: 20 rows, not 40.
+      final newOnes = placed.where((i) => i.id.startsWith('n')).toList();
+      final rowsUsed = newOnes.map((i) => i.y).toSet();
+      expect(
+        rowsUsed.length,
+        20,
+        reason: 'two per row; a single-column tail would use 40 rows',
+      );
+      expect(newOnes.every((i) => i.y >= 3000), isTrue);
+    });
+
+    test('an item wider than the grid is no longer silently dropped', () {
+      final placed = placeNewItems(
+        existingLayout: const [LayoutItem(id: 'a', x: 0, y: 0, w: 2, h: 1)],
+        newItems: const [LayoutItem(id: 'wide', x: -1, y: -1, w: 9, h: 1)],
+        cols: 4,
+      );
+      expect(
+        placed.any((i) => i.id == 'wide'),
+        isTrue,
+        reason: 'historical behavior lost unplaceable items',
+      );
+      expect(
+        placed.firstWhere((i) => i.id == 'wide').y,
+        greaterThanOrEqualTo(1),
+      );
+    });
   });
 }
