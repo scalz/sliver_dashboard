@@ -37,6 +37,7 @@ class LayoutItem {
     this.isSectionBarrier = false,
     this.sectionTitle,
     this.hasNestedGrid = false,
+    this.extra,
   }) : isStatic =
             isStatic || isSectionBarrier; // Ensure section barriers are always static in-memory
 
@@ -63,6 +64,7 @@ class LayoutItem {
       isSectionBarrier: map['isSectionBarrier'] as bool? ?? false,
       sectionTitle: map['sectionTitle'] as String?,
       hasNestedGrid: map['hasNestedGrid'] as bool? ?? false,
+      extra: (map['extra'] as Map?)?.cast<String, dynamic>(),
     );
   }
 
@@ -86,6 +88,7 @@ class LayoutItem {
       'isSectionBarrier': isSectionBarrier,
       'sectionTitle': sectionTitle,
       'hasNestedGrid': hasNestedGrid,
+      if (extra != null) 'extra': extra,
     };
   }
 
@@ -106,6 +109,9 @@ class LayoutItem {
         isSectionBarrier,
         sectionTitle,
         hasNestedGrid,
+        extra == null
+            ? null
+            : Object.hashAllUnordered(extra!.entries.map((e) => Object.hash(e.key, e.value))),
       );
 
   /// Creates a new [LayoutItem] with updated properties.
@@ -126,6 +132,7 @@ class LayoutItem {
     bool? isSectionBarrier,
     String? sectionTitle,
     bool? hasNestedGrid,
+    Map<String, dynamic>? extra,
   }) {
     return LayoutItem(
       id: id ?? this.id,
@@ -144,6 +151,7 @@ class LayoutItem {
       isSectionBarrier: isSectionBarrier ?? this.isSectionBarrier,
       sectionTitle: sectionTitle ?? this.sectionTitle,
       hasNestedGrid: hasNestedGrid ?? this.hasNestedGrid,
+      extra: extra ?? this.extra,
     );
   }
 
@@ -167,7 +175,8 @@ class LayoutItem {
           moved == other.moved &&
           isSectionBarrier == other.isSectionBarrier &&
           sectionTitle == other.sectionTitle &&
-          hasNestedGrid == other.hasNestedGrid;
+          hasNestedGrid == other.hasNestedGrid &&
+          mapEquals(extra, other.extra);
 
   @override
   int get hashCode => Object.hash(
@@ -187,6 +196,9 @@ class LayoutItem {
         isSectionBarrier,
         sectionTitle,
         hasNestedGrid,
+        extra == null
+            ? null
+            : Object.hashAllUnordered(extra!.entries.map((e) => Object.hash(e.key, e.value))),
       );
 
   @override
@@ -259,4 +271,34 @@ class LayoutItem {
   /// Included in [contentSignature]: converting an item to or from a grid
   /// host changes its content and must invalidate the cached item widget.
   final bool hasNestedGrid;
+
+  /// Free-form, JSON-serializable business metadata carried by the item
+  /// (widget type, title, color, configuration…). Travels through
+  /// toMap/fromMap — so exportLayout/exportNestedTree persist layout AND
+  /// configuration in one payload — and through copyWith. Compared with
+  /// SHALLOW map equality: replace the map instance to change it, do not
+  /// mutate it in place (mutations are invisible to change detection).
+  /// Included in [contentSignature], so changing [extra] rebuilds the
+  /// item's cached widget; never consulted during drags.
+  final Map<String, dynamic>? extra;
+}
+
+/// Imported from foundation package
+/// Compares two maps for element-by-element equality.
+bool mapEquals<T, U>(Map<T, U>? a, Map<T, U>? b) {
+  if (a == null) {
+    return b == null;
+  }
+  if (b == null || a.length != b.length) {
+    return false;
+  }
+  if (identical(a, b)) {
+    return true;
+  }
+  for (final key in a.keys) {
+    if (!b.containsKey(key) || b[key] != a[key]) {
+      return false;
+    }
+  }
+  return true;
 }

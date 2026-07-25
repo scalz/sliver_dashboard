@@ -142,6 +142,51 @@ void main() {
     });
   });
 
+  group('LayoutItem.extra — business metadata', () {
+    test('serialization round-trip, equality, signature and copyWith', () {
+      const item = LayoutItem(
+        id: 'chart',
+        x: 0,
+        y: 0,
+        w: 2,
+        h: 2,
+        extra: {'type': 'pie', 'color': 0xFF00FF00},
+      );
+
+      // Round-trip through toMap/fromMap.
+      final restored = LayoutItem.fromMap(item.toMap());
+      expect(restored, item);
+      expect(restored.extra, {'type': 'pie', 'color': 0xFF00FF00});
+
+      // Absent extra stays absent (and out of the map).
+      const bare = LayoutItem(id: 'b', x: 0, y: 0, w: 1, h: 1);
+      expect(bare.toMap().containsKey('extra'), isFalse);
+      expect(LayoutItem.fromMap(bare.toMap()).extra, isNull);
+
+      // Value equality is shallow-map based, not identity based.
+      const sameByValue = LayoutItem(
+        id: 'chart',
+        x: 0,
+        y: 0,
+        w: 2,
+        h: 2,
+        extra: {'type': 'pie', 'color': 0xFF00FF00},
+      );
+      expect(sameByValue, item);
+      expect(sameByValue.hashCode, item.hashCode);
+
+      // A changed value changes equality AND contentSignature (widget cache
+      // invalidation), while position changes never touch the signature.
+      final recolored = item.copyWith(extra: {'type': 'pie', 'color': 0});
+      expect(recolored == item, isFalse);
+      expect(recolored.contentSignature == item.contentSignature, isFalse);
+      expect(item.copyWith(x: 3).contentSignature, item.contentSignature);
+
+      // copyWith without extra keeps the existing map.
+      expect(item.copyWith(w: 3).extra, item.extra);
+    });
+  });
+
   group('Dashboard Configuration Data Classes', () {
     test('GridStyle equality', () {
       const style1 = GridStyle(fillColor: Colors.red);
