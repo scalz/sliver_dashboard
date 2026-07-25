@@ -29,6 +29,16 @@ import 'package:state_beacon/state_beacon.dart';
 @visibleForTesting
 bool debugOverrideIsWeb = false;
 
+/// Test hook: injectable time source for the pointer-throttle gate. When
+/// null (production), real elapsed time from an internal [Stopwatch] is
+/// used. Tests provide a controlled Duration so the gate is DETERMINISTIC:
+/// the real clock made the throttle untestable — coverage instrumentation
+/// and suite load stretch the delay between two synthetic pointer events
+/// past the 16 ms window, flipping the observed behavior between isolated
+/// and full-suite runs.
+@visibleForTesting
+Duration Function()? debugThrottleClock;
+
 /// The gesture used to trigger a drag operation on mobile platforms.
 enum DragStartGesture {
   /// Dragging is initiated by holding/long-pressing an item.
@@ -102,6 +112,8 @@ class DashboardOverlay<T extends Object> extends StatefulWidget {
     this.padding = EdgeInsets.zero,
     this.scrollDirection = Axis.vertical,
     this.itemFeedbackBuilder,
+    this.onSlotTap,
+    this.onSlotLongPress,
     this.onItemDragStart,
     this.onItemDragUpdate,
     this.onItemDragEnd,
@@ -200,6 +212,19 @@ class DashboardOverlay<T extends Object> extends StatefulWidget {
 
   /// Optional builder to customize the appearance of the item while it is being dragged.
   final DashboardItemFeedbackBuilder? itemFeedbackBuilder;
+
+  /// Called when the user taps an EMPTY slot of this grid (no item under the
+  /// pointer). Receives the tapped grid coordinates. Fires only for taps
+  /// inside this grid's own sliver bounds, so several grids sharing a scroll
+  /// view never cross-fire; with `fillViewport: true` (the single-grid
+  /// default) the bounds include the empty area below the content. Costs
+  /// nothing outside the tap event itself.
+  final void Function(int x, int y)? onSlotTap;
+
+  /// Long-press variant of [onSlotTap]. On mobile with
+  /// [DragStartGesture.longPress], long-pressing an ITEM still starts a
+  /// drag: only empty-slot long-presses reach this callback.
+  final void Function(int x, int y)? onSlotLongPress;
 
   /// Called when a drag operation starts on an item.
   final void Function(LayoutItem item)? onItemDragStart;
@@ -344,6 +369,8 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
 
   bool _isProcessingPointerUp = false;
   final _throttleStopwatch = Stopwatch()..start();
+  Duration _lastThrottleFlush = Duration.zero;
+  Duration get _throttleNow => debugThrottleClock?.call() ?? _throttleStopwatch.elapsed;
   Offset? _pendingThrottledPosition;
   Timer? _throttleFlushScheduled;
 
@@ -624,9 +651,32 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
                     },
                     child: GestureDetector(
                       behavior: HitTestBehavior.translucent,
+                      onTapUp: widget.onSlotTap != null
+                          ? (details) => _handleSlotGesture(
+                                details.globalPosition,
+                                widget.onSlotTap,
+                              )
+                          : null,
                       onLongPressStart:
-                          _isMobile && widget.dragStartGesture == DragStartGesture.longPress
-                              ? (details) => _onPointerDown(details.globalPosition)
+                          (_isMobile && widget.dragStartGesture == DragStartGesture.longPress) ||
+                                  widget.onSlotLongPress != null
+                              ? (details) {
+                                  // Empty-slot long-press wins; item long-press
+                                  // keeps its historical role (drag start on
+                                  // mobile longPress mode).
+                                  if (widget.onSlotLongPress != null &&
+                                      _hitTest(details.globalPosition).item == null) {
+                                    _handleSlotGesture(
+                                      details.globalPosition,
+                                      widget.onSlotLongPress,
+                                    );
+                                    return;
+                                  }
+                                  if (_isMobile &&
+                                      widget.dragStartGesture == DragStartGesture.longPress) {
+                                    _onPointerDown(details.globalPosition);
+                                  }
+                                }
                               : null,
                       onLongPressMoveUpdate:
                           _isMobile && widget.dragStartGesture == DragStartGesture.longPress
@@ -656,6 +706,50 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
   }
 
   Offset? _pointerDownPosition;
+
+  /// Resolves an empty-slot gesture: converts the position to grid
+  /// coordinates through the same [SlotMetrics] math the drag pipeline
+  /// uses, and fires [callback] when the tap landed on this grid but on no
+  /// item.
+  void _handleSlotGesture(
+    Offset globalPosition,
+    void Function(int x, int y)? callback,
+  ) {
+    if (callback == null) return;
+    if (_hitTest(globalPosition).item != null) return;
+    final renderSliver = _findRenderSliver();
+    if (renderSliver == null || !renderSliver.attached) return;
+    // Containment: strict sliver bounds keep several grids sharing one
+    // scroll view from cross-firing. fillViewport declares that this grid
+    // visually owns the remaining viewport (single-grid usage — the visual
+    // filler would overlap following slivers in a multi-sliver tree
+    // anyway), so the below-content area is tappable there; the x-range and
+    // y >= 0 gates below still reject taps outside the grid's band.
+    if (!widget.fillViewport && !isPointInsideSliver(globalPosition)) return;
+
+    final overlayBox = context.findRenderObject();
+    if (overlayBox is! RenderBox) return;
+    final localPosition = overlayBox.globalToLocal(globalPosition);
+    final metrics = _getMetricsFromSliver(renderSliver);
+    final viewportScroll =
+        widget.scrollController.hasClients ? widget.scrollController.offset : 0.0;
+    // pixelToGrid subtracts padding.top itself; precedingScrollExtent
+    // already contains the SliverPadding's top extent, so re-add it once.
+    // For a single grid this reduces to the plain scroll offset.
+    final effectiveOffset =
+        viewportScroll - renderSliver.constraints.precedingScrollExtent + metrics.padding.top;
+    final g = metrics.pixelToGrid(localPosition, effectiveOffset);
+    if (g.x < 0 || g.x >= metrics.slotCount || g.y < 0) return;
+    // maxRows: the surface past the cap is not a valid slot — without this
+    // gate, a tap on the trailing edit row (or below) handed the app
+    // coordinates it would naturally turn into an out-of-cap add.
+    final rowCap = widget.controller.maxRows.value;
+    if (rowCap != null) {
+      final mainCoord = metrics.scrollDirection == Axis.vertical ? g.y : g.x;
+      if (mainCoord >= rowCap) return;
+    }
+    callback(g.x, g.y);
+  }
 
   /// Handles simple tap on Mobile to toggle selection.
   void _handleMobileTap(Offset globalPosition) {
@@ -1015,7 +1109,9 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
     // completely independent of Flutter's frame rendering cycles, avoiding visual lockups
     // when sub-slot moves are bypassed.
     if (kIsWeb || debugOverrideIsWeb) {
-      if (_throttleStopwatch.elapsedMilliseconds < 16) {
+      // Gate model: now - lastFlush, with an injectable [debugThrottleClock].
+      final now = _throttleNow;
+      if (now - _lastThrottleFlush < const Duration(milliseconds: 16)) {
         // Keep the freshest position and flush it after the throttle window,
         // otherwise the item settles one event behind the cursor when the
         // burst ends exactly inside the window.
@@ -1030,7 +1126,7 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
         });
         return; // Skip intermediate events (approx. 60fps) to keep browser responsive
       }
-      _throttleStopwatch.reset();
+      _lastThrottleFlush = now;
       _pendingThrottledPosition = null;
     }
 

@@ -286,6 +286,8 @@ class _SliverDashboardState extends State<SliverDashboard> with TickerProviderSt
 
     final ctrlSlotCount = _controller.slotCount.watch(context);
 
+    final ctrlMaxRows = _controller.maxRows.watch(context);
+
     final layout = _geometricViewOf(_controller.layout.value);
     final keyToIndex = _getOrUpdateKeyToIndex(layout);
 
@@ -336,6 +338,7 @@ class _SliverDashboardState extends State<SliverDashboard> with TickerProviderSt
           crossAxisSpacing: widget.crossAxisSpacing,
           onPerformLayout: widget.onPerformLayout,
           isEditing: isEditing,
+          maxRows: ctrlMaxRows,
           animateReflow: widget.animateReflow,
           reflowDuration: widget.reflowDuration,
           vsync: this,
@@ -408,7 +411,7 @@ class _SliverDashboardState extends State<SliverDashboard> with TickerProviderSt
                 ),
               );
             },
-            childCount: _controller.layout.value.length,
+            childCount: layout.length,
             // Allows Flutter to track a reordered item and preserve its State (and thus our cache).
             findChildIndexCallback: (key) => keyToIndex[key],
           ),
@@ -460,6 +463,7 @@ class SliverDashboardLayout extends SliverMultiBoxAdaptorWidget {
     this.crossAxisSpacing = 8.0,
     this.onPerformLayout,
     this.isEditing = false,
+    this.maxRows,
     this.animateReflow = false,
     this.reflowDuration = const Duration(milliseconds: 150),
     this.onLayoutMetrics,
@@ -489,6 +493,10 @@ class SliverDashboardLayout extends SliverMultiBoxAdaptorWidget {
 
   /// Whether the dashboard is in edit mode.
   final bool isEditing;
+
+  /// Optional main-axis cap (rows / columns). Caps the drawn surface: the
+  /// edit-mode trailing row is suppressed once the content reaches the cap.
+  final int? maxRows;
 
   /// See [SliverDashboard.animateReflow].
   final bool animateReflow;
@@ -520,6 +528,7 @@ class SliverDashboardLayout extends SliverMultiBoxAdaptorWidget {
       crossAxisSpacing: crossAxisSpacing,
       onPerformLayout: onPerformLayout,
       isEditing: isEditing,
+      maxRows: maxRows,
       animateReflow: animateReflow,
       reflowDuration: reflowDuration,
       vsync: vsync,
@@ -538,6 +547,7 @@ class SliverDashboardLayout extends SliverMultiBoxAdaptorWidget {
       ..crossAxisSpacing = crossAxisSpacing
       ..onPerformLayout = onPerformLayout
       ..isEditing = isEditing
+      ..maxRows = maxRows
       ..animateReflow = animateReflow
       ..reflowDuration = reflowDuration
       ..vsync = vsync
@@ -563,6 +573,7 @@ class RenderSliverDashboard extends RenderSliverMultiBoxAdaptor {
     this.onPerformLayout,
     this.onLayoutMetrics,
     bool isEditing = false,
+    int? maxRows,
     bool animateReflow = false,
     Duration reflowDuration = const Duration(milliseconds: 150),
   })  : _items = items,
@@ -572,6 +583,7 @@ class RenderSliverDashboard extends RenderSliverMultiBoxAdaptor {
         _mainAxisSpacing = mainAxisSpacing,
         _crossAxisSpacing = crossAxisSpacing,
         _isEditing = isEditing,
+        _maxRows = maxRows,
         _animateReflow = animateReflow,
         _reflowDurationUs = reflowDuration.inMicroseconds,
         _vsync = vsync;
@@ -643,6 +655,16 @@ class RenderSliverDashboard extends RenderSliverMultiBoxAdaptor {
   }
 
   bool _isEditing;
+
+  int? _maxRows;
+
+  /// Optional main-axis cap (rows / columns): caps the drawn surface.
+  int? get maxRows => _maxRows;
+  set maxRows(int? value) {
+    if (_maxRows == value) return;
+    _maxRows = value;
+    markNeedsLayout();
+  }
 
   /// Whether the dashboard is in edit mode.
   bool get isEditing => _isEditing;
@@ -968,8 +990,21 @@ class RenderSliverDashboard extends RenderSliverMultiBoxAdaptor {
       geom[base + 3] = h > 0 ? h : 0;
     }
 
+    final contentExtent = maxScrollExtent;
     if (_isEditing) {
       maxScrollExtent += isVertical ? slotHeight : slotWidth;
+    }
+    // maxRows cap: never DRAW past the capped surface — the edit-mode
+    // trailing row above made a phantom row exist beyond the cap, which
+    // was tappable (onSlotTap) and let explicit adds grow the grid past
+    // maxRows. Content that genuinely exceeds the cap (legacy/imported
+    // data) is still shown in full: the cap only suppresses the trailing
+    // affordance, it never clips real items.
+    final rowCap = _maxRows;
+    if (rowCap != null) {
+      final stride = isVertical ? slotHeight + _mainAxisSpacing : slotWidth + _mainAxisSpacing;
+      final capExtent = rowCap * stride - _mainAxisSpacing;
+      maxScrollExtent = max(contentExtent, min(maxScrollExtent, capExtent));
     }
 
     // 4. Determine Visible Window

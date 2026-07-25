@@ -5,6 +5,9 @@ import 'package:sliver_dashboard/src/models/dashboard_policy.dart';
 import 'package:sliver_dashboard/src/models/layout_item.dart';
 import 'package:sliver_dashboard/src/models/utility.dart';
 
+// sometimes it's better when explicit
+// ignore_for_file: omit_local_variable_types
+
 /// Defines the compaction strategy for the layout.
 enum CompactType {
   /// No compression
@@ -75,6 +78,13 @@ class VerticalCompactor extends CompactorDelegate {
     };
 
     // Occupancy set + per-column skyline over already-placed items.
+    // Soundness (no start-collision test needed): if the skyline max over
+    // the item's columns is <= the item's y, then EVERY placed item
+    // overlapping those columns has its lower edge at or above that bound —
+    // none can overlap the item's start box, and resting on the bound is
+    // collision-free. Conversely, any start collision or any static placed
+    // BELOW the item forces the skyline max above its y, which routes to
+    // the historical resolution verbatim.
     final colHeights = List<int>.filled(max(cols, 1), 0);
     void markPlaced(LayoutItem p) {
       final bottomEdge = p.y + p.h;
@@ -1273,10 +1283,28 @@ List<LayoutItem> placeNewItems({
   required List<LayoutItem> newItems,
   required int cols,
   AutoPlacementStrategy strategy = AutoPlacementStrategy.appendBottom,
+  int? maxRows,
 }) {
   // Separate items that need placement from those that don't
   final itemsToPlace = newItems.where((i) => i.x == -1 || i.y == -1).toList();
-  final alreadyPlacedNewItems = newItems.where((i) => i.x != -1 && i.y != -1).toList();
+  // Pre-positioned items are SANITIZED, not trusted: explicit coordinates
+  // come straight from app code (an onSlotTap handler adding a 2-wide item
+  // on the last column, a tap on the trailing edit row of a maxRows grid…).
+  // Width/height are capped to the grid, then the position is clamped so the item
+  // lies fully inside; the downstream compaction/collision pass owns any resulting overlap, same
+  // as any explicit add onto an occupied spot.
+  final alreadyPlacedNewItems = [
+    for (final i in newItems.where((i) => i.x != -1 && i.y != -1))
+      () {
+        final w = i.w.clamp(1, cols);
+        final int h = maxRows == null ? i.h : i.h.clamp(1, max(1, maxRows));
+        final x = i.x.clamp(0, cols - w);
+        final int y = maxRows == null ? max(0, i.y) : i.y.clamp(0, max(0, maxRows - h));
+        return (w == i.w && h == i.h && x == i.x && y == i.y)
+            ? i
+            : i.copyWith(x: x, y: y, w: w, h: h);
+      }(),
+  ];
 
   // Start with the existing layout plus any new items that already had fixed positions
   final finalLayout = <LayoutItem>[...existingLayout, ...alreadyPlacedNewItems];
@@ -1335,12 +1363,20 @@ List<LayoutItem> placeNewItems({
       currentY = 0;
     }
 
-    // Try to find the first valid spot
-    while (!placed && safetyLoop < maxIterations) {
+    // Try to find the first valid spot. With [maxRows], the search is
+    // bounded to rows where the item fits entirely under the cap; if the
+    // bounded area has no free spot, the loop exits and the fallback below
+    // places the item past the cap — never losing data, mirroring the
+    // historical too-wide fallback semantics.
+    final boundedRows = maxRows != null;
+    while (
+        !placed && safetyLoop < maxIterations && (!boundedRows || currentY + item.h <= maxRows)) {
       // 1. Check grid boundaries (Wrap to next row if needed)
       if (currentX + item.w > cols) {
         currentX = 0;
         currentY++;
+        // The wrap must consume safety budget too.
+        safetyLoop++;
         continue; // Retry at the start of the new row
       }
 
@@ -1359,6 +1395,14 @@ List<LayoutItem> placeNewItems({
       }
 
       safetyLoop++;
+    }
+
+    if (!placed) {
+      // Bounded search exhausted (maxRows cap) or safety limit hit: append
+      // below the existing content instead of dropping the item.
+      final fallback = item.copyWith(x: 0, y: bottom(finalLayout));
+      finalLayout.add(fallback);
+      markCells(fallback.x, fallback.y, fallback.w, fallback.h);
     }
   }
 

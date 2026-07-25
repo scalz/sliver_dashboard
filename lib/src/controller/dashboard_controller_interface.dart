@@ -55,6 +55,10 @@ abstract class DashboardController {
   /// Changing this value will trigger a relayout.
   WritableBeacon<int> get slotCount;
 
+  /// Optional cap on the grid's main-axis extent (rows when scrolling
+  /// vertically, columns when scrolling horizontally). Null = unbounded.
+  WritableBeacon<int?> get maxRows;
+
   /// A reactive property to control collision behavior.
   /// If `true` (default), items will push each other on drag/resize.
   /// If `false`, items will be allowed to overlap.
@@ -208,6 +212,12 @@ abstract class DashboardController {
 
   /// Sets the number of columns for the grid and triggers a relayout.
   void setSlotCount(int newSlotCount);
+
+  /// Sets [maxRows]; null restores the unbounded grid. Enforced on drag
+  /// targets, resizes and new-item auto placement (which falls back past
+  /// the cap when the bounded area is full, never losing items). Collision
+  /// pushes are not truncated.
+  void setMaxRows(int? value);
 
   /// Sets the collision behavior for the dashboard.
   // ignore: avoid_positional_boolean_parameters

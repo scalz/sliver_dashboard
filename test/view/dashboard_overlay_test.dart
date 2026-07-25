@@ -2448,6 +2448,69 @@ void main() {
     });
   });
 
+  group('onSlotTap / onSlotLongPress — empty-slot interactivity', () {
+    testWidgets(
+        'tapping an empty slot yields its grid coordinates; tapping '
+        'an item does not fire', (tester) async {
+      final controller = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: const [LayoutItem(id: 'a', x: 0, y: 0, w: 1, h: 1)],
+      );
+      addTearDown(controller.dispose);
+      final scrollController = ScrollController();
+      addTearDown(scrollController.dispose);
+      final taps = <(int, int)>[];
+      final longs = <(int, int)>[];
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Dashboard<String>(
+              controller: controller,
+              scrollController: scrollController,
+              itemBuilder: (context, item) => Text(item.id),
+              onSlotTap: (x, y) => taps.add((x, y)),
+              onSlotLongPress: (x, y) => longs.add((x, y)),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // The dashboard spans the 800px test surface: 4 slots of ~194px.
+      final origin = tester.getTopLeft(find.byType(Dashboard<String>));
+
+      // Tap inside item 'a' (top-left cell): must NOT fire.
+      await tester.tapAt(origin + const Offset(60, 60));
+      await tester.pump();
+      expect(taps, isEmpty);
+
+      // Tap the second cell of the first row (empty): fires (1, 0).
+      await tester.tapAt(origin + const Offset(300, 60));
+      await tester.pump();
+      expect(taps, [(1, 0)]);
+
+      // Tap an empty cell below the content (fillViewport default: the
+      // empty viewport area belongs to the grid).
+      await tester.tapAt(origin + const Offset(60, 350));
+      await tester.pump();
+      expect(taps.length, 2);
+      expect(taps.last.$1, 0);
+      expect(taps.last.$2, greaterThanOrEqualTo(1));
+
+      // Long-press an empty slot: fires the long-press callback only.
+      await tester.longPressAt(origin + const Offset(500, 60));
+      await tester.pumpAndSettle();
+      expect(longs, [(2, 0)]);
+      expect(taps.length, 2, reason: 'a long-press is not a tap');
+
+      // Long-press an item: neither callback fires.
+      await tester.longPressAt(origin + const Offset(60, 60));
+      await tester.pumpAndSettle();
+      expect(longs.length, 1);
+    });
+  });
+
   testWidgets(
       'DashboardOverlay resolves RenderSliverDashboard when rootObject is RenderSliverDashboard directly',
       (tester) async {
@@ -2724,6 +2787,72 @@ void main() {
 
       // Wait for the 17ms timer to flush the throttled position safely
       await tester.pump(const Duration(milliseconds: 25));
+
+      await gesture.up();
+      await tester.pumpAndSettle();
+    });
+  });
+
+  testWidgets('Web pointer throttle captures trailing event and flushes via timer', (tester) async {
+    var fakeNow = const Duration(milliseconds: 100);
+    debugThrottleClock = () => fakeNow;
+    addTearDown(() => debugThrottleClock = null);
+    debugOverrideIsWeb = true;
+    addTearDown(() => debugOverrideIsWeb = false);
+
+    await runOnDesktop(() async {
+      final controller = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: const [LayoutItem(id: 'a', x: 0, y: 0, w: 1, h: 1)],
+      )..setEditMode(true);
+      addTearDown(controller.dispose);
+      final scrollController = ScrollController();
+      addTearDown(scrollController.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Dashboard<String>(
+              controller: controller,
+              scrollController: scrollController,
+              itemBuilder: (context, item) => Text(item.id),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final warmup = Stopwatch()..start();
+      while (warmup.elapsedMilliseconds < 17) {
+        await tester.pump();
+      }
+
+      final gesture = await tester.startGesture(
+        tester.getCenter(find.text('a')),
+        kind: PointerDeviceKind.mouse,
+      );
+      await tester.pump();
+
+      await gesture.moveBy(const Offset(250, 0));
+      await tester.pump();
+      expect(
+        controller.layout.value.first.x,
+        1,
+        reason: 'gate open: first move processed immediately',
+      );
+
+      await gesture.moveBy(const Offset(250, 0));
+      await tester.pump();
+      expect(
+        controller.layout.value.first.x,
+        1,
+        reason: 'trailing event must NOT apply synchronously',
+      );
+
+      fakeNow = const Duration(milliseconds: 130);
+      await tester.pumpAndSettle();
+      expect(controller.layout.value.first.x, 2, reason: 'flush must apply the trailing position');
+      expect(tester.takeException(), isNull);
 
       await gesture.up();
       await tester.pumpAndSettle();

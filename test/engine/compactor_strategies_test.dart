@@ -1,6 +1,5 @@
 import 'dart:math';
 
-import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sliver_dashboard/src/engine/layout_engine.dart';
 import 'package:sliver_dashboard/src/models/layout_item.dart';
@@ -492,30 +491,33 @@ void main() {
       });
     });
 
-    group('Performance Comparison', () {
-      // Note: These tests might fail in Debug mode or on slow machines.
-      // They are mostly informative.
+    group('Standard vs Fast/Tide — correctness on identical inputs', () {
+      // Perf claims live in benchmark.dart (AOT, median of 7).
       final testSizes = [50, 100, 200];
 
       for (final size in testSizes) {
-        test('compares $size items (messy layout)', () {
+        test('both compactors produce valid layouts for $size items', () {
           final layout = generateRandomLayout(size, 12);
 
-          // Warm up
-          standardCompactor.compact(layout, 12);
-          compactor.compact(layout, 12);
+          final std = standardCompactor.compact(layout, 12);
+          final fast = compactor.compact(layout, 12);
 
-          final stdTime = measureTime(() => standardCompactor.compact(layout, 12), iterations: 10);
-          final fastTime = measureTime(() => compactor.compact(layout, 12), iterations: 10);
-
-          debugPrint(
-            'Size: $size | Standard: ${stdTime.toStringAsFixed(2)}µs | Fast: ${fastTime.toStringAsFixed(2)}µs',
-          );
-
-          // Fast compactor should be faster or comparable
-          // We leave a margin because on small sets, overhead might play a role
-          if (size >= 100) {
-            expect(fastTime, lessThan(stdTime * 1.5));
+          for (final result in [std, fast]) {
+            expect(result.length, layout.length);
+            expect(result.every((i) => i.y >= 0 && i.x >= 0), isTrue);
+            for (var i = 0; i < result.length; i++) {
+              for (var j = i + 1; j < result.length; j++) {
+                expect(
+                  collides(result[i], result[j]),
+                  isFalse,
+                  reason: '${result[i].id} overlaps ${result[j].id}',
+                );
+              }
+            }
+          }
+          for (final s in layout.where((i) => i.isStatic)) {
+            expect(std.firstWhere((i) => i.id == s.id).y, s.y);
+            expect(fast.firstWhere((i) => i.id == s.id).y, s.y);
           }
         });
       }

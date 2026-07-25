@@ -79,6 +79,17 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
   @override
   late final slotCount = B.writable<int>(8);
 
+  /// Optional cap on the grid's main-axis extent, in rows (vertical
+  /// scrolling) or columns (horizontal scrolling). Null (default) keeps the
+  /// classic unbounded grid. Enforced where USER-driven placement is
+  /// decided — drag targets, interactive and programmatic resizes, and
+  /// auto-placement of new items (which falls back past the limit rather
+  /// than losing data when the bounded area is full). Collision pushes are
+  /// deliberately not truncated: rejecting a whole push cascade would need
+  /// speculative simulation on every pointer event.
+  @override
+  late final maxRows = B.writable<int?>(null);
+
   @override
   late final preventCollision = B.writable<bool>(true);
 
@@ -250,6 +261,7 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
         existingLayout: result,
         newItems: itemsToPlace,
         cols: newSlotCount,
+        maxRows: maxRows.value,
       );
 
       // Replace result with merged list
@@ -310,6 +322,7 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
       newItems: items,
       cols: slotCount.value,
       strategy: strategy,
+      maxRows: maxRows.value,
     );
 
     final compactorStrategy =
@@ -570,6 +583,14 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
   /// drag-and-drop effect.
   void setDragOffset(Offset offset) {
     dragOffset.value = offset;
+  }
+
+  /// Sets [maxRows]. See the field for the exact enforcement points.
+  @override
+  void setMaxRows(int? value) {
+    assert(value == null || value > 0, 'maxRows must be positive or null');
+    if (maxRows.value == value) return;
+    maxRows.value = value;
   }
 
   /// Sets the scroll direction of the dashboard.
@@ -907,8 +928,16 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     newH = newH.clamp(item.minH, maxH < item.minH ? item.minH : maxH);
     if (scrollDirection.value == Axis.vertical) {
       newW = newW.clamp(1, slotCount.value);
+      final rowCap = maxRows.value;
+      if (rowCap != null) {
+        newH = newH.clamp(item.minH, max(item.minH, rowCap - item.y));
+      }
     } else {
       newH = newH.clamp(1, slotCount.value);
+      final rowCap = maxRows.value;
+      if (rowCap != null) {
+        newW = newW.clamp(item.minW, max(item.minW, rowCap - item.x));
+      }
     }
     if (newW == item.w && newH == item.h) return item;
 
@@ -1049,17 +1078,24 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     // Free positioning (CompactType.none) and custom compactors keep the
     // unbounded behavior — placing an item at an arbitrary offset is a
     // feature there.
+    final rowCap = maxRows.value;
     if (scrollDirection.value == Axis.vertical) {
       targetBBoxX = targetBBoxX.clamp(0, slotCount.value - originalBBox.w);
       targetBBoxY = max(0, targetBBoxY);
       if (compactionType.value == engine.CompactType.vertical) {
         targetBBoxY = min(targetBBoxY, _dragMaxMainOthers);
       }
+      if (rowCap != null) {
+        targetBBoxY = min(targetBBoxY, max(0, rowCap - originalBBox.h));
+      }
     } else {
       targetBBoxX = max(0, targetBBoxX);
       targetBBoxY = targetBBoxY.clamp(0, slotCount.value - originalBBox.h);
       if (compactionType.value == engine.CompactType.horizontal) {
         targetBBoxX = min(targetBBoxX, _dragMaxMainOthers);
+      }
+      if (rowCap != null) {
+        targetBBoxX = min(targetBBoxX, max(0, rowCap - originalBBox.w));
       }
     }
 
@@ -1233,6 +1269,24 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     // are respected before applying geometric anchor boundaries.
     newW = newW.clamp(originalItem.minW, maxW);
     newH = newH.clamp(originalItem.minH, maxH);
+
+    // maxRows: block interactive growth past the main-axis cap. Anchored
+    // resizes (top/left) never extend the far edge, so clamping the size
+    // against the ORIGINAL near edge is exact.
+    final rowCap = maxRows.value;
+    if (rowCap != null) {
+      if (scrollDirection.value == Axis.vertical && !isTopResize) {
+        newH = newH.clamp(
+          originalItem.minH,
+          max(originalItem.minH, rowCap - originalItem.y),
+        );
+      } else if (scrollDirection.value == Axis.horizontal && !isLeftResize) {
+        newW = newW.clamp(
+          originalItem.minW,
+          max(originalItem.minW, rowCap - originalItem.x),
+        );
+      }
+    }
 
     // Constrain Vertical Axis (Y, H)
     if (isTopResize) {

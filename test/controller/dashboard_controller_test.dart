@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart' show Axis;
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:sliver_dashboard/src/controller/dashboard_controller_impl.dart';
@@ -6,7 +6,9 @@ import 'package:sliver_dashboard/src/controller/dashboard_controller_interface.d
 import 'package:sliver_dashboard/src/controller/utility.dart';
 import 'package:sliver_dashboard/src/engine/layout_engine.dart';
 import 'package:sliver_dashboard/src/models/layout_item.dart';
+import 'package:sliver_dashboard/src/view/dashboard.dart';
 import 'package:sliver_dashboard/src/view/resize_handle.dart';
+import 'package:sliver_dashboard/src/view/sliver_dashboard.dart';
 
 //
 // ignore_for_file: cascade_invocations
@@ -2145,60 +2147,222 @@ void main() {
     });
   });
 
-  //    `onDragUpdate` let the drag target grow the grid one row per row
-  //    crossed below the content, making the sliver's extent chase the
-  //    pointer (a sibling grid below became unreachable). Under main-axis
-  //    compaction the target is now capped to the first free row past the
-  //    other items.
-  /* group('onDragUpdate — main-axis growth cap', () {
-    test('under vertical compaction the drag target is capped past content', () {
+  group('maxRows — main-axis cap', () {
+    test('drag targets are clamped under the cap', () {
       final controller = DashboardController(
         initialSlotCount: 4,
         initialLayout: const [
-          LayoutItem(id: 'a', x: 0, y: 0, w: 1, h: 1),
-          LayoutItem(id: 'b', x: 1, y: 0, w: 1, h: 1),
+          LayoutItem(id: 'a', x: 0, y: 0, w: 1, h: 2),
         ],
       )
-        ..setCompactionType(CompactType.vertical)
-        ..setEditMode(true);
-      addTearDown(controller.dispose);
-
-      controller.internal
-        ..onDragStart('a')
-        // Pointer 8 rows below the content (100 px slots, no spacing).
-        ..onDragUpdate(
-          'a',
-          const Offset(0, 800),
-          slotWidth: 100,
-          slotHeight: 100,
-          mainAxisSpacing: 0,
-          crossAxisSpacing: 0,
-        );
-
-      final a = controller.layout.value.firstWhere((i) => i.id == 'a');
-      // maxMainOthers = 1 ('b' ends at y=1): the target is capped there
-      // instead of y=8, so the grid extent stops chasing the pointer.
-      expect(a.y, lessThanOrEqualTo(1));
-      controller.internal.cancelInteraction();
-    });
-
-    test('CompactType.none keeps free positioning unbounded', () {
-      final controller = DashboardController(
-        initialSlotCount: 4,
-        initialLayout: const [
-          LayoutItem(id: 'a', x: 0, y: 0, w: 1, h: 1),
-          LayoutItem(id: 'b', x: 1, y: 0, w: 1, h: 1),
-        ],
-      )
+        ..setEditMode(true)
         ..setCompactionType(CompactType.none)
-        ..setEditMode(true);
+        ..setMaxRows(6);
       addTearDown(controller.dispose);
 
       controller.internal
         ..onDragStart('a')
         ..onDragUpdate(
           'a',
-          const Offset(0, 800),
+          const Offset(0, 2000), // pointer 20 rows deep
+          slotWidth: 100,
+          slotHeight: 100,
+          mainAxisSpacing: 0,
+          crossAxisSpacing: 0,
+        );
+      final a = controller.layout.value.firstWhere((i) => i.id == 'a');
+      expect(a.y, 4, reason: 'y + h must not exceed maxRows (6)');
+      controller.internal.cancelInteraction();
+    });
+
+    test(
+        'setItemSize clamps growth at the cap, and setMaxRows(null) '
+        'restores unbounded growth', () {
+      final controller = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: const [LayoutItem(id: 'a', x: 0, y: 4, w: 1, h: 1)],
+      )..setMaxRows(6);
+      addTearDown(controller.dispose);
+
+      controller.internal.setItemSize('a', h: 10);
+      var a = controller.layout.value.single;
+      expect(a.h, 2, reason: 'y(4) + h must stay <= 6');
+
+      controller.setMaxRows(null);
+      controller.internal.setItemSize('a', h: 10);
+      a = controller.layout.value.single;
+      expect(a.h, 10);
+    });
+
+    test(
+        'auto placement searches under the cap and falls back below the '
+        'content when the bounded area is full', () {
+      final controller = DashboardController(
+        initialSlotCount: 2,
+        initialLayout: const [
+          LayoutItem(id: 'a', x: 0, y: 0, w: 2, h: 2), // fills rows 0-1
+        ],
+      )..setMaxRows(3);
+      addTearDown(controller.dispose);
+
+      // Fits: one free row (y=2) under the cap.
+      controller.addItem(const LayoutItem(id: 'b', x: -1, y: -1, w: 2, h: 1));
+      final b = controller.layout.value.firstWhere((i) => i.id == 'b');
+      expect(b.y, 2);
+
+      // Does not fit anywhere under the cap: appended below instead of lost.
+      controller.addItem(const LayoutItem(id: 'c', x: -1, y: -1, w: 2, h: 1));
+      final c = controller.layout.value.firstWhere((i) => i.id == 'c');
+      expect(c.y, greaterThanOrEqualTo(3));
+      expect(controller.layout.value.length, 3, reason: 'never lose items');
+    });
+
+    test('pre-positioned adds are sanitized against columns and maxRows', () {
+      // Bug 1: an onSlotTap handler adding a 2-wide item on the LAST column
+      // put an out-of-bounds item in the layout (x=3, w=2, cols=4).
+      final overflowRight = placeNewItems(
+        existingLayout: const [],
+        newItems: const [LayoutItem(id: 't', x: 3, y: 0, w: 2, h: 2)],
+        cols: 4,
+      );
+      final t = overflowRight.single;
+      expect(
+        t.x + t.w,
+        lessThanOrEqualTo(4),
+        reason: 'explicit coordinates must be clamped into the columns',
+      );
+      expect((t.x, t.w), (2, 2));
+
+      // Bug 2: a tap on the trailing edit row of a maxRows grid grew the
+      // grid past the cap (y=8, h=2, maxRows=8).
+      final overflowCap = placeNewItems(
+        existingLayout: const [],
+        newItems: const [LayoutItem(id: 'c', x: 0, y: 8, w: 2, h: 2)],
+        cols: 4,
+        maxRows: 8,
+      );
+      final c = overflowCap.single;
+      expect(
+        c.y + c.h,
+        lessThanOrEqualTo(8),
+        reason: 'explicit coordinates must be clamped under the cap',
+      );
+      expect((c.y, c.h), (6, 2));
+
+      // In-bounds explicit coordinates are untouched (same instance).
+      const fine = LayoutItem(id: 'f', x: 1, y: 1, w: 2, h: 2);
+      final kept = placeNewItems(
+        existingLayout: const [],
+        newItems: const [fine],
+        cols: 4,
+        maxRows: 8,
+      );
+      expect(identical(kept.single, fine), isTrue);
+    });
+
+    testWidgets(
+        'with maxRows, the drawn surface stops at the cap and taps past it '
+        'are dead', (tester) async {
+      final controller = DashboardController(
+        initialSlotCount: 4,
+        // Content reaches the cap exactly: rows 0..7.
+        initialLayout: const [LayoutItem(id: 'a', x: 0, y: 0, w: 4, h: 8)],
+      )
+        ..setEditMode(true)
+        ..setMaxRows(8);
+      addTearDown(controller.dispose);
+      final scrollController = ScrollController();
+      addTearDown(scrollController.dispose);
+      final taps = <(int, int)>[];
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Dashboard<String>(
+              controller: controller,
+              scrollController: scrollController,
+              itemBuilder: (context, item) => Text(item.id),
+              onSlotTap: (x, y) => taps.add((x, y)),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // The published extent must be exactly 8 rows: the edit-mode trailing
+      // row is suppressed once the content reaches the cap (the phantom
+      // row 9 was tappable and let adds grow past maxRows).
+      final metrics = controller.internal;
+      final slotH = metrics.viewSlotHeight!;
+      const spacing = 8.0;
+      expect(
+        metrics.viewMainAxisContentExtent,
+        moreOrLessEquals(8 * (slotH + spacing) - spacing, epsilon: 0.01),
+        reason: 'no trailing row past the cap',
+      );
+
+      // A tap below the capped surface (inside the viewport, fillViewport
+      // default) must NOT fire: y >= maxRows is not a valid slot.
+      final origin = tester.getTopLeft(find.byType(Dashboard<String>));
+      await tester.tapAt(origin + Offset(30, 8 * (slotH + spacing) + 20));
+      await tester.pump();
+      expect(taps, isEmpty);
+    });
+
+    test('an item wider than the grid is no longer silently dropped', () {
+      final placed = placeNewItems(
+        existingLayout: const [LayoutItem(id: 'a', x: 0, y: 0, w: 2, h: 1)],
+        newItems: const [LayoutItem(id: 'wide', x: -1, y: -1, w: 9, h: 1)],
+        cols: 4,
+      );
+      expect(
+        placed.any((i) => i.id == 'wide'),
+        isTrue,
+        reason: 'historical behavior lost unplaceable items',
+      );
+      expect(
+        placed.firstWhere((i) => i.id == 'wide').y,
+        greaterThanOrEqualTo(1),
+      );
+    });
+  });
+
+  group('maxRows & horizontal scroll direction edge-case coverage', () {
+    test('setItemSize clamps width in horizontal scroll direction with maxRows', () {
+      final controller = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: const [
+          LayoutItem(id: 'a', x: 2, y: 0, w: 1, h: 1),
+        ],
+      );
+      addTearDown(controller.dispose);
+      controller.internal.setScrollDirection(Axis.horizontal);
+      controller.setMaxRows(4);
+
+      final updated = controller.internal.setItemSize('a', w: 10);
+
+      expect(updated, isNotNull);
+      // x(2) + w <= maxRows(4) -> max w = 2
+      expect(updated!.w, 2);
+    });
+
+    test('onDragUpdate clamps target X in horizontal mode with maxRows', () {
+      final controller = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: const [
+          LayoutItem(id: 'a', x: 0, y: 0, w: 2, h: 1),
+        ],
+      );
+      addTearDown(controller.dispose);
+      controller.setEditMode(true);
+      controller.internal.setScrollDirection(Axis.horizontal);
+      controller.setMaxRows(5);
+
+      controller.internal
+        ..onDragStart('a')
+        ..onDragUpdate(
+          'a',
+          const Offset(2000, 0),
           slotWidth: 100,
           slotHeight: 100,
           mainAxisSpacing: 0,
@@ -2206,10 +2370,70 @@ void main() {
         );
 
       final a = controller.layout.value.firstWhere((i) => i.id == 'a');
-      expect(a.y, 8, reason: 'free positioning is a feature of CompactType.none');
+      expect(a.x, 3);
       controller.internal.cancelInteraction();
     });
-  });*/
+
+    test('onResizeUpdate clamps vertical growth on bottom handle with maxRows', () {
+      final controller = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: const [
+          LayoutItem(id: 'a', x: 0, y: 3, w: 1, h: 1, isResizable: true),
+        ],
+      );
+      addTearDown(controller.dispose);
+      controller
+        ..setEditMode(true)
+        ..setMaxRows(5);
+
+      controller.internal
+        ..onResizeStart('a')
+        ..onResizeUpdate(
+          'a',
+          ResizeHandle.bottom,
+          const Offset(0, 500),
+          slotWidth: 100,
+          slotHeight: 100,
+          mainAxisSpacing: 0,
+          crossAxisSpacing: 0,
+        );
+
+      final a = controller.layout.value.firstWhere((i) => i.id == 'a');
+      // y(3) + h <= maxRows(5) -> max h = 2
+      expect(a.h, 2);
+      controller.internal.onResizeEnd('a');
+    });
+
+    test('onResizeUpdate clamps horizontal growth on right handle with maxRows', () {
+      final controller = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: const [
+          LayoutItem(id: 'a', x: 3, y: 0, w: 1, h: 1, isResizable: true),
+        ],
+      );
+      addTearDown(controller.dispose);
+      controller.setEditMode(true);
+      controller.internal.setScrollDirection(Axis.horizontal);
+      controller.setMaxRows(5);
+
+      controller.internal
+        ..onResizeStart('a')
+        ..onResizeUpdate(
+          'a',
+          ResizeHandle.right,
+          const Offset(500, 0),
+          slotWidth: 100,
+          slotHeight: 100,
+          mainAxisSpacing: 0,
+          crossAxisSpacing: 0,
+        );
+
+      final a = controller.layout.value.firstWhere((i) => i.id == 'a');
+      // x(3) + w <= maxRows(5) -> max w = 2
+      expect(a.w, 2);
+      controller.internal.onResizeEnd('a');
+    });
+  });
 
   test('updateItem preserves original itemId if transform function attempts to change it', () {
     final controller = DashboardController(
@@ -2285,5 +2509,74 @@ void main() {
 
     // Should be clamped to maxH (2) since maxH < slotCount (4)
     expect(resized!.h, equals(2));
+  });
+
+  testWidgets(
+      'maxRows applied AFTER mount reshapes the drawn surface and kills '
+      'slot taps past the cap', (tester) async {
+    final controller = DashboardController(
+      initialSlotCount: 4,
+      initialLayout: const [LayoutItem(id: 'a', x: 0, y: 0, w: 4, h: 2)],
+    )..setEditMode(true);
+    addTearDown(controller.dispose);
+    final scrollController = ScrollController();
+    addTearDown(scrollController.dispose);
+    final taps = <(int, int)>[];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Dashboard<String>(
+            controller: controller,
+            scrollController: scrollController,
+            itemBuilder: (context, item) => Text(item.id),
+            onSlotTap: (x, y) => taps.add((x, y)),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final metrics = controller.internal;
+    final slotH = metrics.viewSlotHeight!;
+    const spacing = 8.0;
+    final origin = tester.getTopLeft(find.byType(Dashboard<String>));
+
+    expect(
+      metrics.viewMainAxisContentExtent,
+      moreOrLessEquals(
+        2 * (slotH + spacing) - spacing + slotH,
+        epsilon: 0.01,
+      ),
+      reason: 'uncapped edit mode draws the trailing row',
+    );
+    await tester.tapAt(origin + Offset(30, 2 * (slotH + spacing) + 10));
+    await tester.pump();
+    expect(taps, [(0, 2)]);
+
+    controller.setMaxRows(2);
+    await tester.pumpAndSettle();
+
+    final render = tester.renderObject<RenderSliverDashboard>(
+      find.byType(SliverDashboardLayout),
+    );
+    expect(render.maxRows, 2);
+
+    expect(
+      metrics.viewMainAxisContentExtent,
+      moreOrLessEquals(2 * (slotH + spacing) - spacing, epsilon: 0.01),
+      reason: 'the trailing row is suppressed once content meets the cap',
+    );
+
+    await tester.tapAt(origin + Offset(30, 2 * (slotH + spacing) + 10));
+    await tester.pump();
+    expect(taps.length, 1, reason: 'taps past the cap must be dead');
+
+    controller.setMaxRows(null);
+    await tester.pumpAndSettle();
+    await tester.tapAt(origin + Offset(30, 2 * (slotH + spacing) + 10));
+    await tester.pump();
+    expect(taps.length, 2);
+    expect(render.maxRows, isNull);
   });
 }

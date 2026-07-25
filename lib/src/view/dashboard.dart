@@ -26,6 +26,8 @@ class Dashboard<T extends Object> extends StatefulWidget {
     this.itemLayoutBuilder,
     this.itemBreakpointBuilder,
     this.breakpointResolver,
+    this.onSlotTap,
+    this.onSlotLongPress,
     this.scrollDirection = Axis.vertical,
     this.slotAspectRatio = 1.0,
     this.mainAxisSpacing = 8.0,
@@ -99,6 +101,15 @@ class Dashboard<T extends Object> extends StatefulWidget {
   ///
   /// Evaluated continuously during resizing when [itemBreakpointBuilder] is provided.
   final DashboardBreakpointResolver? breakpointResolver;
+
+  /// Called when the user taps an EMPTY grid slot (no item under the
+  /// pointer), with the tapped grid coordinates — the "add a widget here"
+  /// hook. With `fillViewport: true` (the default) the tappable area
+  /// includes the empty space below the content. Zero cost outside the tap.
+  final void Function(int x, int y)? onSlotTap;
+
+  /// Long-press variant of [onSlotTap].
+  final void Function(int x, int y)? onSlotLongPress;
 
   /// The direction of scrolling for the dashboard.
   final Axis scrollDirection;
@@ -297,6 +308,8 @@ class _DashboardState<T extends Object> extends State<Dashboard<T>> {
       itemBuilder: widget.itemBuilder,
       itemLayoutBuilder: widget.itemLayoutBuilder,
       itemBreakpointBuilder: widget.itemBreakpointBuilder,
+      onSlotTap: widget.onSlotTap,
+      onSlotLongPress: widget.onSlotLongPress,
       breakpointResolver: widget.breakpointResolver,
       itemFeedbackBuilder: widget.itemFeedbackBuilder,
       trashBuilder: widget.trashBuilder,
