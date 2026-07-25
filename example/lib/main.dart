@@ -154,6 +154,7 @@ class _DashboardPageState extends State<DashboardPage> {
   final animateReflow = ValueNotifier(false);
   final autoShrink = ValueNotifier(false);
   final maxRows = ValueNotifier<int?>(null);
+  final enableSlotTapToAdd = ValueNotifier<bool>(false);
 
   // null = Use Responsive Breakpoints. Non-null = Override with custom fixed slot count.
   final customSlotCount = ValueNotifier<int?>(null);
@@ -479,6 +480,7 @@ class _DashboardPageState extends State<DashboardPage> {
     animateReflow.dispose();
     autoShrink.dispose();
     maxRows.dispose();
+    enableSlotTapToAdd.dispose();
     customSlotCount.dispose();
     compactionType.dispose();
     resizeBehavior.dispose();
@@ -506,6 +508,7 @@ class _DashboardPageState extends State<DashboardPage> {
       animateReflow: animateReflow,
       autoShrink: autoShrink,
       maxRows: maxRows,
+      enableSlotTapToAdd: enableSlotTapToAdd,
       customSlotCount: customSlotCount,
       compactionType: compactionType,
       resizeBehavior: resizeBehavior,
@@ -595,34 +598,99 @@ class _DashboardPageState extends State<DashboardPage> {
     return ValueListenableBuilder<int?>(
       valueListenable: customSlotCount,
       builder: (context, overrideSlots, _) {
+        return ValueListenableBuilder<bool>(
+          valueListenable: enableSlotTapToAdd,
+          builder: (context, slotTapEnabled, _) {
+            return ValueListenableBuilder3(
+              useDragHandlesOnly,
+              showMinimap,
+              animateReflow,
+              builder: (context, handlesOnly, minimap, reflow, _) {
+                return Stack(
+                  children: [
+                    Dashboard<String>(
+                      controller: controller,
+                      scrollController: standardScrollController,
+                      scrollDirection: controller.scrollDirection.value,
+                      animateReflow: reflow,
+                      slotAspectRatio: 1.0,
+                      mainAxisSpacing: 8.0,
+                      crossAxisSpacing: 8.0,
+                      padding: const EdgeInsets.all(8.0),
+                      onSlotTap: slotTapEnabled ? _handleSlotTap : null,
+                      onSlotLongPress: _handleSlotLongPress,
+                      dragStartGesture: handlesOnly
+                          ? DragStartGesture.none
+                          : DragStartGesture.longPress,
+                      // Use responsive breakpoints when overrideSlots is null,
+                      // otherwise null disables responsive breakpoints to respect manual slotCount
+                      breakpoints: overrideSlots != null
+                          ? null
+                          : {0: 4, 600: 6, 900: 8},
+                      itemBuilder: _buildCard,
+                      onWillDelete: _confirmDeletion,
+                      gridStyle: GridStyle(
+                        fillColor: theme.colorScheme.onSurface.withValues(
+                          alpha: 0.03,
+                        ),
+                        handleColor: theme.colorScheme.primary,
+                        lineColor: theme.colorScheme.onSurface.withValues(
+                          alpha: 0.08,
+                        ),
+                        lineWidth: 1,
+                      ),
+                      itemStyle: DashboardItemStyle(
+                        focusColor: theme.colorScheme.primary,
+                        activeColor: theme.colorScheme.secondary,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      trashLayout: const TrashLayout(
+                        visible: TrashPosition(
+                          bottom: 20,
+                          left: 100,
+                          right: 100,
+                        ),
+                        hidden: TrashPosition(
+                          bottom: -100,
+                          left: 100,
+                          right: 100,
+                        ),
+                      ),
+                      trashBuilder: _buildTrashBin,
+                    ),
+                    if (minimap) _buildMinimapOverlay(),
+                  ],
+                );
+              },
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildSliverDemoView() {
+    final theme = Theme.of(context);
+    return ValueListenableBuilder<bool>(
+      valueListenable: enableSlotTapToAdd,
+      builder: (context, slotTapEnabled, _) {
         return ValueListenableBuilder3(
           useDragHandlesOnly,
           showMinimap,
           animateReflow,
           builder: (context, handlesOnly, minimap, reflow, _) {
+            final overrideSlots = customSlotCount.value;
+
             return Stack(
               children: [
-                Dashboard<String>(
+                DashboardOverlay<String>(
                   controller: controller,
-                  scrollController: standardScrollController,
-                  scrollDirection: controller.scrollDirection.value,
-                  animateReflow: reflow,
-                  slotAspectRatio: 1.0,
-                  mainAxisSpacing: 8.0,
-                  crossAxisSpacing: 8.0,
-                  padding: const EdgeInsets.all(8.0),
-                  onSlotTap: _handleSlotTap,
-                  onSlotLongPress: _handleSlotLongPress,
+                  scrollController: sliverScrollController,
                   dragStartGesture: handlesOnly
                       ? DragStartGesture.none
                       : DragStartGesture.longPress,
-                  // Use responsive breakpoints when overrideSlots is null,
-                  // otherwise null disables responsive breakpoints to respect manual slotCount
-                  breakpoints: overrideSlots != null
-                      ? null
-                      : {0: 4, 600: 6, 900: 8},
-                  itemBuilder: _buildCard,
-                  onWillDelete: _confirmDeletion,
+                  onSlotTap: slotTapEnabled ? _handleSlotTap : null,
+                  onSlotLongPress: _handleSlotLongPress,
                   gridStyle: GridStyle(
                     fillColor: theme.colorScheme.onSurface.withValues(
                       alpha: 0.03,
@@ -633,111 +701,72 @@ class _DashboardPageState extends State<DashboardPage> {
                     ),
                     lineWidth: 1,
                   ),
-                  itemStyle: DashboardItemStyle(
-                    focusColor: theme.colorScheme.primary,
-                    activeColor: theme.colorScheme.secondary,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
+                  padding: const EdgeInsets.all(8.0),
+                  fillViewport: true,
+                  itemBuilder: _buildCard,
+                  onWillDelete: _confirmDeletion,
                   trashLayout: const TrashLayout(
                     visible: TrashPosition(bottom: 20, left: 100, right: 100),
                     hidden: TrashPosition(bottom: -100, left: 100, right: 100),
                   ),
                   trashBuilder: _buildTrashBin,
+                  child: CustomScrollView(
+                    controller: sliverScrollController,
+                    slivers: [
+                      SliverAppBar(
+                        automaticallyImplyLeading: false,
+                        pinned: true,
+                        expandedHeight: 120,
+                        backgroundColor:
+                            theme.colorScheme.surfaceContainerHighest,
+                        flexibleSpace: FlexibleSpaceBar(
+                          title: Text(
+                            'Sliver direct composition',
+                            style: TextStyle(
+                              color: theme.colorScheme.onSurface,
+                            ),
+                          ),
+                          centerTitle: false,
+                        ),
+                      ),
+                      SliverPadding(
+                        padding: const EdgeInsets.all(8.0),
+                        sliver: SliverDashboard(
+                          animateReflow: reflow,
+                          breakpoints: overrideSlots != null
+                              ? null
+                              : {0: 4, 600: 6, 900: 8},
+                          itemBuilder: _buildCard,
+                        ),
+                      ),
+                      SliverList(
+                        delegate: SliverChildBuilderDelegate(
+                          (context, index) => ListTile(
+                            leading: CircleAvatar(
+                              backgroundColor:
+                                  theme.colorScheme.primaryContainer,
+                              child: Text(
+                                '$index',
+                                style: TextStyle(
+                                  color: theme.colorScheme.onPrimaryContainer,
+                                ),
+                              ),
+                            ),
+                            title: Text('Subsequent List Item $index'),
+                            subtitle: const Text(
+                              'Rendered natively alongside the grid sliver',
+                            ),
+                          ),
+                          childCount: 15,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
                 if (minimap) _buildMinimapOverlay(),
               ],
             );
           },
-        );
-      },
-    );
-  }
-
-  Widget _buildSliverDemoView() {
-    final theme = Theme.of(context);
-    return ValueListenableBuilder3(
-      useDragHandlesOnly,
-      showMinimap,
-      animateReflow,
-      builder: (context, handlesOnly, minimap, reflow, _) {
-        final overrideSlots = customSlotCount.value;
-
-        return Stack(
-          children: [
-            DashboardOverlay<String>(
-              controller: controller,
-              scrollController: sliverScrollController,
-              dragStartGesture: handlesOnly
-                  ? DragStartGesture.none
-                  : DragStartGesture.longPress,
-              onSlotTap: _handleSlotTap,
-              onSlotLongPress: _handleSlotLongPress,
-              gridStyle: GridStyle(
-                fillColor: theme.colorScheme.onSurface.withValues(alpha: 0.03),
-                handleColor: theme.colorScheme.primary,
-                lineColor: theme.colorScheme.onSurface.withValues(alpha: 0.08),
-                lineWidth: 1,
-              ),
-              padding: const EdgeInsets.all(8.0),
-              fillViewport: true,
-              itemBuilder: _buildCard,
-              onWillDelete: _confirmDeletion,
-              trashLayout: const TrashLayout(
-                visible: TrashPosition(bottom: 20, left: 100, right: 100),
-                hidden: TrashPosition(bottom: -100, left: 100, right: 100),
-              ),
-              trashBuilder: _buildTrashBin,
-              child: CustomScrollView(
-                controller: sliverScrollController,
-                slivers: [
-                  SliverAppBar(
-                    automaticallyImplyLeading: false,
-                    pinned: true,
-                    expandedHeight: 120,
-                    backgroundColor: theme.colorScheme.surfaceContainerHighest,
-                    flexibleSpace: FlexibleSpaceBar(
-                      title: Text(
-                        'Sliver direct composition',
-                        style: TextStyle(color: theme.colorScheme.onSurface),
-                      ),
-                      centerTitle: false,
-                    ),
-                  ),
-                  SliverPadding(
-                    padding: const EdgeInsets.all(8.0),
-                    sliver: SliverDashboard(
-                      animateReflow: reflow,
-                      breakpoints: overrideSlots != null
-                          ? null
-                          : {0: 4, 600: 6, 900: 8},
-                      itemBuilder: _buildCard,
-                    ),
-                  ),
-                  SliverList(
-                    delegate: SliverChildBuilderDelegate(
-                      (context, index) => ListTile(
-                        leading: CircleAvatar(
-                          backgroundColor: theme.colorScheme.primaryContainer,
-                          child: Text(
-                            '$index',
-                            style: TextStyle(
-                              color: theme.colorScheme.onPrimaryContainer,
-                            ),
-                          ),
-                        ),
-                        title: Text('Subsequent List Item $index'),
-                        subtitle: const Text(
-                          'Rendered natively alongside the grid sliver',
-                        ),
-                      ),
-                      childCount: 15,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            if (minimap) _buildMinimapOverlay(),
-          ],
         );
       },
     );
@@ -932,6 +961,7 @@ class _ConfigPanel extends StatelessWidget {
     required this.animateReflow,
     required this.autoShrink,
     required this.maxRows,
+    required this.enableSlotTapToAdd,
     required this.customSlotCount,
     required this.compactionType,
     required this.resizeBehavior,
@@ -951,6 +981,7 @@ class _ConfigPanel extends StatelessWidget {
   final ValueNotifier<bool> blockSectionCollision;
   final ValueNotifier<bool> animateReflow;
   final ValueNotifier<bool> autoShrink;
+  final ValueNotifier<bool> enableSlotTapToAdd;
   final ValueNotifier<int?> maxRows;
   final ValueNotifier<int?> customSlotCount;
   final ValueNotifier<CompactType> compactionType;
@@ -983,6 +1014,10 @@ class _ConfigPanel extends StatelessWidget {
             title: 'Edit Mode (Draggable/Resizable)',
             notifier: isEditing,
             onChanged: (val) => controller.setEditMode(val),
+          ),
+          _SwitchTile(
+            title: 'Tap empty slot to add item (onSlotTap)',
+            notifier: enableSlotTapToAdd,
           ),
           _SwitchTile(
             title: 'Use Custom Drag Handles only',
