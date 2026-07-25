@@ -52,7 +52,7 @@ class ExampleHome extends StatelessWidget {
               leading: Icon(Icons.dashboard, color: theme.colorScheme.primary),
               title: const Text('Playground'),
               subtitle: const Text(
-                'Single grid: drag, resize, trash, sections, minimap, policies…',
+                'Single grid: drag, resize, custom columns (up to 60+), slot tap, maxRows, extra metadata…',
               ),
               trailing: const Icon(Icons.chevron_right),
               onTap: () => Navigator.of(context).push(
@@ -111,8 +111,6 @@ class CustomDashboardPolicy extends DashboardPolicy {
 
   @override
   bool canCollide(LayoutItem itemA, LayoutItem itemB) {
-    // If enabled, prevent any dynamic item from pushing/colliding with
-    // section barriers. The section headers act as immoveable visual dividers.
     if (blockSectionCollision && itemB.isSectionBarrier) {
       return false;
     }
@@ -126,7 +124,6 @@ class CustomDashboardPolicy extends DashboardPolicy {
     int targetY,
     List<LayoutItem> currentLayout,
   ) {
-    // Optional: block moving items above y=0 if it's the reserved top section
     return true;
   }
 }
@@ -140,10 +137,8 @@ class DashboardPage extends StatefulWidget {
 }
 
 class _DashboardPageState extends State<DashboardPage> {
-  // Initial slot count for the controller.
-  var slotCount = 8;
+  var initialSlots = 8;
 
-  // Create and manage your DashboardController.
   late final DashboardController controller;
 
   final standardScrollController = ScrollController();
@@ -158,6 +153,11 @@ class _DashboardPageState extends State<DashboardPage> {
   final blockSectionCollision = ValueNotifier(true);
   final animateReflow = ValueNotifier(false);
   final autoShrink = ValueNotifier(false);
+  final maxRows = ValueNotifier<int?>(null);
+
+  // null = Use Responsive Breakpoints. Non-null = Override with custom fixed slot count.
+  final customSlotCount = ValueNotifier<int?>(null);
+
   final compactionType = ValueNotifier<CompactType>(CompactType.vertical);
   final resizeBehavior = ValueNotifier<ResizeBehavior>(ResizeBehavior.push);
   final placementStrategy = ValueNotifier<AutoPlacementStrategy>(
@@ -166,7 +166,6 @@ class _DashboardPageState extends State<DashboardPage> {
 
   final random = Random();
 
-  // Cache holding both background and pre-calculated text colors as a tuple.
   final _cardColors = <String, ({Color cardColor, Color textColor})>{};
 
   ({Color cardColor, Color textColor}) _generateColor(
@@ -202,7 +201,7 @@ class _DashboardPageState extends State<DashboardPage> {
   void initState() {
     super.initState();
     controller = DashboardController(
-      initialSlotCount: slotCount,
+      initialSlotCount: initialSlots,
       onLayoutChanged: (items, bkSlotCount) {
         _syncJsonField();
       },
@@ -225,8 +224,16 @@ class _DashboardPageState extends State<DashboardPage> {
           h: 2,
           minW: 1,
           minH: 1,
+          extra: {'category': 'CPU', 'tag': 'Hardware'},
         ),
-        const LayoutItem(id: 'sys_mem', x: 2, y: 1, w: 2, h: 2),
+        const LayoutItem(
+          id: 'sys_mem',
+          x: 2,
+          y: 1,
+          w: 2,
+          h: 2,
+          extra: {'category': 'RAM', 'tag': 'Hardware'},
+        ),
         // Section 2 Barrier
         const LayoutItem(
           id: 'sec_usr',
@@ -244,9 +251,24 @@ class _DashboardPageState extends State<DashboardPage> {
           w: 4,
           h: 2,
           isResizable: true,
+          extra: {'category': 'Sales', 'tag': 'Analytics'},
         ),
-        const LayoutItem(id: 'chart_geo', x: 4, y: 4, w: 2, h: 2),
-        const LayoutItem(id: 'table_logs', x: 6, y: 4, w: 2, h: 3),
+        const LayoutItem(
+          id: 'chart_geo',
+          x: 4,
+          y: 4,
+          w: 2,
+          h: 2,
+          extra: {'category': 'Map', 'tag': 'Analytics'},
+        ),
+        const LayoutItem(
+          id: 'table_logs',
+          x: 6,
+          y: 4,
+          w: 2,
+          h: 3,
+          extra: {'category': 'Logs', 'tag': 'System'},
+        ),
       ],
     );
 
@@ -327,14 +349,19 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   void _addNewItem() {
-    final w = random.nextInt(2) + 1;
-    final h = random.nextInt(2) + 1;
+    final activeCols = controller.slotCount.value;
+    // Adapt default new item size for fine grids (e.g. 48 or 60 cols)
+    final scale = max(1, activeCols ~/ 8);
+    final w = (random.nextInt(2) + 1) * scale;
+    final h = (random.nextInt(2) + 1) * scale;
+
     final newItem = LayoutItem(
       id: 'widget_${DateTime.now().millisecondsSinceEpoch % 10000}',
       x: -1,
       y: -1,
       w: w,
       h: h,
+      extra: const {'category': 'Dynamic', 'created': 'FAB'},
     );
     controller.addItem(newItem, strategy: placementStrategy.value);
   }
@@ -342,18 +369,65 @@ class _DashboardPageState extends State<DashboardPage> {
   void _addStressTestItems(int count) {
     final list = <LayoutItem>[];
     final timestamp = DateTime.now().millisecondsSinceEpoch;
+    final activeCols = controller.slotCount.value;
+    final scale = max(1, activeCols ~/ 8);
+
     for (var i = 0; i < count; i++) {
       list.add(
         LayoutItem(
           id: 's_${timestamp}_$i',
           x: -1,
           y: -1,
-          w: random.nextInt(2) + 1,
-          h: random.nextInt(2) + 1,
+          w: (random.nextInt(2) + 1) * scale,
+          h: (random.nextInt(2) + 1) * scale,
+          extra: const {'category': 'StressTest'},
         ),
       );
     }
     controller.addItems(list, strategy: placementStrategy.value);
+  }
+
+  void _handleSlotTap(int x, int y) {
+    final activeCols = controller.slotCount.value;
+    final scale = max(1, activeCols ~/ 8);
+    final w = 2 * scale;
+    final h = 2 * scale;
+    final targetX = min(x, max(0, activeCols - w));
+
+    controller.addItem(
+      LayoutItem(
+        id: 'tap_${targetX}_$y',
+        x: targetX,
+        y: y,
+        w: w,
+        h: h,
+        extra: {'category': 'Created', 'createdVia': 'Slot Tap ($x,$y)'},
+      ),
+    );
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Added new ${w}x$h item at slot ($targetX, $y)'),
+          duration: const Duration(seconds: 2),
+          backgroundColor: Theme.of(context).colorScheme.primary,
+        ),
+      );
+    }
+  }
+
+  void _handleSlotLongPress(int x, int y) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Long-pressed empty slot at Column $x, Row $y'),
+          duration: const Duration(seconds: 2),
+          backgroundColor: Theme.of(context).colorScheme.tertiary,
+        ),
+      );
+    }
   }
 
   Future<bool> _confirmDeletion(List<LayoutItem> items) async {
@@ -404,6 +478,8 @@ class _DashboardPageState extends State<DashboardPage> {
     blockSectionCollision.dispose();
     animateReflow.dispose();
     autoShrink.dispose();
+    maxRows.dispose();
+    customSlotCount.dispose();
     compactionType.dispose();
     resizeBehavior.dispose();
     placementStrategy.dispose();
@@ -429,6 +505,8 @@ class _DashboardPageState extends State<DashboardPage> {
       blockSectionCollision: blockSectionCollision,
       animateReflow: animateReflow,
       autoShrink: autoShrink,
+      maxRows: maxRows,
+      customSlotCount: customSlotCount,
       compactionType: compactionType,
       resizeBehavior: resizeBehavior,
       placementStrategy: placementStrategy,
@@ -460,9 +538,10 @@ class _DashboardPageState extends State<DashboardPage> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Expanded(
-            child: ValueListenableBuilder(
-              valueListenable: useSliverDemo,
-              builder: (context, sliverMode, _) {
+            child: ValueListenableBuilder2<bool, int?>(
+              useSliverDemo,
+              customSlotCount,
+              builder: (context, sliverMode, _, _) {
                 return sliverMode
                     ? _buildSliverDemoView()
                     : _buildStandardDemoView();
@@ -513,53 +592,62 @@ class _DashboardPageState extends State<DashboardPage> {
 
   Widget _buildStandardDemoView() {
     final theme = Theme.of(context);
-    return ValueListenableBuilder3(
-      useDragHandlesOnly,
-      showMinimap,
-      animateReflow,
-      builder: (context, handlesOnly, minimap, reflow, _) {
-        return Stack(
-          children: [
-            Dashboard<String>(
-              controller: controller,
-              scrollController: standardScrollController,
-              scrollDirection: controller.scrollDirection.value,
-              animateReflow: reflow,
-              slotAspectRatio: 1.0,
-              mainAxisSpacing: 8.0,
-              crossAxisSpacing: 8.0,
-              padding: const EdgeInsets.all(8.0),
-              dragStartGesture: handlesOnly
-                  ? DragStartGesture.none
-                  : DragStartGesture.longPress,
-              breakpoints: {0: 4, 600: 6, 900: 8},
-              itemBuilder: _buildCard,
-              onWillDelete: _confirmDeletion,
-              gridStyle: GridStyle(
-                fillColor: theme.colorScheme.onSurface.withValues(alpha: 0.03),
-                handleColor: theme.colorScheme.primary,
-                lineColor: theme.colorScheme.onSurface.withValues(alpha: 0.08),
-                lineWidth: 1,
-              ),
-              itemStyle: DashboardItemStyle(
-                focusColor: theme.colorScheme.primary,
-                activeColor: theme.colorScheme.secondary,
-                borderRadius: BorderRadius.circular(12),
-                // Match your card's border radius
-                // Or provide a fully custom BoxDecoration:
-                // focusDecoration: BoxDecoration(
-                //   border: Border.all(color: Colors.green, width: 4),
-                //   borderRadius: BorderRadius.circular(12),
-                // ),
-              ),
-              trashLayout: const TrashLayout(
-                visible: TrashPosition(bottom: 20, left: 100, right: 100),
-                hidden: TrashPosition(bottom: -100, left: 100, right: 100),
-              ),
-              trashBuilder: _buildTrashBin,
-            ),
-            if (minimap) _buildMinimapOverlay(),
-          ],
+    return ValueListenableBuilder<int?>(
+      valueListenable: customSlotCount,
+      builder: (context, overrideSlots, _) {
+        return ValueListenableBuilder3(
+          useDragHandlesOnly,
+          showMinimap,
+          animateReflow,
+          builder: (context, handlesOnly, minimap, reflow, _) {
+            return Stack(
+              children: [
+                Dashboard<String>(
+                  controller: controller,
+                  scrollController: standardScrollController,
+                  scrollDirection: controller.scrollDirection.value,
+                  animateReflow: reflow,
+                  slotAspectRatio: 1.0,
+                  mainAxisSpacing: 8.0,
+                  crossAxisSpacing: 8.0,
+                  padding: const EdgeInsets.all(8.0),
+                  onSlotTap: _handleSlotTap,
+                  onSlotLongPress: _handleSlotLongPress,
+                  dragStartGesture: handlesOnly
+                      ? DragStartGesture.none
+                      : DragStartGesture.longPress,
+                  // Use responsive breakpoints when overrideSlots is null,
+                  // otherwise null disables responsive breakpoints to respect manual slotCount
+                  breakpoints: overrideSlots != null
+                      ? null
+                      : {0: 4, 600: 6, 900: 8},
+                  itemBuilder: _buildCard,
+                  onWillDelete: _confirmDeletion,
+                  gridStyle: GridStyle(
+                    fillColor: theme.colorScheme.onSurface.withValues(
+                      alpha: 0.03,
+                    ),
+                    handleColor: theme.colorScheme.primary,
+                    lineColor: theme.colorScheme.onSurface.withValues(
+                      alpha: 0.08,
+                    ),
+                    lineWidth: 1,
+                  ),
+                  itemStyle: DashboardItemStyle(
+                    focusColor: theme.colorScheme.primary,
+                    activeColor: theme.colorScheme.secondary,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  trashLayout: const TrashLayout(
+                    visible: TrashPosition(bottom: 20, left: 100, right: 100),
+                    hidden: TrashPosition(bottom: -100, left: 100, right: 100),
+                  ),
+                  trashBuilder: _buildTrashBin,
+                ),
+                if (minimap) _buildMinimapOverlay(),
+              ],
+            );
+          },
         );
       },
     );
@@ -572,6 +660,8 @@ class _DashboardPageState extends State<DashboardPage> {
       showMinimap,
       animateReflow,
       builder: (context, handlesOnly, minimap, reflow, _) {
+        final overrideSlots = customSlotCount.value;
+
         return Stack(
           children: [
             DashboardOverlay<String>(
@@ -580,6 +670,8 @@ class _DashboardPageState extends State<DashboardPage> {
               dragStartGesture: handlesOnly
                   ? DragStartGesture.none
                   : DragStartGesture.longPress,
+              onSlotTap: _handleSlotTap,
+              onSlotLongPress: _handleSlotLongPress,
               gridStyle: GridStyle(
                 fillColor: theme.colorScheme.onSurface.withValues(alpha: 0.03),
                 handleColor: theme.colorScheme.primary,
@@ -615,6 +707,9 @@ class _DashboardPageState extends State<DashboardPage> {
                     padding: const EdgeInsets.all(8.0),
                     sliver: SliverDashboard(
                       animateReflow: reflow,
+                      breakpoints: overrideSlots != null
+                          ? null
+                          : {0: 4, 600: 6, 900: 8},
                       itemBuilder: _buildCard,
                     ),
                   ),
@@ -720,9 +815,6 @@ class _DashboardPageState extends State<DashboardPage> {
                 controller: controller,
                 scrollController: activeScrollController,
                 width: 120,
-                // Must mirror the dashboard's layout config: the minimap has
-                // no other way to know the real spacing/aspect/padding, and
-                // defaults (0 spacing) skew the item proportions.
                 slotAspectRatio: 1.0,
                 mainAxisSpacing: 8.0,
                 crossAxisSpacing: 8.0,
@@ -753,24 +845,38 @@ class _DashboardPageState extends State<DashboardPage> {
                     alignment: Alignment.centerLeft,
                   ),
                 ],
-                // markerBuilder: (ctx, item) {
-                //   if (item.id == 'sec_sys') {
-                //     return Align(
-                //       alignment: Alignment.centerRight,
-                //       child: FittedBox(fit: BoxFit.fitHeight, child: Icon(Icons.star)),
-                //     );
-                //   }
-                //   if (item.id == 'sec_usr') {
-                //     return Align(
-                //       alignment: Alignment.centerLeft,
-                //       child: FittedBox(fit: BoxFit.fitHeight, child: Icon(Icons.person)),
-                //     );
-                //   }
-                //   return null;
-                // },
               ),
             ),
           ),
+        );
+      },
+    );
+  }
+}
+
+/// Utility builder combining two ValueListenables.
+class ValueListenableBuilder2<A, B> extends StatelessWidget {
+  const ValueListenableBuilder2(
+    this.first,
+    this.second, {
+    required this.builder,
+    super.key,
+  });
+
+  final ValueListenable<A> first;
+  final ValueListenable<B> second;
+  final Widget Function(BuildContext context, A a, B b, Widget? child) builder;
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<A>(
+      valueListenable: first,
+      builder: (context, a, _) {
+        return ValueListenableBuilder<B>(
+          valueListenable: second,
+          builder: (context, b, _) {
+            return builder(context, a, b, null);
+          },
         );
       },
     );
@@ -825,6 +931,8 @@ class _ConfigPanel extends StatelessWidget {
     required this.blockSectionCollision,
     required this.animateReflow,
     required this.autoShrink,
+    required this.maxRows,
+    required this.customSlotCount,
     required this.compactionType,
     required this.resizeBehavior,
     required this.placementStrategy,
@@ -843,6 +951,8 @@ class _ConfigPanel extends StatelessWidget {
   final ValueNotifier<bool> blockSectionCollision;
   final ValueNotifier<bool> animateReflow;
   final ValueNotifier<bool> autoShrink;
+  final ValueNotifier<int?> maxRows;
+  final ValueNotifier<int?> customSlotCount;
   final ValueNotifier<CompactType> compactionType;
   final ValueNotifier<ResizeBehavior> resizeBehavior;
   final ValueNotifier<AutoPlacementStrategy> placementStrategy;
@@ -886,6 +996,64 @@ class _ConfigPanel extends StatelessWidget {
             title: 'Render Interactive Mini-Map',
             notifier: showMinimap,
           ),
+          const SizedBox(height: 10),
+          Text(
+            'Grid Granularity / Columns (slotCount)',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+              color: theme.colorScheme.primary,
+            ),
+          ),
+          const SizedBox(height: 4),
+          ValueListenableBuilder<int?>(
+            valueListenable: customSlotCount,
+            builder: (context, value, _) {
+              return DropdownButton<int?>(
+                isExpanded: true,
+                dropdownColor: theme.colorScheme.surfaceContainerHigh,
+                value: value,
+                items: const [
+                  DropdownMenuItem(
+                    value: null,
+                    child: Text('RESPONSIVE BREAKPOINTS (AUTO)'),
+                  ),
+                  DropdownMenuItem(value: 4, child: Text('4 COLUMNS (COARSE)')),
+                  DropdownMenuItem(
+                    value: 8,
+                    child: Text('8 COLUMNS (STANDARD)'),
+                  ),
+                  DropdownMenuItem(
+                    value: 12,
+                    child: Text('12 COLUMNS (GRID SYSTEM)'),
+                  ),
+                  DropdownMenuItem(
+                    value: 16,
+                    child: Text('16 COLUMNS (DENSE)'),
+                  ),
+                  DropdownMenuItem(value: 24, child: Text('24 COLUMNS (FINE)')),
+                  DropdownMenuItem(
+                    value: 32,
+                    child: Text('32 COLUMNS (HIGH GRANULARITY)'),
+                  ),
+                  DropdownMenuItem(
+                    value: 48,
+                    child: Text('48 COLUMNS (ULTRA-FINE)'),
+                  ),
+                  DropdownMenuItem(
+                    value: 60,
+                    child: Text('60 COLUMNS (MICRO-GRID)'),
+                  ),
+                ],
+                onChanged: (v) {
+                  customSlotCount.value = v;
+                  if (v != null) {
+                    controller.setSlotCount(v);
+                  }
+                },
+              );
+            },
+          ),
           const SizedBox(height: 16),
           const _SectionTitle('Collision & Layout Rules'),
           _SwitchTile(
@@ -900,6 +1068,37 @@ class _ConfigPanel extends StatelessWidget {
           _SwitchTile(
             title: 'Enable Reflow Animations',
             notifier: animateReflow,
+          ),
+          const SizedBox(height: 10),
+          Text(
+            'Max Rows Limit (Main Axis Cap)',
+            style: TextStyle(
+              fontSize: 12,
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+          ValueListenableBuilder<int?>(
+            valueListenable: maxRows,
+            builder: (context, value, _) {
+              return DropdownButton<int?>(
+                isExpanded: true,
+                dropdownColor: theme.colorScheme.surfaceContainerHigh,
+                value: value,
+                items: const [
+                  DropdownMenuItem(
+                    value: null,
+                    child: Text('UNLIMITED (DEFAULT)'),
+                  ),
+                  DropdownMenuItem(value: 6, child: Text('6 ROWS MAX')),
+                  DropdownMenuItem(value: 8, child: Text('8 ROWS MAX')),
+                  DropdownMenuItem(value: 12, child: Text('12 ROWS MAX')),
+                ],
+                onChanged: (v) {
+                  maxRows.value = v;
+                  controller.setMaxRows(v);
+                },
+              );
+            },
           ),
           const SizedBox(height: 10),
           Text(
@@ -1137,6 +1336,8 @@ class _DashboardCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final category = item.extra?['category'] as String?;
+
     return Card(
       elevation: 3,
       color: cardColor,
@@ -1167,6 +1368,26 @@ class _DashboardCard extends StatelessWidget {
                     color: textColor.withValues(alpha: 0.7),
                   ),
                 ),
+                if (category != null)
+                  Container(
+                    margin: const EdgeInsets.only(top: 4),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: textColor.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Text(
+                      category.toUpperCase(),
+                      style: TextStyle(
+                        fontSize: 9,
+                        fontWeight: FontWeight.bold,
+                        color: textColor,
+                      ),
+                    ),
+                  ),
               ],
             ),
           ),
