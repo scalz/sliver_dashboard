@@ -166,10 +166,49 @@ class _DashboardItemState extends State<DashboardItem>
     final editingChanged = widget.isEditing != _lastIsEditing;
 
     // Invalidate cache on dimension changes if sub-pixel or breakpoint builders are active.
-    final dimensionsChanged = widget.trackDimensions &&
+    var dimensionsChanged = widget.trackDimensions &&
         (widget.itemWidth != _lastWidth ||
             widget.itemHeight != _lastHeight ||
             widget.slotCount != _lastSlotCount);
+
+    // Breakpoint-only tracking: a dimension change only matters if the
+    // RESOLVED breakpoint transitions. Hoisting the resolver comparison here
+    // avoids recreating the wrapper widgets on every pixel of a window
+    // resize (the inner DashboardBreakpointBuilder already protected the
+    // user subtree through element reconciliation, but the per-pixel
+    // wrapper churn and inner didUpdateWidget were pure waste). The user
+    // builder's width/height arguments are refreshed at each transition —
+    // which is already their contract: between transitions the cached
+    // subtree keeps the dimensions it was built with.
+    if (dimensionsChanged &&
+        !signatureChanged &&
+        !editingChanged &&
+        widget.itemBreakpointBuilder != null &&
+        widget.itemLayoutBuilder == null &&
+        _lastWidth != null &&
+        _lastHeight != null &&
+        _lastSlotCount != null) {
+      final oldBp = widget.breakpointResolver!(
+        _lastWidth!,
+        _lastHeight!,
+        widget.item,
+        _lastSlotCount!,
+      );
+      final newBp = widget.breakpointResolver!(
+        widget.itemWidth!,
+        widget.itemHeight!,
+        widget.item,
+        widget.slotCount!,
+      );
+      if (oldBp == newBp) {
+        // Same breakpoint: keep the cached subtree, just record the new
+        // dimensions so the next comparison starts from them.
+        _lastWidth = widget.itemWidth;
+        _lastHeight = widget.itemHeight;
+        _lastSlotCount = widget.slotCount;
+        dimensionsChanged = false;
+      }
+    }
 
     if (signatureChanged || editingChanged || dimensionsChanged) {
       _cachedWidget = null; // Invalidate cache

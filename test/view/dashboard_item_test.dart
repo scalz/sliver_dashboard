@@ -312,4 +312,67 @@ void main() {
       variant: TargetPlatformVariant.only(TargetPlatform.linux),
     );
   });
+
+  group('itemBreakpointBuilder — rebuild contract under window resizes', () {
+    testWidgets('the user builder runs once per breakpoint TRANSITION, not per pixel',
+        (tester) async {
+      final controller = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: const [LayoutItem(id: 'a', x: 0, y: 0, w: 2, h: 2)],
+      );
+      addTearDown(controller.dispose);
+      final scrollController = ScrollController();
+      addTearDown(scrollController.dispose);
+      var builds = 0;
+      final resolved = <String>[];
+
+      await tester.binding.setSurfaceSize(const Size(800, 600));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Dashboard<String>(
+              controller: controller,
+              scrollController: scrollController,
+              breakpointResolver: (w, h, item, slotCount) => w >= 300 ? 'wide' : 'narrow',
+              itemBreakpointBuilder: (context, item, breakpoint, w, h, slotCount) {
+                builds++;
+                resolved.add(breakpoint as String);
+                return Text('${item.id}:$breakpoint');
+              },
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(builds, 1);
+      expect(resolved.last, 'wide'); // 2 slots of ~190px
+
+      // Sub-breakpoint window resizes: many pixels, same resolved value.
+      for (final width in [790.0, 780.0, 770.0, 760.0, 750.0]) {
+        await tester.binding.setSurfaceSize(Size(width, 600));
+        await tester.pumpAndSettle();
+      }
+      expect(
+        builds,
+        1,
+        reason: 'no transition crossed: the cached subtree must survive '
+            'every sub-breakpoint window resize',
+      );
+
+      // Crossing the breakpoint: exactly one more build, fresh dimensions.
+      await tester.binding.setSurfaceSize(const Size(500, 600));
+      await tester.pumpAndSettle();
+      expect(builds, 2);
+      expect(resolved.last, 'narrow');
+      expect(find.text('a:narrow'), findsOneWidget);
+
+      // Back across: one more.
+      await tester.binding.setSurfaceSize(const Size(800, 600));
+      await tester.pumpAndSettle();
+      expect(builds, 3);
+      expect(resolved.last, 'wide');
+    });
+  });
 }
