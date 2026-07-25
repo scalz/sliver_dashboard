@@ -15,6 +15,7 @@ The architecture is built on a foundation of modern, idiomatic Flutter principle
     *   **Paint Isolation:** Use of `RepaintBoundary` ensures that layout changes (moving an item) do not trigger expensive repaints of the item's content.
     *   **Allocation Discipline:** Per-frame hot paths (drag updates, `performLayout`, minimap paints) must be allocation-free or use reusable scratch buffers. New allocations in these paths are treated as regressions.
 5.  **Immutability:** State objects, particularly the `LayoutItem` model, are immutable.
+    *   **`LayoutItem.extra`**: shallow-equality map (`mapEquals` + `Object.hashAllUnordered` in signature/hash); mutating the map in place is invisible to change detection by design.
 6.  **Accessibility (A11y):** The dashboard is designed to be fully usable via keyboard and screen readers, treating accessibility as a first-class citizen, not an afterthought.
 
 ## Core Layers
@@ -79,7 +80,7 @@ graph TD
         1. Reads the current state.
         2. Calls the pure `LayoutEngine`.
         3. Updates the beacons with the result.
-
+    - **`maxRows`**: enforced at the four user-driven placement choke points (drag clamp, interactive resize clamp on the anchored axis, setItemSize, bounded placeNewItems search with below-cap fallback). Push cascades are not truncated: rejecting a cascade would require speculative simulation per pointer event.
 ### 2. The Logic Layer (LayoutEngine)
 
 - **Location:** `lib/src/engine/layout_engine.dart`
@@ -114,7 +115,13 @@ The view layer has been refactored to support native Sliver composition. It is c
     - **Hit-Test Ownership:** `_hitTest` filters hit-path entries by **sliver ownership**. The hit-test path is deepest-first, so with nested grids the first `SliverDashboardParentData` under the pointer may belong to an *inner* grid; without the filter the outer overlay would start a drag on a foreign item id (StateError). Entries from foreign slivers are skipped and the walk naturally reaches the overlay's own host item.
     - **Pointer Claim & Target Exclusions:** on pointer-down, the deepest overlay that actually starts an operation claims the pointer at the coordinator; ancestor overlays check `isPointerClaimedByOther` first and skip (Flutter dispatches pointer events deepest-first, so the claim is always set before ancestors run).
     - **Placeholder Refactor:** `_updatePlaceholderPosition` (the `DragTarget` external-drop path) now delegates to `_gridPointAtGlobal` + `_showPlaceholderAt(w:, h:)`, shared with cross-grid drags so both flows use the exact same geometry and clamping.
-
+- **Slot gestures**: `_handleSlotGesture` reuses the drag pipeline's
+  `SlotMetrics.pixelToGrid` with
+  `offset = viewportScroll - precedingScrollExtent + padding.top` (reduces
+  to the plain scroll offset for a single grid). Containment = strict
+  sliver bounds, relaxed to the remaining viewport under `fillViewport`
+  (which only exists in single-grid setups).
+  
 #### B. `SliverDashboard` (The Rendering Layer)
 - **Role:** Renders the actual items within the scroll view using the Sliver protocol.
 - **Logic:**
@@ -178,6 +185,7 @@ The biggest challenge in a grid layout is preventing the reconstruction of child
     - **Smart Invalidation:** In `didUpdateWidget`, the system compares the `contentSignature` of the new item vs. the old item.
         - **Rule:** `contentSignature` is a hash of properties that affect *content* (width, height, id, static status) and **crucially ignores** position changes (`x`, `y`).
     - If the signature matches, the cached widget instance is returned. Flutter detects `oldWidget == newWidget` and stops the rebuild propagation immediately.
+    - **Breakpoint hoisting**: `DashboardItem.didUpdateWidget` resolves old-vs-new breakpoints itself on the breakpoint-only path and keeps the outer cache when unchanged; `DashboardBreakpointBuilder`'s inner guard remains as defense in depth.
 
 2.  **Lazy Loading:**
     - **Rule:** The cache is initialized lazily in the `build()` method (not `initState`). This ensures that `InheritedWidgets` (like `Theme` or `Provider`) are accessible during the first build, preventing runtime errors.
@@ -544,3 +552,4 @@ of 4N, which broke silently in release and returned overlapping layouts —
 the root trigger of the top-of-grid resize freeze.
 `resolveCompactionCollision` is reduced to its effective semantics (a pure
 single-axis move).
+

@@ -1,3 +1,53 @@
+## 2.3.0
+
+### Features
+- **Empty-slot interactivity** (`Dashboard.onSlotTap` / `onSlotLongPress`):
+  tap or long-press an empty grid slot to receive its (x, y) coordinates —
+  the "add a widget here" hook for dashboard builders and no-code editors.
+  Fires only inside the grid's own bounds (several grids sharing a scroll
+  view never cross-fire); with `fillViewport: true` (the single-grid
+  default) the empty area below the content is tappable too. Zero cost
+  outside the tap event itself.
+- **Business metadata on items** (`LayoutItem.extra`, `Map<String, dynamic>?`): carry business data or any
+  JSON-serializable configuration on the item itself. Travels through `toMap`/`fromMap`, so `exportLayout`/`exportNestedTree` persist layout
+  and configuration in one payload. Compared with shallow map equality —
+  replace the map, do not mutate it — and included in the content
+  signature, so changing it rebuilds the item's cached widget. Never
+  consulted during drags.
+- **Main-axis cap** (`DashboardController.maxRows`, `setMaxRows`): bound
+  the grid to N rows (or columns when scrolling horizontally) for fixed
+  surfaces (TV, kiosk, A4 report). Enforced on drag targets, interactive
+  and programmatic resizes, and new-item auto placement — which falls back
+  below the cap rather than losing items when the bounded area is full.
+  Collision pushes are deliberately not truncated. Null (default) keeps
+  the classic unbounded grid.
+- **Playground Example:** updated grid granularity selector (up to 60 cols),
+  maxRows controls, empty slot tap-to-add, and extra metadata badges.
+
+### Fixes & Performance
+
+- **Breakpoint items no longer churn on window resizes**: the resolver comparison is now hoisted into the
+  item's cache check: same-breakpoint dimension changes keep the cached
+  subtree untouched. The rebuild contract — one user-builder run per
+  breakpoint TRANSITION — is now pinned by a widget test.
+- **Auto placement never drops items**: an item wider than the grid (or
+  unplaceable within `maxRows`) is appended below the content instead of
+  being silently lost.
+- **Explicit adds are sanitized:** items added with explicit coordinates
+  (the natural output of an `onSlotTap` handler) are clamped into the
+  columns and under `maxRows` — a 2-wide add on the last column no longer
+  overflows the grid, and a tap-add on the trailing row no longer grows a
+  capped grid.
+- **Auto placement scales to dense micro-grids:** the placement scan's iteration budget was arbitrary, 
+  and a legitimate firstFit pass over a dense 60-column board legitimately exceeded it. Every subsequent 
+  item then took the never-drop fallback at x=0, stacking one per row (visible as a single-column 
+  tail on the minimap). The search is now bounded by the board's bottom.
+
+### Dependencies & Maintenance
+
+- **Broader Compatibility**: Relaxed `meta` dependency version constraint to `>=1.8.0 <2.0.0` 
+  for maximum Flutter SDK compatibility across 3.x releases.
+
 ## 2.2.1
 
 ### Documentation

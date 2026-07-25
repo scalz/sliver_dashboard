@@ -68,6 +68,7 @@ The package is WebAssembly (WASM) compatible. Building your production applicati
   - [Controlling Edit Mode](#controlling-edit-mode)
   - [Adding and Removing Items](#adding-and-removing-items)
   - [Interaction Callbacks](#interaction-callbacks)
+  - [Empty slot interactions & business metadata](#empty-slot-interactions--business-metadata)
   - [Programmatic Scrolling](#programmatic-scrolling)
   - [Import / Export (Persistence)](#import--export-persistence)
 - [Drag & Drop](#drag--drop)
@@ -210,6 +211,29 @@ Dashboard(
   onItemResizeStart: (item) => print('Started resizing ${item.id}'),
   onItemResizeEnd: (item) => print('Stopped resizing ${item.id}'),
 )
+```
+
+### Empty slot interactions & business metadata
+
+```dart
+Dashboard<String>(
+  controller: controller,
+  scrollController: scrollController,
+  itemBuilder: (context, item) => MyWidget(type: item.extra?['type']),
+  // "Add a widget here": fires with the tapped grid cell, items excluded.
+  onSlotTap: (x, y) => showAddMenuAt(x, y),
+  onSlotLongPress: (x, y) => showContextMenuAt(x, y),
+)
+
+// Layout + configuration in ONE payload:
+controller.addItem(LayoutItem(
+  id: 'sales', x: -1, y: -1, w: 2, h: 2,
+  extra: {'type': 'chart_pie', 'title': 'Sales'},
+));
+final json = controller.exportLayout(); // extra included
+
+// Fixed-surface dashboards (TV, kiosk, A4): cap the grid at 6 rows.
+controller.setMaxRows(6);
 ```
 
 ### Programmatic Scrolling
