@@ -183,9 +183,10 @@ The biggest challenge in a grid layout is preventing the reconstruction of child
 1.  **Content Isolation (The Firewall):**
     - The expensive part (the user's widget provided via `itemBuilder`) is cached in a local state `_cachedWidget`.
     - **Smart Invalidation:** In `didUpdateWidget`, the system compares the `contentSignature` of the new item vs. the old item.
-        - **Rule:** `contentSignature` is a hash of properties that affect *content* (width, height, id, static status) and **crucially ignores** position changes (`x`, `y`).
+        - **Rule:** `contentSignature` is a hash of properties that affect *content* (width, height, id, static status, `hasNestedGrid`, and the `extra` business-metadata map — shallow-hashed) and **crucially ignores** position changes (`x`, `y`).
     - If the signature matches, the cached widget instance is returned. Flutter detects `oldWidget == newWidget` and stops the rebuild propagation immediately.
     - **Breakpoint hoisting**: `DashboardItem.didUpdateWidget` resolves old-vs-new breakpoints itself on the breakpoint-only path and keeps the outer cache when unchanged; `DashboardBreakpointBuilder`'s inner guard remains as defense in depth.
+    - **Edit-mode toggles are deliberately NOT an invalidation cause**. The edit chrome (handles, borders, gestures, a11y) lives OUTSIDE the cache and adapts on its own, so toggling is nearly free even with heavy tile subtrees. Content that depends on the edit state must read it reactively (`controller.isEditing.watch(context)` inside the tile — state_beacon is re-exported by the barrel for this). Contract is pinned by a test.
 
 2.  **Lazy Loading:**
     - **Rule:** The cache is initialized lazily in the `build()` method (not `initState`). This ensures that `InheritedWidgets` (like `Theme` or `Provider`) are accessible during the first build, preventing runtime errors.
@@ -553,3 +554,24 @@ the root trigger of the top-of-grid resize freeze.
 `resolveCompactionCollision` is reduced to its effective semantics (a pure
 single-axis move).
 
+### subGridDynamic Nest-Request Lifecycle
+
+- **Single-candidate (INVARIANT):** the coordinator tracks AT MOST one
+  pending `onNestedGridRequested`. Arming a NEW host fires
+  `onNestedGridRequestAbandoned` for the previous unconfirmed request
+  **immediately — live during the drag** — so the app reverts its
+  speculative conversion the moment the candidate changes, and the visual
+  state always matches "the host under the pointer is THE candidate".
+- **Same-host re-fires are exempted** by an identity guard (host id + grid
+  instance): abandoning there would flicker a revert/reconvert on hover
+  jitter. Do not "simplify" the guard away.
+- **Restoration contract:** the callback's `host` argument is the item
+  snapshot taken WHEN THE REQUEST ARMED — original id and geometry, before
+  conversion and before any `sizeToContent` growth. Reverts must restore
+  from this snapshot, not from the item's current grid state (which keeps
+  mid-drag growth). Shrinking from the snapshot can never collide, so
+  `recompact: false` is safe under every compaction mode.
+- **Push permanence under `CompactType.none`:** neighbors pushed by
+  speculative `sizeToContent` growth stay pushed after the revert — pushes
+  are permanent by that mode's contract (no push provenance is kept). This
+  is documented on `CompactType.none`, not a nested defect.

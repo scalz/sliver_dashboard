@@ -1,3 +1,19 @@
+## 2.3.1
+
+### Fixes
+- **Sequential subGridDynamic arming no longer strands converted hosts:**
+  hovering host A then host B during one drag silently overwrote the
+  pending nest request — A's abandonment callback never fired, leaving A
+  converted forever wherever the item was dropped. Arming a new host now
+  abandons the previous unconfirmed request immediately (live during the
+  drag), with same-host re-fires exempted so hover jitter cannot flicker a
+  revert/reconvert.
+- **Edit-mode toggling no longer rebuilds tile content:** toggling
+  is now nearly free — only the edit chrome rebuilds. If a
+  tile's content depends on edit mode, read it reactively inside the
+  tile: controller.isEditing.watch(context) (state_beacon is
+  re-exported by the package, no extra import needed).
+
 ## 2.3.0
 
 ### Features

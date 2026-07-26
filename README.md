@@ -628,6 +628,17 @@ controller.setCompactionType(CompactType.none);
 controller.setCompactionType(CompactType.vertical);
 ```
 
+> **Note on `CompactType.none`: Pushes are permanent.** Free positioning means elements only move        
+> when pushed by a collision: when an expanding item (via manual resize or
+> sizeToContent) pushes a neighbor, shrinking the item back does not pull
+> the neighbor back. The engine does not track push provenance. Gaps left this
+> way are by design; use vertical or horizontal compaction for self-healing,
+> gap-filling layouts.
+>
+> * **For automatic gap filling:** Use `CompactType.vertical` or `CompactType.horizontal` compaction for self-healing layouts.
+> * **For on-demand cleanup in free mode:** Call **`controller.optimizeLayout()`** to defragment the grid and compact empty gaps on demand, 
+> or use **`controller.availableFreeAreas`** / **`controller.firstFreeArea`** to inspect open slots programmatically.
+
 ### Auto Layout bulk add
 
 Generate a layout automatically or add items without specifying coordinates (set `x: -1, y: -1`). By default, the engine appends them below the current layout. You can configure this using the `strategy` parameter:

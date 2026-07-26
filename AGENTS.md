@@ -8,6 +8,7 @@ Since v2.0.0 the package supports **Nested Grids**: dashboards embedded inside g
 - **No Assumptions:** If context is missing, ask questions. Never hallucinate libraries not listed in `pubspec.yaml`.
 - **Explanatory:** When writing complex logic (especially in `LayoutEngine`), add an inline `// Reason: ...` comment explaining the *why*, not just the *what*.
 - **Budget-Driven:** Every change to a hot path must be justified against the performance budgets in §5bis. "It looks faster" is not an argument; op counts and rebuild counts are.
+- **Single-Holder Audit:** whenever you touch a single-holder state slot (a pending request, a safety cap, an iteration budget), define explicitly *what fires when it is replaced, broken, or exhausted* — and who depends on that firing. Three shipped bugs came from silent transitions: the pending nest request (overwritten without abandoning → stranded conversions), the cascade safety cap (broken silently in release → overlapping layouts), the placement budget (exhausted into a silent fallback → single-column tails). Silence on a state transition is a bug until proven otherwise.
 
 ## 2. Tech Stack
 - **Language:** Dart (Strong mode).
@@ -53,6 +54,7 @@ The project follows a strict separation of concerns. **Do not violate layer boun
 - **Smart Caching Strategy ("The Firewall"):**
   - `DashboardItem` caches **only the user content** (`_cachedWidget`) inside a `RepaintBoundary`. The outer interaction shell (Focus/Border) is rebuilt on state changes.
   - **Rule:** Never remove `RepaintBoundary` or the `contentSignature` signature check in `didUpdateWidget`.
+  - **Rule — Edit-Mode Never Invalidates:** edit-mode toggles must NOT invalidate `_cachedWidget` (chrome lives outside the cache). Tiles reacting to edit state use `controller.isEditing.watch(context)` (state_beacon is re-exported by the barrel).
   - **Rule — Allocation-Free Shell:** `Actions` maps and shortcut maps are per-`State` cached (`late final` + config-keyed cache). Never build maps/closures inside `build()` of `DashboardItem`.
 - **Minimap:** two-layer painting is mandatory: items layer (`RepaintBoundary`, batched `Path`, repaint only on layout instance change) + viewport painter bound via `super(repaint: scrollController)`. Never merge them back into one painter; never repaint items on scroll.
 - **Painters:** every `CustomPainter` parameter type must have value `==`/`hashCode` (see `SlotMetrics`) so `shouldRepaint` can short-circuit. `shouldRepaint => true` is forbidden.
@@ -75,6 +77,7 @@ The project follows a strict separation of concerns. **Do not violate layer boun
 - **Files:** `dashboard_nested_scope.dart` (scope + coordinator + `CrossGridDragTarget` interface), `nested_dashboard.dart`, `nested_layout_codec.dart`.
 - **Coordinator is control-plane only:** it routes between `CrossGridDragTarget`s and calls controller methods. It performs **no geometry** (geometry lives in overlays) and **no layout math** (layout lives in controllers/engine). Keep it that way.
 - **Session state machine:** `beginSession` (silent exit + proxy) → `updateSession` per move (leave/enter between grids, `foreignDragOver` on the hovered one, `subGridDynamic` arming) → `dropSession`/`cancelSession`. The **source overlay drives every event** (Flutter routes all moves/up to the pointer-down hit path); never try to "hand over" the pointer to the target overlay.
+- **Nest-Request Lifecycle (INVARIANT):** at most ONE pending `onNestedGridRequested`. Arming a new host fires `onNestedGridRequestAbandoned` for the previous unconfirmed request immediately (live during the drag); same-host re-fires are exempted by the identity guard (host id + grid instance) — never remove it (hover-jitter flicker). The `host` argument of both callbacks is the ARMED-TIME snapshot: restorations use its id AND geometry, never the item's current grid state.
 - **Origin re-entry is symmetric:** after exit, the origin is just another target; dropping home resolves `returned`. Do not special-case it with a "resume native drag" path.
 - **`targetAt` Target Filtering (INVARIANT):** `targetAt` must never return a candidate target grid that is a child or deep descendant of the parent item actively being dragged (recursion/visual glitch prevention).
   - **Recursive Nesting Safeguard:** This lookup is strictly checked using `isDescendantOf`, walking up the hierarchy using the coordinator's persistent `_childLinks` map to guarantee correctness even when segments of the parent hierarchy are unmounted or virtualized.
