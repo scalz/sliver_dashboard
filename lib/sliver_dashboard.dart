@@ -1,3 +1,5 @@
+export 'package:state_beacon/state_beacon.dart';
+
 export 'src/controller/dashboard_controller_interface.dart';
 export 'src/controller/dashboard_controller_provider.dart';
 export 'src/engine/layout_engine.dart';

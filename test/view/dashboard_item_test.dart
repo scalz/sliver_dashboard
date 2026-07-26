@@ -375,4 +375,103 @@ void main() {
       expect(resolved.last, 'wide');
     });
   });
+
+  group('Edit-mode toggle — tile content survival contract', () {
+    testWidgets(
+        'toggling edit does NOT rebuild tile content; edit '
+        'interactions stay functional', (tester) async {
+      final controller = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: const [
+          LayoutItem(id: 'a', x: 0, y: 0, w: 2, h: 2),
+          LayoutItem(id: 'b', x: 2, y: 0, w: 2, h: 2),
+        ],
+      );
+      addTearDown(controller.dispose);
+      final sc = ScrollController();
+      addTearDown(sc.dispose);
+      var builds = 0;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Dashboard<String>(
+              controller: controller,
+              scrollController: sc,
+              itemBuilder: (context, item) {
+                builds++;
+                return Text(item.id);
+              },
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final baseline = builds;
+
+      controller.setEditMode(true);
+      await tester.pumpAndSettle();
+      controller.setEditMode(false);
+      await tester.pumpAndSettle();
+      expect(builds, baseline, reason: 'content cache must survive edit toggles');
+
+      // The chrome (outside the cache) still reacts: a drag in edit mode
+      // moves the tile.
+      controller.setEditMode(true);
+      await tester.pumpAndSettle();
+      controller.internal
+        ..onDragStart('a')
+        ..onDragUpdate(
+          'a',
+          const Offset(400, 0),
+          slotWidth: 100,
+          slotHeight: 100,
+          mainAxisSpacing: 0,
+          crossAxisSpacing: 0,
+        )
+        ..onDragEnd('a');
+      await tester.pumpAndSettle();
+      final a = controller.layout.value.firstWhere((i) => i.id == 'a');
+      expect(a.x, greaterThan(0), reason: 'edit-mode drag still functional');
+    });
+
+    testWidgets(
+        'the supported reactive pattern: a tile watching isEditing '
+        'rebuilds on toggle', (tester) async {
+      final controller = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: const [LayoutItem(id: 'a', x: 0, y: 0, w: 2, h: 2)],
+      );
+      addTearDown(controller.dispose);
+      final sc = ScrollController();
+      addTearDown(sc.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Dashboard<String>(
+              controller: controller,
+              scrollController: sc,
+              itemBuilder: (context, item) => Builder(
+                builder: (context) => Text(
+                  controller.isEditing.watch(context) ? '${item.id}:edit' : '${item.id}:view',
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('a:view'), findsOneWidget);
+
+      controller.setEditMode(true);
+      await tester.pumpAndSettle();
+      expect(
+        find.text('a:edit'),
+        findsOneWidget,
+        reason: 'watch(context) inside the tile is the supported way to '
+            'react to edit mode',
+      );
+    });
+  });
 }

@@ -111,7 +111,6 @@ class _DashboardItemState extends State<DashboardItem>
   // Cache lazy initialization
   Widget? _cachedWidget;
   late int _lastSignature;
-  late bool _lastIsEditing;
   double? _lastWidth;
   double? _lastHeight;
   int? _lastSlotCount;
@@ -145,7 +144,6 @@ class _DashboardItemState extends State<DashboardItem>
     // We initialize the tracking variables, but NOT the widget itself.
     // The widget will be built in the build() method where context is valid.
     _lastSignature = widget.item.contentSignature;
-    _lastIsEditing = widget.isEditing;
     _lastWidth = widget.itemWidth;
     _lastHeight = widget.itemHeight;
     _lastSlotCount = widget.slotCount;
@@ -163,7 +161,6 @@ class _DashboardItemState extends State<DashboardItem>
 
     final newSignature = widget.item.contentSignature;
     final signatureChanged = newSignature != _lastSignature;
-    final editingChanged = widget.isEditing != _lastIsEditing;
 
     // Invalidate cache on dimension changes if sub-pixel or breakpoint builders are active.
     var dimensionsChanged = widget.trackDimensions &&
@@ -182,7 +179,6 @@ class _DashboardItemState extends State<DashboardItem>
     // subtree keeps the dimensions it was built with.
     if (dimensionsChanged &&
         !signatureChanged &&
-        !editingChanged &&
         widget.itemBreakpointBuilder != null &&
         widget.itemLayoutBuilder == null &&
         _lastWidth != null &&
@@ -210,10 +206,9 @@ class _DashboardItemState extends State<DashboardItem>
       }
     }
 
-    if (signatureChanged || editingChanged || dimensionsChanged) {
+    if (signatureChanged || dimensionsChanged) {
       _cachedWidget = null; // Invalidate cache
       _lastSignature = newSignature;
-      _lastIsEditing = widget.isEditing;
       _lastWidth = widget.itemWidth;
       _lastHeight = widget.itemHeight;
       _lastSlotCount = widget.slotCount;
