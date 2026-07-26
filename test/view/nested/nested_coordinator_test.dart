@@ -1684,4 +1684,66 @@ void main() {
     expect(stashed!.slotCount, 2);
     expect(stashed.items.single.id, 'n1');
   });
+
+  group('Nest request lifecycle — sequential arming', () {
+    late DashboardNestedCoordinator coordinator;
+    late DashboardController grid;
+    late List<(String, DashboardController)> abandoned;
+    const hostA = LayoutItem(id: 'leaf1', x: 0, y: 0, w: 2, h: 2);
+    const hostB = LayoutItem(id: 'leaf2', x: 2, y: 0, w: 2, h: 2);
+
+    setUp(() {
+      coordinator = DashboardNestedCoordinator();
+      grid = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: const [hostA, hostB],
+      );
+      abandoned = [];
+      coordinator.onNestedGridRequestAbandoned =
+          (host, hostGrid) => abandoned.add((host.id, hostGrid));
+    });
+
+    tearDown(() => grid.dispose());
+
+    test('arming a NEW host abandons the previous one immediately', () {
+      coordinator.notifyNestRequestFired(hostA, grid);
+      expect(abandoned, isEmpty);
+
+      // Pointer moves to leaf2: leaf1's request must be abandoned NOW —
+      // live during the drag — so the app reverts its conversion.
+      coordinator.notifyNestRequestFired(hostB, grid);
+      expect(abandoned, [('leaf1', grid)]);
+
+      // Drop lands nowhere: leaf2 is abandoned too. Nothing stays stuck.
+      coordinator.resolveNestRequest(null);
+      expect(abandoned, [('leaf1', grid), ('leaf2', grid)]);
+    });
+
+    test('confirming the LAST host still abandons the earlier one only', () {
+      coordinator.notifyNestRequestFired(hostA, grid);
+      coordinator.notifyNestRequestFired(hostB, grid);
+      expect(abandoned, [('leaf1', grid)]);
+
+      // The drop lands in leaf2's freshly-mounted child grid: confirmed.
+      final childB = DashboardController(initialSlotCount: 2);
+      addTearDown(childB.dispose);
+      coordinator.linkChildGrid(
+        parent: grid,
+        parentItemId: 'leaf2',
+        child: childB,
+      );
+      coordinator.resolveNestRequest(childB);
+      expect(abandoned, [('leaf1', grid)], reason: 'leaf2 was confirmed: no further abandonment');
+    });
+
+    test('re-arming the SAME host does not flicker an abandon/rearm', () {
+      coordinator.notifyNestRequestFired(hostA, grid);
+      // Hover jitter re-fires for the same host: must be a no-op.
+      coordinator.notifyNestRequestFired(hostA, grid);
+      expect(abandoned, isEmpty, reason: 'same-host re-fire must not revert the conversion');
+
+      coordinator.resolveNestRequest(null);
+      expect(abandoned, [('leaf1', grid)]);
+    });
+  });
 }

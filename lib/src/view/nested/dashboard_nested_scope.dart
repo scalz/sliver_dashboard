@@ -200,6 +200,12 @@ class DashboardNestedCoordinator {
   /// request a dynamic nested grid (see [subGridDynamic]).
   DashboardNestedGridRequestCallback? onNestedGridRequested;
 
+  /// Contract note: host is the item snapshot taken WHEN THE REQUEST
+  /// ARMED — original id, original geometry, before any conversion or
+  /// sizeToContent growth. Reverting a speculative conversion should
+  /// restore from this snapshot (id and w/h), not from the item's current
+  /// state on the grid.
+  ///
   /// Fired when a [onNestedGridRequested] request is abandoned: the drag
   /// ended without the dragged item landing in the child grid of the
   /// requested host. Use it to revert a speculative conversion (delete the
@@ -216,6 +222,18 @@ class DashboardNestedCoordinator {
   /// Records that [onNestedGridRequested] has fired for [host] in
   /// [hostGrid]. Called by both arming paths right before the callback.
   void notifyNestRequestFired(LayoutItem host, DashboardController hostGrid) {
+    final previous = _pendingNestRequest;
+    if (previous != null &&
+        !(previous.host.id == host.id && identical(previous.hostGrid, hostGrid))) {
+      // Single-candidate semantics: arming a NEW host abandons the previous
+      // unconfirmed request right away, so the app reverts its conversion
+      // live during the drag. Without this, the pending slot was silently
+      // overwritten: hovering host A then host B left A converted forever —
+      // its abandonment callback never fired on drop, wherever the item
+      // landed. Re-arming the SAME host (hover jitter re-fire) must not
+      // abandon-and-rearm, which would flicker a revert/reconvert.
+      onNestedGridRequestAbandoned?.call(previous.host, previous.hostGrid);
+    }
     _pendingNestRequest = (host: host, hostGrid: hostGrid);
   }
 

@@ -147,7 +147,11 @@ class _NestedExamplePageState extends State<NestedExamplePage> {
     coordinator.unlinkChildGrid(child);
     hostGrid.updateItem(
       host.id,
-      (i) => i.copyWith(hasNestedGrid: false),
+      // `host` is the item AS IT WAS WHEN THE REQUEST ARMED: restoring its
+      // geometry too undoes any sizeToContent growth the speculative child
+      // grid caused mid-drag (shrinking can never collide, so
+      // recompact: false stays safe under every compaction mode).
+      (i) => i.copyWith(hasNestedGrid: false, w: host.w, h: host.h),
       recompact: false,
     );
     // The NestedDashboard for this host may still be mounted this frame.
