@@ -51,6 +51,7 @@ typedef DashboardItemDroppedOnHostCallback = void Function(
   List<LayoutItem> draggedItems,
   LayoutItem host,
   DashboardController hostGrid,
+  DashboardController sourceGrid,
 );
 
 /// Callback signature for custom item dimension projection when dragging across asymmetrical grids.
@@ -236,6 +237,12 @@ class DashboardNestedCoordinator {
   /// returns to its pre-drag state, so nothing lands on the parent grid)
   /// and this callback runs. Hosts whose child grid IS mounted keep the
   /// regular cross-grid entry instead.
+  ///
+  /// Works for same-grid drags AND for items dragged out of another grid
+  /// (including a nested one): in both cases the dragged items end up back
+  /// where they started, and `sourceGrid` tells you which grid that is —
+  /// consume them with `sourceGrid.removeItems(...)`. For a same-grid drop,
+  /// `sourceGrid` and `hostGrid` are the same controller.
   ///
   /// An overlay-level `onItemDroppedOnHost` takes precedence over this one,
   /// which serves as the scope-wide default.
@@ -801,11 +808,53 @@ class DashboardNestedCoordinator {
 
     final projectedItem = _projectedItemFor(session, over);
 
+    // One hit test shared by the two hover features below, so enabling both
+    // costs no more probes per pointer event than enabling one.
+    final dropTargetsEnabled = onItemDroppedOnHost != null;
+    final dynamicNestEnabled = subGridDynamic && onNestedGridRequested != null;
+    final hoveredHost = (dropTargetsEnabled || dynamicNestEnabled)
+        ? over.itemAtGlobal(probePoint, excludeId: session.item.id)
+        : null;
+
+    // Drop targets: a closed host (declared nested but with no mounted child
+    // grid) or an explicit [LayoutItem.isDropTarget] tile SWALLOWS the drop
+    // instead of receiving a placement. Same freeze + highlight treatment as
+    // the subGridDynamic arming below, but resolved on release rather than
+    // after a timer — there is nothing to wait for.
+    if (dropTargetsEnabled) {
+      final host = hoveredHost;
+      final isTarget = host != null &&
+          !host.isSectionBarrier &&
+          // A MOUNTED child grid owns the interaction: the pointer must be
+          // able to enter it for a real cross-grid drop.
+          !hasChildGrid(over.controller, host.id) &&
+          (host.isDropTarget || host.hasNestedGrid);
+      if (isTarget) {
+        if (session.dropTargetHostId != host.id) {
+          // Arming a target cancels any pending nest arming: the two are
+          // mutually exclusive readings of the same pointer position.
+          _clearNestHover(session);
+          _clearDropTarget(session);
+          session
+            ..dropTargetHostId = host.id
+            ..dropTargetOver = over;
+          over
+            ..foreignDragLeave() // freeze: no placement preview over a target
+            ..setNestHoverHighlight(host.id);
+        }
+        return; // frozen: the release resolves as onItemDroppedOnHost
+      }
+      if (session.dropTargetHostId != null) {
+        // Left the target: the placeholder resumes below.
+        _clearDropTarget(session);
+      }
+    }
+
     // subGridDynamic: hovering a plain item (that hosts no grid yet) freezes
     // the placeholder and arms the nested-grid request after [nestHoverDelay].
-    if (subGridDynamic && onNestedGridRequested != null) {
+    if (dynamicNestEnabled) {
       final overReg = registrationOf(over.controller);
-      final host = over.itemAtGlobal(probePoint, excludeId: session.item.id);
+      final host = hoveredHost;
       // An item is a candidate for dynamic nesting only if it is dynamic, does
       // not already host a grid (checked via the live link map and the
       // declarative [LayoutItem.hasNestedGrid] flag), and its grid may host one
@@ -814,6 +863,7 @@ class DashboardNestedCoordinator {
           !host.isStatic &&
           !host.isSectionBarrier &&
           !host.hasNestedGrid &&
+          !host.isDropTarget &&
           !hasChildGrid(over.controller, host.id) &&
           (overReg == null || canHostAtDepth(overReg.depth));
 
@@ -875,6 +925,36 @@ class DashboardNestedCoordinator {
     final over = session.over;
     final originImpl = session.origin.controller.internal;
 
+    // Released over a drop target: the item goes HOME (the source grid is
+    // restored to its pre-drag layout, exactly like the same-grid drop-target
+    // semantics) and the app decides what the drop means. Nothing is placed
+    // in the hovered grid, and the callback runs AFTER the session is torn
+    // down so it may freely mutate either grid.
+    final dropHostId = session.dropTargetHostId;
+    final dropOver = session.dropTargetOver;
+    if (dropHostId != null && dropOver != null) {
+      LayoutItem? host;
+      for (final i in dropOver.controller.layout.value) {
+        if (i.id == dropHostId) {
+          host = i;
+          break;
+        }
+      }
+      _clearDropTarget(session);
+      resolveNestRequest(null);
+      originImpl.finishCrossGridExit(outcome: CrossGridExitOutcome.canceled);
+      _clearSession(restoreOrigin: false); // already restored above
+      if (host != null) {
+        onItemDroppedOnHost?.call(
+          [session.item],
+          host,
+          dropOver.controller,
+          session.origin.controller,
+        );
+      }
+      return null;
+    }
+
     LayoutItem? placed;
     if (over != null) {
       // Same memoized projection as updateSession, so the placeholder
@@ -907,9 +987,17 @@ class DashboardNestedCoordinator {
     final session = _session;
     if (session == null) return;
     resolveNestRequest(null);
+    _clearDropTarget(session);
     session.over?.foreignDragLeave();
     session.origin.controller.internal.finishCrossGridExit(outcome: CrossGridExitOutcome.canceled);
     _clearSession(restoreOrigin: false);
+  }
+
+  void _clearDropTarget(_CrossGridSession session) {
+    session.dropTargetOver?.setNestHoverHighlight(null);
+    session
+      ..dropTargetOver = null
+      ..dropTargetHostId = null;
   }
 
   void _clearNestHover(_CrossGridSession session) {
@@ -927,6 +1015,7 @@ class DashboardNestedCoordinator {
     final session = _session;
     if (session == null) return;
     _clearNestHover(session);
+    _clearDropTarget(session);
     if (restoreOrigin) {
       session.origin.controller.internal
           .finishCrossGridExit(outcome: CrossGridExitOutcome.canceled);
@@ -1042,6 +1131,12 @@ class _CrossGridSession {
   final OverlayEntry? proxyEntry;
 
   CrossGridDragTarget? over;
+
+  // Drop-target hover state (closed host / isDropTarget tile in the hovered
+  // grid). Mutually exclusive with the nest-hover state below: a tile that
+  // swallows the drop is never also a speculative nest candidate.
+  String? dropTargetHostId;
+  CrossGridDragTarget? dropTargetOver;
 
   // subGridDynamic hover state
   String? nestHoverId;

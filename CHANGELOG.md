@@ -1,3 +1,31 @@
+## 2.4.0
+
+### Features
+- **Closed hosts & custom drop targets (`onItemDroppedOnHost`)**: a tile can
+  now receive dropped items WITHOUT rendering a nested grid — closed folder
+  icons, archive tiles, compact badges.
+  - **Target predicate**: a tile is a drop target when flagged `LayoutItem.isDropTarget`,
+    or when `hasNestedGrid: true` while its child grid is NOT mounted (closed folder).
+    Hosts with a mounted child grid keep regular cross-grid entry.
+  - **Same-grid & Cross-grid**: works for drags within the same grid AND items dragged
+    out of another grid (e.g., pulling a tile out of an open folder and dropping
+    it directly onto a closed folder in a parent or sibling grid).
+  - **Hover & Release**: while hovered, layout pushes freeze so the target stays under
+    the cursor and shows the nest highlight (stylable via `DashboardItemStyle.nestTargetColor` /
+    `nestTargetDecoration`). On release, the pre-drag layout is restored (nothing lands
+    on the grid) and `onItemDroppedOnHost` runs with `(draggedItems, host, hostGrid, sourceGrid)`.
+  - **Pointer targeting**: targeting is by pointer position, allowing dragged items
+    to be larger than the target.
+  - **Zero cost**: available on `Dashboard`/`DashboardOverlay` (no nesting required) with
+    `DashboardNestedScope.onItemDroppedOnHost` as a scope-wide default. Zero overhead when
+    no callback is registered.
+
+- **Example & Documentation**: upgraded `nested_example.dart` to demonstrate
+  size-driven collapsible folders (`itemBreakpointBuilder` + `_HostSize.mini` +
+  `onItemDroppedOnHost`). Shrinking a folder to 1 slot collapses it into an
+  interactive drop-target icon; dropping notes onto it files them away, and
+  enlarging reopens the nested grid with contents intact. Added full test suite.
+
 ## 2.3.1
 
 ### Fixes

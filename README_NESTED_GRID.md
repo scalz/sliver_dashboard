@@ -17,23 +17,23 @@ final root   = DashboardController(initialLayout: [...]);
 final group1 = DashboardController(initialLayout: [...]);
 
 DashboardNestedScope(
-  onItemMovedToGrid: (item, from, to) => persist(),
-  child: Dashboard(
-    controller: root,
-    itemBuilder: (context, item) {
-      // Branch on the declarative flag (LayoutItem.hasNestedGrid) rather
-      // than on ids: hosts stay portable between grids and across save/load.
-      if (item.hasNestedGrid) {
-        return NestedDashboard(
-          controller: group1,
-          parentItemId: item.id,       // required: links the tree
-          itemBuilder: buildLeafItem,
-          sizeToContent: true,         // host grows/shrinks with content
-        );
-      }
-      return buildLeafItem(context, item);
-    },
-  ),
+onItemMovedToGrid: (item, from, to) => persist(),
+child: Dashboard(
+controller: root,
+itemBuilder: (context, item) {
+// Branch on the declarative flag (LayoutItem.hasNestedGrid) rather
+// than on ids: hosts stay portable between grids and across save/load.
+if (item.hasNestedGrid) {
+return NestedDashboard(
+controller: group1,
+parentItemId: item.id,       // required: links the tree
+itemBuilder: buildLeafItem,
+sizeToContent: true,         // host grows/shrinks with content
+);
+}
+return buildLeafItem(context, item);
+},
+),
 )
 ```
 
@@ -59,6 +59,9 @@ That's all: with both grids in edit mode, items drag seamlessly in and out of
   - `DashboardNestedScope` / `DashboardNestedCoordinator` — registry
     (depth-ordered), pointer claim, cross-grid session state machine, proxy,
     tree links, stash. O(G) per pointer event, G = number of live grids.
+    Also resolves **drop targets** during a session (§5quinquies): the hovered
+    item is probed once per event and shared with the `subGridDynamic` arming,
+    and the two hover states are mutually exclusive.
   - `DashboardOverlay` — implements `CrossGridDragTarget`; **hit-test
     ownership fix** (entries from a nested sliver are skipped so the parent
     resolves to its own host item instead of crashing on a foreign id);
@@ -72,6 +75,8 @@ That's all: with both grids in edit mode, items drag seamlessly in and out of
 
 - Without a scope: 1 null-check in `_onPointerDown`, 1 in `_onPointerMove`, 1
   in `_performUpdate`. No allocation, no registry.
+- Without an `onItemDroppedOnHost` callback: the drop-target resolver returns
+  on a single null-check, so §5quinquies costs nothing per pointer event.
 - With a scope: `targetAt` is O(G) point-in-rect tests per pointer event
   (G = live grids, typically 2–5) — control-plane cost, never per item.
 - During a cross-grid hover, the hovered grid runs exactly the pre-existing
@@ -113,6 +118,67 @@ Payloads for grids that are not mounted yet are stashed and applied
 automatically when their `NestedDashboard` mounts. **Item ids must be unique
 across the whole tree** (the same invariant cross-grid moves rely on; asserted
 in debug on `moveItemToGrid`).
+
+## 5quinquies. Drop targets — closed hosts & custom tiles
+
+A tile can **receive** dropped items without rendering a nested grid: a closed
+folder icon, an archive bin, an "add to group" badge. This is the counterpart
+of `subGridDynamic`: there, hovering *creates* a grid; here, the tile swallows
+the drop and nothing is created.
+
+```dart
+DashboardNestedScope(
+  onItemDroppedOnHost: (draggedItems, host, hostGrid, sourceGrid) {
+    // The layout is already back to its pre-drag state: nothing landed on
+    // any grid, and the items are still in the grid the drag started from.
+    sourceGrid.removeItems(draggedItems.map((i) => i.id).toList());
+    myFolderModel.addAll(host.id, draggedItems);
+  },
+  child: ...,
+)
+```
+
+A tile is a drop target when either:
+
+- it carries `hasNestedGrid: true` **while its child grid is not mounted** —
+  a *closed* host. The mounted case is deliberately excluded: there the
+  pointer can enter the child sliver, and the regular cross-grid session owns
+  the interaction. This is what makes collapsible folders work: mount the
+  `NestedDashboard` and the tile is a grid; render something else (an icon)
+  and the same tile is a drop target — see the `nested2` example, which
+  drives the swap from an `itemBreakpointBuilder`;
+- or it is flagged `LayoutItem(isDropTarget: true)` — an explicit target,
+  which needs no nesting at all (`Dashboard.onItemDroppedOnHost` works
+  without a scope for that case).
+
+**Collapsing is an app decision.** `NestedDashboard` deliberately does *not*
+unlink on unmount (sliver virtualization unmounts it whenever the host leaves
+the viewport, and the link must survive that). So when you swap a mounted
+grid for a closed-folder rendering, call
+`coordinator.unlinkChildGrid(childController)` yourself — expanding re-links
+automatically when `NestedDashboard` mounts again. Keep the child controller
+alive (own it in your `State`) so the contents survive the round trip.
+
+**Interaction model.** While a target is hovered, layout pushes freeze so it
+stays under the cursor, the placement preview is withdrawn (the item must
+never look like it is about to land where it will be swallowed), and the tile
+shows the nest highlight — stylable via `DashboardItemStyle(nestTargetColor:
+..., nestTargetDecoration: ...)`. Targeting is by **pointer position**, so the
+dragged item may be larger than the target. On release the drag resolves as a
+silent exit: the items go back where they started and the callback decides
+what the drop means — doing nothing rejects it, and they simply stay home.
+
+**Same-grid and cross-grid.** Both work: an item pulled out of an open folder
+(or any sibling grid) can be filed straight into a closed one. Same-grid drags
+resolve in the overlay; cross-grid drags resolve in the coordinator's session,
+through the existing `CrossGridExitOutcome.canceled` path — no new transaction
+state, so the "at most one `onLayoutChanged` per grid per cross-grid gesture"
+invariant is untouched. `sourceGrid` (4th argument) is the grid holding the
+items now, `hostGrid` the one owning the target tile; for a same-grid drop
+they are the same controller.
+
+An `isDropTarget` tile never arms `subGridDynamic`: an explicit target must
+not also be a speculative nest candidate.
 
 ## 5quater-bis. Same-grid dynamic nesting (`subGridDynamicSameGrid`)
 
@@ -168,7 +234,9 @@ groups draggable between grids without id coupling; persistence through plain
 an item to/from a host invalidates its cached widget and the builder swap
 takes effect immediately. The nested codec keeps it consistent automatically:
 exports set it on linked hosts, imports set it on items carrying a `subGrid`
-payload. `subGridDynamic` never arms on a flagged item. Note it remains
+payload. `subGridDynamic` never arms on a flagged item — and a flagged item whose child
+grid is **not mounted** is treated as a closed host, i.e. a drop target
+(§5quinquies). Note it remains
 *declarative*: the runtime source of truth for "which grids exist" is the
 coordinator's link map — the flag complements it, it does not replace it.
 

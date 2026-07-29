@@ -1044,6 +1044,48 @@ their grid), and item ids must be unique across the tree. See
 [`README_NESTED_GRID.md`](README_NESTED_GRID.md) for the full guide and
 documented behaviors.
 
+#### Drop targets: closed folders & custom tiles
+
+A tile can receive dropped items **without showing a nested grid** — closed
+folder icons, archive bins, "add to group" badges:
+
+```dart
+Dashboard<String>(
+  controller: controller,
+  scrollController: scrollController,
+  onItemDroppedOnHost: (draggedItems, host, hostGrid, sourceGrid) {
+    // The layout is already back to its pre-drag state: nothing landed on
+    // the grid, and the items are still in the grid the drag started from.
+    // You decide what the drop means.
+    sourceGrid.removeItems(draggedItems.map((i) => i.id).toList());
+    myFolderModel.addAll(host.id, draggedItems);
+  },
+  itemBuilder: (context, item) => MyTile(item),
+)
+```
+
+A tile is a drop target when either:
+
+- it is flagged `LayoutItem(isDropTarget: true)` — an explicit target, or
+- it carries `hasNestedGrid: true` **while its child grid is not mounted** —
+  a closed folder. Once the child grid is mounted, the regular cross-grid
+  drag owns the interaction instead.
+
+While a target is hovered, layout pushes freeze so it stays under the
+cursor and it shows the nest highlight, stylable via
+`DashboardItemStyle(nestTargetColor: ..., nestTargetDecoration: ...)`.
+Targeting is by **pointer position**, so the dragged item may be larger than
+the target. Doing nothing in the callback rejects the drop: the items simply
+return home. Set `DashboardNestedScope.onItemDroppedOnHost` instead for a
+scope-wide default. Costs nothing while no callback is registered.
+
+This works for drags started in the same grid **and** for items dragged out
+of another grid — including a nested one, so a tile can be pulled out of an
+open folder and filed straight into a closed one. In both cases the items
+end up back where the drag started, which is why the callback hands you
+`sourceGrid` (the grid holding them now) alongside `hostGrid` (the grid
+owning the target tile); for a same-grid drop they are the same controller.
+
 #### Multi-Sliver Drag & Drop (Sibling Grids)
 
 <p align="center">

@@ -605,3 +605,28 @@ overlay (`_dropTargetAt`), which owns pointer handling:
 - **Arming exclusion:** `isDropTarget` items are excluded from the
   `subGridDynamic` arming predicate — an explicit target must never also be
   a speculative nest candidate (two mechanisms competing on one tile).
+**Cross-grid path (same feature, other entry point).** A drag coming from
+another grid — including a nested one — is owned by the coordinator's
+session, not by the source overlay, so the target resolution lives in
+`updateSession`:
+
+- The hovered item is probed ONCE per pointer event and shared by the
+  drop-target check and the `subGridDynamic` arming (`hoveredHost`), so
+  enabling both costs no extra hit test.
+- Arming a target calls `foreignDragLeave()` (the placement preview is
+  withdrawn — the user must never see the item about to land where it will
+  be swallowed) plus `setNestHoverHighlight`, then returns before
+  `foreignDragOver`. Leaving the target clears both and the preview resumes
+  on the same event. A pending nest arming and a pending drop target are
+  mutually exclusive: arming one clears the other.
+- **Resolution reuses an EXISTING outcome — no fourth transaction state.**
+  `dropSession` resolves the exit as `CrossGridExitOutcome.canceled`: the
+  item goes home to its source grid, exactly like the same-grid semantics
+  ("pre-drag layout restored, the app decides"). The "at most one
+  `onLayoutChanged` per grid per cross-grid gesture" invariant is therefore
+  untouched. The callback runs AFTER `_clearSession`, so it may freely
+  mutate either grid.
+- **`sourceGrid` (4th callback argument)** exists for this path: the items
+  are back in the grid the drag started from, which is not `hostGrid`.
+  Consume with `sourceGrid.removeItems(...)`; for a same-grid drop both
+  arguments are the same controller.

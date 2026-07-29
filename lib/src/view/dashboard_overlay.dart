@@ -239,6 +239,8 @@ class DashboardOverlay<T extends Object> extends StatefulWidget {
   /// nothing, …). Targeting is by POINTER position, so the dragged item may
   /// be larger than the target.
   ///
+  /// Handles same-grid drags; drags coming from ANOTHER grid (including a
+  /// nested one) are routed by the coordinator to the scope-wide callback.
   /// Falls back to `DashboardNestedScope.onItemDroppedOnHost` when null.
   /// Zero cost per pointer move while both are null.
   final DashboardItemDroppedOnHostCallback? onItemDroppedOnHost;
@@ -1462,7 +1464,13 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
           ..setNestTargetHover(null);
         _dropTargetHostId = null;
         if (host != null) {
-          _dropOnHostCallback?.call(dragged, host, widget.controller);
+          // Same-grid drop: source and host grid are the same controller.
+          _dropOnHostCallback?.call(
+            dragged,
+            host,
+            widget.controller,
+            widget.controller,
+          );
         }
         widget.onItemDragEnd?.call(currentItem);
         return;

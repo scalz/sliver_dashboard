@@ -2577,13 +2577,15 @@ void main() {
         // Assert the parts instead: expect() applies deep matchers to lists.
         final droppedIds = <List<String>>[];
         final droppedHosts = <String>[];
+        final droppedSources = <DashboardController>[];
         await tester.pumpWidget(
           host(
             controller: controller,
             scrollController: sc,
-            onDropped: (items, host, grid) {
+            onDropped: (items, host, grid, source) {
               droppedIds.add(items.map((i) => i.id).toList());
               droppedHosts.add(host.id);
+              droppedSources.add(source);
             },
           ),
         );
@@ -2593,6 +2595,11 @@ void main() {
 
         expect(droppedHosts, ['target']);
         expect(droppedIds.single, ['drag']);
+        expect(
+          identical(droppedSources.single, controller),
+          isTrue,
+          reason: 'a same-grid drop reports the same controller twice',
+        );
         // Silent exit: the dragged item is back at its origin, nothing was
         // placed on the target's cell, and the target never moved.
         final dragged = controller.layout.value.firstWhere((i) => i.id == 'drag');
@@ -2625,7 +2632,7 @@ void main() {
           host(
             controller: controller,
             scrollController: sc,
-            onDropped: (items, host, grid) => hosts.add(host.id),
+            onDropped: (items, host, grid, source) => hosts.add(host.id),
           ),
         );
         await tester.pumpAndSettle();
@@ -2655,7 +2662,7 @@ void main() {
           host(
             controller: controller,
             scrollController: sc,
-            onDropped: (items, host, grid) => hosts.add(host.id),
+            onDropped: (items, host, grid, source) => hosts.add(host.id),
           ),
         );
         await tester.pumpAndSettle();
@@ -2688,7 +2695,7 @@ void main() {
             controller: controller,
             scrollController: sc,
             useScope: true,
-            onDropped: (items, host, grid) => hosts.add(host.id),
+            onDropped: (items, host, grid, source) => hosts.add(host.id),
           ),
         );
         await tester.pumpAndSettle();
@@ -2717,7 +2724,8 @@ void main() {
           host(
             controller: controller,
             scrollController: sc,
-            onDropped: (items, host, grid) => reported = items.map((i) => i.id).toList()..sort(),
+            onDropped: (items, host, grid, source) =>
+                reported = items.map((i) => i.id).toList()..sort(),
           ),
         );
         await tester.pumpAndSettle();
@@ -2787,7 +2795,7 @@ void main() {
           host(
             controller: controller,
             scrollController: sc,
-            onDropped: (items, host, grid) => fired++,
+            onDropped: (items, host, grid, source) => fired++,
           ),
         );
         await tester.pumpAndSettle();
@@ -2848,7 +2856,7 @@ void main() {
           host(
             controller: controller,
             scrollController: sc,
-            onDropped: (items, host, grid) => hosts.add(host.id),
+            onDropped: (items, host, grid, source) => hosts.add(host.id),
           ),
         );
         await tester.pumpAndSettle();
@@ -2880,6 +2888,192 @@ void main() {
       });
     });
 
+    testWidgets(
+        'an item dragged OUT of another grid can be dropped on a '
+        'closed folder: it goes home and the callback reports both grids', (tester) async {
+      await runOnDesktop(() async {
+        final gridA = DashboardController(
+          initialSlotCount: 2,
+          initialLayout: const [LayoutItem(id: 'note', x: 0, y: 0, w: 1, h: 1)],
+        )..setEditMode(true);
+        addTearDown(gridA.dispose);
+        final gridB = DashboardController(
+          initialSlotCount: 2,
+          initialLayout: const [
+            LayoutItem(id: 'folder', x: 0, y: 0, w: 2, h: 2, hasNestedGrid: true),
+          ],
+        )..setEditMode(true);
+        addTearDown(gridB.dispose);
+        final scA = ScrollController();
+        addTearDown(scA.dispose);
+        final scB = ScrollController();
+        addTearDown(scB.dispose);
+
+        LayoutItem? reportedHost;
+        DashboardController? reportedHostGrid;
+        DashboardController? reportedSource;
+        List<String>? reportedIds;
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: DashboardNestedScope(
+                onItemDroppedOnHost: (items, host, hostGrid, sourceGrid) {
+                  reportedIds = items.map((i) => i.id).toList();
+                  reportedHost = host;
+                  reportedHostGrid = hostGrid;
+                  reportedSource = sourceGrid;
+                },
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Dashboard<String>(
+                        controller: gridA,
+                        scrollController: scA,
+                        itemBuilder: (context, item) => Text(item.id),
+                      ),
+                    ),
+                    Expanded(
+                      child: Dashboard<String>(
+                        controller: gridB,
+                        scrollController: scB,
+                        itemBuilder: (context, item) => Text(item.id),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        final gesture = await tester.startGesture(
+          tester.getCenter(find.text('note')),
+          kind: PointerDeviceKind.mouse,
+        );
+        await tester.pump(const Duration(milliseconds: 20));
+        // Cross into grid B, onto the closed folder.
+        await gesture.moveTo(tester.getCenter(find.text('folder')));
+        await tester.pump(const Duration(milliseconds: 20));
+        await gesture.moveTo(tester.getCenter(find.text('folder')));
+        await tester.pump(const Duration(milliseconds: 20));
+        await gesture.up();
+        await tester.pumpAndSettle();
+
+        expect(reportedIds, ['note']);
+        expect(reportedHost?.id, 'folder');
+        expect(
+          identical(reportedHostGrid, gridB),
+          isTrue,
+          reason: 'hostGrid is the grid owning the target tile',
+        );
+        expect(
+          identical(reportedSource, gridA),
+          isTrue,
+          reason: 'sourceGrid is where the item came from',
+        );
+
+        // The item went HOME: nothing was placed in grid B, and grid A is
+        // back to its pre-drag layout — the app owns the consumption.
+        expect(gridB.layout.value.length, 1);
+        expect(gridA.layout.value.map((i) => i.id), ['note']);
+        final note = gridA.layout.value.single;
+        expect((note.x, note.y), (0, 0));
+      });
+    });
+
+    testWidgets(
+        'leaving a cross-grid drop target restores the placement '
+        'preview and resolves as a normal cross-grid move', (tester) async {
+      await runOnDesktop(() async {
+        final gridA = DashboardController(
+          initialSlotCount: 2,
+          initialLayout: const [LayoutItem(id: 'note', x: 0, y: 0, w: 1, h: 1)],
+        )..setEditMode(true);
+        addTearDown(gridA.dispose);
+        // The folder occupies one cell only, leaving free space to leave to.
+        final gridB = DashboardController(
+          initialSlotCount: 2,
+          initialLayout: const [
+            LayoutItem(id: 'folder', x: 0, y: 0, w: 1, h: 1, hasNestedGrid: true),
+          ],
+        )..setEditMode(true);
+        addTearDown(gridB.dispose);
+        final scA = ScrollController();
+        addTearDown(scA.dispose);
+        final scB = ScrollController();
+        addTearDown(scB.dispose);
+
+        var fired = 0;
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: DashboardNestedScope(
+                onItemDroppedOnHost: (items, host, hostGrid, sourceGrid) => fired++,
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Dashboard<String>(
+                        controller: gridA,
+                        scrollController: scA,
+                        itemBuilder: (context, item) => Text(item.id),
+                      ),
+                    ),
+                    Expanded(
+                      child: Dashboard<String>(
+                        controller: gridB,
+                        scrollController: scB,
+                        itemBuilder: (context, item) => Text(item.id),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        final folderCenter = tester.getCenter(find.text('folder'));
+        final gesture = await tester.startGesture(
+          tester.getCenter(find.text('note')),
+          kind: PointerDeviceKind.mouse,
+        );
+        await tester.pump(const Duration(milliseconds: 20));
+
+        // Arm the target in grid B.
+        await gesture.moveTo(folderCenter);
+        await tester.pump(const Duration(milliseconds: 20));
+        await gesture.moveTo(folderCenter);
+        await tester.pump(const Duration(milliseconds: 20));
+        expect(
+          gridB.internal.hoveredNestTargetId.value,
+          'folder',
+          reason: 'hovering the target across grids highlights it',
+        );
+
+        // Leave the target, staying inside grid B: the highlight clears and
+        // the placement preview resumes.
+        await gesture.moveTo(folderCenter + const Offset(0, 160));
+        await tester.pump(const Duration(milliseconds: 20));
+        expect(
+          gridB.internal.hoveredNestTargetId.value,
+          isNull,
+          reason: 'the drop-target arming must be released on leave',
+        );
+
+        await gesture.up();
+        await tester.pumpAndSettle();
+
+        // Resolved as a regular cross-grid move: no callback, and the item
+        // now lives in grid B.
+        expect(fired, 0);
+        expect(gridB.layout.value.map((i) => i.id), contains('note'));
+        expect(gridA.layout.value.where((i) => i.id == 'note'), isEmpty);
+      });
+    });
+
     testWidgets('releasing over a plain tile never fires the callback', (tester) async {
       await runOnDesktop(() async {
         final controller = DashboardController(
@@ -2898,7 +3092,7 @@ void main() {
           host(
             controller: controller,
             scrollController: sc,
-            onDropped: (items, host, grid) => fired++,
+            onDropped: (items, host, grid, source) => fired++,
           ),
         );
         await tester.pumpAndSettle();

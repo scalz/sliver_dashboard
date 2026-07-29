@@ -1,9 +1,26 @@
-import 'dart:convert';
-
 import 'package:flutter/material.dart';
 import 'package:sliver_dashboard/sliver_dashboard.dart';
 
-/// Nested grids demo — a self-contained showcase of nested-grid capability.
+/// # Nested 2 — size-driven folders
+///
+/// Composes two features into one interaction:
+///
+///  * `itemBreakpointBuilder` + `breakpointResolver`: a host tile resolves to
+///    `_HostSize.mini` (1 slot in either axis) or `_HostSize.normal`, and its
+///    subtree is rebuilt ONLY when that value transitions — not on every
+///    pixel of a resize.
+///  * `onItemDroppedOnHost`: while a host renders collapsed, its child grid
+///    is detached, so the package treats the tile as a CLOSED HOST — a drop
+///    target. Items dropped on it go straight into the folder's controller
+///    without opening it.
+///
+/// Try it: grab a host's resize handle and shrink it to a single slot — it
+/// collapses into a folder icon showing its item count. Drag a note onto the
+/// collapsed folder: it disappears into it. Enlarge the folder again and the
+/// full nested grid comes back, contents intact (the child controller is
+/// owned by this State and never disposed on collapse).
+enum _HostSize { mini, normal }
+
 class NestedExamplePage extends StatefulWidget {
   const NestedExamplePage({super.key});
 
@@ -14,143 +31,169 @@ class NestedExamplePage extends StatefulWidget {
 class _NestedExamplePageState extends State<NestedExamplePage> {
   final coordinator = DashboardNestedCoordinator();
 
-  late final DashboardController root = DashboardController(
-    initialSlotCount: 8,
-    initialLayout: const [
-      LayoutItem(id: 'group', x: 0, y: 0, w: 4, h: 4, hasNestedGrid: true),
-      LayoutItem(id: 'leaf-1', x: 4, y: 0, w: 2, h: 2),
-      LayoutItem(id: 'leaf-2', x: 6, y: 0, w: 2, h: 2),
-      LayoutItem(id: 'leaf-3', x: 4, y: 2, w: 2, h: 2),
-    ],
-  )..setEditMode(true);
+  late final DashboardController root;
 
-  late final DashboardController group = DashboardController(
-    initialSlotCount: 4,
-    initialLayout: const [
-      LayoutItem(id: 'nested-1', x: 0, y: 0, w: 1, h: 1),
-      LayoutItem(id: 'nested-2', x: 1, y: 0, w: 1, h: 1),
-      LayoutItem(id: 'nested-3', x: 2, y: 0, w: 2, h: 1),
-    ],
-  )..setEditMode(true);
+  /// Folder controllers, owned by this State: collapsing a folder only
+  /// unmounts its widget, never disposes its controller, so the contents
+  /// survive any number of collapse/expand cycles.
+  final Map<String, DashboardController> folders = {};
 
-  /// Child controllers for grids created on the fly by [subGridDynamic],
-  /// keyed by the host item id. Kept so their layout survives virtualization.
-  final Map<String, DashboardController> _dynamicChildren = {};
-
-  final jsonController = TextEditingController();
-  final maxDepthController = TextEditingController();
-
-  /// null = unlimited nesting.
-  final maxNestingDepth = ValueNotifier<int?>(null);
-
+  /// Panel-driven configuration.
   final isEditing = ValueNotifier<bool>(true);
-  final sizeToContent = ValueNotifier<bool>(true);
-  final subGridDynamic = ValueNotifier<bool>(false);
-
-  /// Same-grid variant: pause the pointer mid-drag over a sibling leaf.
-  final subGridDynamicSameGrid = ValueNotifier<bool>(false);
+  final sizeToContent = ValueNotifier<bool>(false);
   final compactionType = ValueNotifier<CompactType>(CompactType.vertical);
+  final subGridDynamic = ValueNotifier<bool>(false);
+  final subGridDynamicSameGrid = ValueNotifier<bool>(false);
 
-  List<Map<String, dynamic>>? _savedTree;
+  /// Slot span at or below which a folder collapses. Exposed in the panel to
+  /// show that the breakpoint rule is entirely yours.
+  final miniThreshold = ValueNotifier<int>(1);
+
+  @override
+  void initState() {
+    super.initState();
+
+    root = DashboardController(
+      initialSlotCount: 6,
+      initialLayout: const [
+        // hasNestedGrid marks the intent; minW/minH: 1 is what makes the
+        // collapse reachable through the resize handles.
+        LayoutItem(
+          id: 'projects',
+          x: 0,
+          y: 0,
+          w: 3,
+          h: 3,
+          hasNestedGrid: true,
+          minW: 1,
+          minH: 1,
+        ),
+        LayoutItem(
+          id: 'archive',
+          x: 3,
+          y: 0,
+          w: 1,
+          h: 1,
+          hasNestedGrid: true,
+          minW: 1,
+          minH: 1,
+        ),
+        LayoutItem(id: 'note-1', x: 4, y: 0, w: 1, h: 1),
+        LayoutItem(id: 'note-2', x: 5, y: 0, w: 1, h: 1),
+        LayoutItem(id: 'note-3', x: 4, y: 1, w: 2, h: 1),
+      ],
+    )..setEditMode(true);
+
+    folders['projects'] = DashboardController(
+      initialSlotCount: 2,
+      initialLayout: const [
+        LayoutItem(id: 'task-a', x: 0, y: 0, w: 1, h: 1),
+        LayoutItem(id: 'task-b', x: 1, y: 0, w: 1, h: 1),
+      ],
+    )..setEditMode(true);
+
+    folders['archive'] = DashboardController(
+      initialSlotCount: 2,
+      initialLayout: const [LayoutItem(id: 'old-1', x: 0, y: 0, w: 1, h: 1)],
+    )..setEditMode(true);
+  }
 
   @override
   void dispose() {
+    for (final folder in folders.values) {
+      folder.dispose();
+    }
+    root.dispose();
     isEditing.dispose();
     sizeToContent.dispose();
+    compactionType.dispose();
     subGridDynamic.dispose();
     subGridDynamicSameGrid.dispose();
-    compactionType.dispose();
-    jsonController.dispose();
-    maxDepthController.dispose();
-    maxNestingDepth.dispose();
-    coordinator.dispose();
-    root.dispose();
-    group.dispose();
-    for (final c in _dynamicChildren.values) {
-      c.dispose();
-    }
+    miniThreshold.dispose();
     super.dispose();
   }
 
-  Iterable<DashboardController> get _allControllers => [
-    root,
-    group,
-    ..._dynamicChildren.values,
-  ];
-
   void _applyEditMode() {
-    for (final c in _allControllers) {
-      c.setEditMode(isEditing.value);
+    root.setEditMode(isEditing.value);
+    for (final folder in folders.values) {
+      folder.setEditMode(isEditing.value);
     }
-  }
-
-  /// Parses the depth text field. Empty/invalid -> unlimited (null); clamps
-  /// negatives to 0. Applied on submit so partial typing never fights the user.
-  void _setMaxDepthFromText(String raw) {
-    final text = raw.trim();
-    if (text.isEmpty) {
-      maxNestingDepth.value = null;
-      return;
-    }
-    final parsed = int.tryParse(text);
-    if (parsed == null) {
-      maxNestingDepth.value = null;
-      maxDepthController.clear();
-      return;
-    }
-    maxNestingDepth.value = parsed < 0 ? 0 : parsed;
   }
 
   void _applyCompactType() {
-    for (final c in _allControllers) {
-      c.setCompactionType(compactionType.value);
+    root.setCompactionType(compactionType.value);
+    for (final folder in folders.values) {
+      folder.setCompactionType(compactionType.value);
     }
   }
 
-  /// subGridDynamic: the user held a dragged item over [host] long enough to
-  /// request turning it into a nested grid. We create a controller for it,
-  /// flag the item, and move the dragged item into the new grid.
+  /// Programmatic collapse/expand — the same state change the resize handles
+  /// produce, useful when a host's minW/minH forbid shrinking by hand.
+  void _collapse(String id) =>
+      root.updateItem(id, (i) => i.copyWith(w: 1, h: 1), recompact: false);
+
+  void _expand(String id) => root.updateItem(id, (i) => i.copyWith(w: 3, h: 3));
+
+  /// The breakpoint. Keyed on the item's SLOT span rather than raw pixels:
+  /// the collapse must happen on a grid-cell boundary, not at an arbitrary
+  /// pixel width (the resolver also receives live `width`/`height` if a
+  /// pixel-driven rule fits your design better).
+  _HostSize _resolveHostSize(
+    double width,
+    double height,
+    LayoutItem item,
+    int slotCount,
+  ) {
+    final t = miniThreshold.value;
+    return (item.w <= t || item.h <= t) ? _HostSize.mini : _HostSize.normal;
+  }
+
+  /// subGridDynamic: a dragged item was held over a plain note long enough
+  /// to request turning it into a folder. We create its controller and flag
+  /// it — and, unlike the classic example, we also make sure the new host
+  /// clears the mini threshold: a 1x1 folder would render COLLAPSED, no
+  /// child grid would mount, and the held drag would have nowhere to land.
   void _onNestedGridRequested(
     LayoutItem host,
     LayoutItem dragged,
     DashboardController hostGrid,
   ) {
-    if (host.hasNestedGrid || _dynamicChildren.containsKey(host.id)) return;
+    if (host.hasNestedGrid || folders.containsKey(host.id)) return;
 
-    final child = DashboardController(initialSlotCount: host.w)
+    final open = miniThreshold.value + 1;
+    folders[host.id] = DashboardController(initialSlotCount: open)
       ..setEditMode(isEditing.value)
       ..setCompactionType(compactionType.value);
-    _dynamicChildren[host.id] = child;
 
-    // Flag the host so the builder swaps its content to a NestedDashboard.
-    // A metadata-only change, so recompact:false keeps the other items put.
     hostGrid.updateItem(
       host.id,
-      (i) => i.copyWith(hasNestedGrid: true),
+      (i) => i.copyWith(
+        hasNestedGrid: true,
+        w: i.w < open ? open : i.w,
+        h: i.h < open ? open : i.h,
+      ),
+      // Metadata + a one-slot growth: recompact:false keeps the neighbours
+      // still under the frozen drag preview, and the abandonment handler
+      // below restores the armed-time geometry if the drop never lands.
       recompact: false,
     );
     setState(() {});
     // No programmatic move: the held drag hands itself over to the freshly
-    // mounted child grid (next pointer move or the release itself), through
-    // the regular cross-grid session. A programmatic move here would even be
-    // harmful in the same-grid flow: the dragged item is still present in
-    // hostGrid, so moving it mid-drag would duplicate its id across grids.
+    // mounted child grid on the next pointer move or on release.
   }
 
-  /// A request fired but the drag ended without dropping into the host's
-  /// child grid: revert the speculative conversion (issue: without this,
-  /// every armed-but-unused leaf stays converted as an empty nested grid).
+  /// The request fired but the drag ended without landing in the new grid:
+  /// revert the speculative conversion.
   void _onNestedGridAbandoned(LayoutItem host, DashboardController hostGrid) {
-    final child = _dynamicChildren.remove(host.id);
+    final child = folders.remove(host.id);
     if (child == null) return;
 
     coordinator.unlinkChildGrid(child);
     hostGrid.updateItem(
       host.id,
       // `host` is the item AS IT WAS WHEN THE REQUEST ARMED: restoring its
-      // geometry too undoes any sizeToContent growth the speculative child
-      // grid caused mid-drag (shrinking can never collide, so
-      // recompact: false stays safe under every compaction mode).
+      // geometry undoes the growth above (shrinking never collides, so
+      // recompact:false is safe under every compaction mode).
       (i) => i.copyWith(hasNestedGrid: false, w: host.w, h: host.h),
       recompact: false,
     );
@@ -159,27 +202,32 @@ class _NestedExamplePageState extends State<NestedExamplePage> {
     setState(() {});
   }
 
-  void _saveTree() {
-    final tree = exportNestedTree(coordinator, root);
-    _savedTree = tree;
-    jsonController.text = const JsonEncoder.withIndent('  ').convert(tree);
-    setState(() {});
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Saved ${tree.length} root items (JSON in the panel)'),
-        backgroundColor: Theme.of(context).colorScheme.primary,
-      ),
-    );
-  }
+  /// Items released over a collapsed folder. The package has already
+  /// restored the pre-drag layout, so nothing landed on the root grid: we
+  /// move the items into the folder's own controller.
+  void _onItemDroppedOnHost(
+    List<LayoutItem> dragged,
+    LayoutItem host,
+    DashboardController hostGrid,
+    DashboardController sourceGrid,
+  ) {
+    final folder = folders[host.id];
+    if (folder == null) return;
 
-  void _restoreTree() {
-    final saved = _savedTree;
-    if (saved == null) return;
-    loadNestedTree(coordinator, root, saved);
+    final ids = dragged.map((i) => i.id).toSet()..remove(host.id);
+    if (ids.isEmpty) return;
+
+    final moved = dragged.where((i) => ids.contains(i.id)).toList();
+    // The items are back where the drag started — which may be ANOTHER grid
+    // (a nested folder, for instance), hence sourceGrid rather than hostGrid.
+    sourceGrid.removeItems(ids.toList());
+    // -1/-1 lets the engine auto-place them inside the folder.
+    folder.addItems(moved.map((i) => i.copyWith(x: -1, y: -1)).toList());
+
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: const Text('Tree restored from the last save'),
-        backgroundColor: Theme.of(context).colorScheme.primary,
+        duration: const Duration(milliseconds: 1200),
+        content: Text('Filed ${moved.length} item(s) into "${host.id}"'),
       ),
     );
   }
@@ -190,36 +238,32 @@ class _NestedExamplePageState extends State<NestedExamplePage> {
     final isDesktop = MediaQuery.of(context).size.width >= 950;
 
     final configPanel = _ConfigPanel(
+      root: root,
+      folders: folders,
       isEditing: isEditing,
       sizeToContent: sizeToContent,
+      compactionType: compactionType,
       subGridDynamic: subGridDynamic,
       subGridDynamicSameGrid: subGridDynamicSameGrid,
-      compactionType: compactionType,
-      maxNestingDepth: maxNestingDepth,
-      maxDepthController: maxDepthController,
-      onMaxDepthSubmitted: _setMaxDepthFromText,
-      jsonController: jsonController,
-      canRestore: _savedTree != null,
+      miniThreshold: miniThreshold,
       onEditModeChanged: _applyEditMode,
       onCompactTypeChanged: _applyCompactType,
-      onSave: _saveTree,
-      onRestore: _restoreTree,
+      onCollapse: _collapse,
+      onExpand: _expand,
     );
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Nested grids — drag between levels'),
+        title: const Text('Nested 2 — size-driven folders'),
         elevation: 2,
         actions: [
           if (!isDesktop)
             Builder(
-              builder: (context) {
-                return IconButton(
-                  icon: const Icon(Icons.tune),
-                  tooltip: 'Open Config Panel',
-                  onPressed: () => Scaffold.of(context).openEndDrawer(),
-                );
-              },
+              builder: (context) => IconButton(
+                icon: const Icon(Icons.tune),
+                tooltip: 'Open Config Panel',
+                onPressed: () => Scaffold.of(context).openEndDrawer(),
+              ),
             ),
         ],
       ),
@@ -233,67 +277,85 @@ class _NestedExamplePageState extends State<NestedExamplePage> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Expanded(
-            child: ListenableBuilder(
-              listenable: Listenable.merge([
-                subGridDynamic,
-                subGridDynamicSameGrid,
-                maxNestingDepth,
-              ]),
-              builder: (context, _) => DashboardNestedScope(
-                coordinator: coordinator,
-                subGridDynamic: subGridDynamic.value,
-                subGridDynamicSameGrid: subGridDynamicSameGrid.value,
-                maxNestingDepth: maxNestingDepth.value,
-                onNestedGridRequested: _onNestedGridRequested,
-                onNestedGridRequestAbandoned: _onNestedGridAbandoned,
-                onItemMovedToGrid: (item, from, to) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      duration: const Duration(milliseconds: 900),
-                      content: Text('Moved "${item.id}" between grids'),
-                    ),
-                  );
-                },
-                child: Dashboard<String>(
-                  controller: root,
-                  slotAspectRatio: 1.0,
-                  mainAxisSpacing: 8.0,
-                  crossAxisSpacing: 8.0,
-                  padding: const EdgeInsets.all(8.0),
-                  itemBuilder: (context, item) {
-                    if (item.hasNestedGrid) {
-                      // Branch on the declarative flag rather than the id: this is what
-                      // keeps hosts portable (a flagged item dropped into another grid
-                      // still renders as a grid if that grid's builder does the same).
-                      final child = item.id == 'group'
-                          ? group
-                          : _dynamicChildren[item.id];
-                      if (child != null) {
-                        return _NestedHost(
-                          key: ValueKey(item.id),
-                          item: item,
-                          child: child,
-                          sizeToContent: sizeToContent,
-                        );
-                      }
-                    }
-                    final isDynamicHost = _dynamicChildren.containsKey(item.id);
-                    final color = isDynamicHost
-                        ? theme.colorScheme.primaryContainer
-                        : theme.colorScheme.tertiaryContainer;
-                    final textColor = isDynamicHost
-                        ? theme.colorScheme.onPrimaryContainer
-                        : theme.colorScheme.onTertiaryContainer;
-
-                    return _NestedTile(
-                      key: ValueKey(item.id),
-                      item: item,
-                      backgroundColor: color,
-                      textColor: textColor,
-                    );
-                  },
+            child: Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Text(
+                    'Shrink a folder to the mini threshold: it collapses and '
+                    'becomes a drop target. Drag a note onto it to file the '
+                    'note away. Enlarge it to reopen the grid.',
+                    style: theme.textTheme.bodySmall,
+                  ),
                 ),
-              ),
+                Expanded(
+                  child: ListenableBuilder(
+                    listenable: Listenable.merge([
+                      sizeToContent,
+                      miniThreshold,
+                      subGridDynamic,
+                      subGridDynamicSameGrid,
+                    ]),
+                    builder: (context, _) => DashboardNestedScope(
+                      coordinator: coordinator,
+                      subGridDynamic: subGridDynamic.value,
+                      subGridDynamicSameGrid: subGridDynamicSameGrid.value,
+                      onNestedGridRequested: _onNestedGridRequested,
+                      onNestedGridRequestAbandoned: _onNestedGridAbandoned,
+                      onItemDroppedOnHost: _onItemDroppedOnHost,
+                      child: Dashboard<String>(
+                        // Remount on threshold change: the resolver's verdict
+                        // depends on state OUTSIDE the item's dimensions, and
+                        // the item cache compares RESOLVED VALUES computed
+                        // with the current resolver — it cannot see that the
+                        // rule itself moved. Keying the Dashboard is the
+                        // simple, correct answer for a runtime-tunable rule.
+                        key: ValueKey('dash-${miniThreshold.value}'),
+                        controller: root,
+                        slotAspectRatio: 1.0,
+                        mainAxisSpacing: 8,
+                        crossAxisSpacing: 8,
+                        padding: const EdgeInsets.all(8),
+                        breakpointResolver: _resolveHostSize,
+                        itemBreakpointBuilder:
+                            (
+                              context,
+                              item,
+                              breakpoint,
+                              width,
+                              height,
+                              slotCount,
+                            ) {
+                              final folder = folders[item.id];
+                              if (folder == null) {
+                                return _NoteTile(
+                                  key: ValueKey(item.id),
+                                  item: item,
+                                );
+                              }
+                              // The point of the breakpoint builder: this branch
+                              // runs once per TRANSITION, so the nested grid is
+                              // not torn down and rebuilt on every pixel of a
+                              // resize.
+                              return breakpoint == _HostSize.mini
+                                  ? _CollapsedFolder(
+                                      key: ValueKey('${item.id}-mini'),
+                                      item: item,
+                                      folder: folder,
+                                      coordinator: coordinator,
+                                    )
+                                  : _OpenFolder(
+                                      key: ValueKey('${item.id}-open'),
+                                      item: item,
+                                      folder: folder,
+                                      sizeToContent: sizeToContent,
+                                    );
+                            },
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
           if (isDesktop)
@@ -317,40 +379,39 @@ class _NestedExamplePageState extends State<NestedExamplePage> {
 
 class _ConfigPanel extends StatelessWidget {
   const _ConfigPanel({
+    required this.root,
+    required this.folders,
     required this.isEditing,
     required this.sizeToContent,
+    required this.compactionType,
     required this.subGridDynamic,
     required this.subGridDynamicSameGrid,
-    required this.compactionType,
-    required this.maxNestingDepth,
-    required this.maxDepthController,
-    required this.onMaxDepthSubmitted,
-    required this.jsonController,
-    required this.canRestore,
+    required this.miniThreshold,
     required this.onEditModeChanged,
     required this.onCompactTypeChanged,
-    required this.onSave,
-    required this.onRestore,
+    required this.onCollapse,
+    required this.onExpand,
   });
 
+  final DashboardController root;
+  final Map<String, DashboardController> folders;
   final ValueNotifier<bool> isEditing;
   final ValueNotifier<bool> sizeToContent;
+  final ValueNotifier<CompactType> compactionType;
   final ValueNotifier<bool> subGridDynamic;
   final ValueNotifier<bool> subGridDynamicSameGrid;
-  final ValueNotifier<CompactType> compactionType;
-  final ValueNotifier<int?> maxNestingDepth;
-  final TextEditingController maxDepthController;
-  final ValueChanged<String> onMaxDepthSubmitted;
-  final TextEditingController jsonController;
-  final bool canRestore;
+  final ValueNotifier<int> miniThreshold;
   final VoidCallback onEditModeChanged;
   final VoidCallback onCompactTypeChanged;
-  final VoidCallback onSave;
-  final VoidCallback onRestore;
+  final void Function(String id) onCollapse;
+  final void Function(String id) onExpand;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    // state_beacon is re-exported by the package barrel: watching a
+    // controller needs no extra dependency in the app.
+    final layout = root.layout.watch(context);
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16.0),
@@ -358,7 +419,7 @@ class _ConfigPanel extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'NESTED GRID PANEL',
+            'SIZE-DRIVEN FOLDERS',
             style: theme.textTheme.titleMedium?.copyWith(
               fontWeight: FontWeight.bold,
               color: theme.colorScheme.primary,
@@ -371,14 +432,35 @@ class _ConfigPanel extends StatelessWidget {
             notifier: isEditing,
             onChanged: (_) => onEditModeChanged(),
           ),
-          const SizedBox(height: 16),
-          const _SectionTitle('Nested Behavior'),
+          const SizedBox(height: 8),
+          const _SectionTitle('Breakpoint rule'),
+          Text(
+            'A folder collapses when its width OR height reaches this many '
+            'slots.',
+            style: theme.textTheme.bodySmall,
+          ),
+          ValueListenableBuilder<int>(
+            valueListenable: miniThreshold,
+            builder: (context, value, _) => DropdownButton<int>(
+              isExpanded: true,
+              value: value,
+              items: const [
+                DropdownMenuItem(value: 1, child: Text('mini at 1 slot')),
+                DropdownMenuItem(value: 2, child: Text('mini at 2 slots')),
+              ],
+              onChanged: (v) => miniThreshold.value = v ?? 1,
+            ),
+          ),
+          const SizedBox(height: 8),
+          const _SectionTitle('Open folders'),
           _SwitchTile(
             title: 'sizeToContent (host grows vs internal scroll)',
             notifier: sizeToContent,
           ),
+          const SizedBox(height: 8),
+          const _SectionTitle('Nested Behavior'),
           _SwitchTile(
-            title: 'subGridDynamic (hover a leaf to nest it)',
+            title: 'subGridDynamic (hover a note to turn it into a folder)',
             notifier: subGridDynamic,
           ),
           _SwitchTile(
@@ -386,93 +468,68 @@ class _ConfigPanel extends StatelessWidget {
             notifier: subGridDynamicSameGrid,
           ),
           const SizedBox(height: 8),
-          ValueListenableBuilder<int?>(
-            valueListenable: maxNestingDepth,
-            builder: (context, depth, _) {
-              return TextField(
-                controller: maxDepthController,
-                keyboardType: TextInputType.number,
-                onSubmitted: onMaxDepthSubmitted,
-                decoration: InputDecoration(
-                  isDense: true,
-                  border: const OutlineInputBorder(),
-                  labelText: 'maxNestingDepth',
-                  helperText: depth == null
-                      ? 'empty = unlimited · 0 = off · 1 = one level'
-                      : 'limit: $depth level(s) — press Enter to apply',
-                ),
-              );
-            },
-          ),
-          const SizedBox(height: 10),
-          Text(
-            'Compaction Type',
-            style: TextStyle(
-              fontSize: 12,
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
-          ),
+          const _SectionTitle('Compaction'),
           ValueListenableBuilder<CompactType>(
             valueListenable: compactionType,
-            builder: (context, value, _) {
-              return DropdownButton<CompactType>(
-                isExpanded: true,
-                dropdownColor: theme.colorScheme.surfaceContainerHigh,
-                value: value,
-                items: CompactType.values
-                    .map(
-                      (v) => DropdownMenuItem(
-                        value: v,
-                        child: Text(v.name.toUpperCase()),
-                      ),
-                    )
-                    .toList(),
-                onChanged: (v) {
-                  if (v != null) {
-                    compactionType.value = v;
-                    onCompactTypeChanged();
-                  }
-                },
-              );
-            },
-          ),
-          const SizedBox(height: 16),
-          const _SectionTitle('Tree Save / Load'),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              ElevatedButton.icon(
-                onPressed: onSave,
-                icon: const Icon(Icons.save),
-                label: const Text('Save tree'),
-              ),
-              OutlinedButton.icon(
-                onPressed: canRestore ? onRestore : null,
-                icon: const Icon(Icons.restore),
-                label: const Text('Restore'),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          TextField(
-            controller: jsonController,
-            maxLines: 8,
-            readOnly: true,
-            style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
-            decoration: const InputDecoration(
-              border: OutlineInputBorder(),
-              labelText: 'Exported tree (JSON)',
+            builder: (context, value, _) => DropdownButton<CompactType>(
+              isExpanded: true,
+              value: value,
+              items: CompactType.values
+                  .map((t) => DropdownMenuItem(value: t, child: Text(t.name)))
+                  .toList(),
+              onChanged: (t) {
+                if (t == null) return;
+                compactionType.value = t;
+                onCompactTypeChanged();
+              },
             ),
           ),
           const SizedBox(height: 16),
-          const _SectionTitle('How to try it'),
-          Text(
-            'Drag "nested-*" out into the amber root grid, or a green leaf into '
-            'the nested grid. Turn on subGridDynamic, then hold a dragged item '
-            'over a green leaf to turn it into its own grid (it goes cyan).',
-            style: theme.textTheme.bodySmall,
-          ),
+          const _SectionTitle('Folders'),
+          for (final id in folders.keys)
+            Builder(
+              builder: (context) {
+                // No package:collection dependency in this example: the
+                // package's own firstWhereOrNull is internal.
+                final matches = layout.where((i) => i.id == id);
+                final item = matches.isEmpty ? null : matches.first;
+                final count = folders[id]!.layout.watch(context).length;
+                final collapsed =
+                    item == null ||
+                    item.w <= miniThreshold.value ||
+                    item.h <= miniThreshold.value;
+                return Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: Row(
+                    children: [
+                      Icon(
+                        collapsed ? Icons.folder : Icons.folder_open,
+                        size: 18,
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          '$id · $count item(s)'
+                          '${item == null ? '' : ' · ${item.w}x${item.h}'}',
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: 'Collapse',
+                        icon: const Icon(Icons.close_fullscreen, size: 16),
+                        onPressed: collapsed ? null : () => onCollapse(id),
+                      ),
+                      IconButton(
+                        tooltip: 'Expand',
+                        icon: const Icon(Icons.open_in_full, size: 16),
+                        onPressed: collapsed ? () => onExpand(id) : null,
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
         ],
       ),
     );
@@ -530,89 +587,179 @@ class _SwitchTile extends StatelessWidget {
   }
 }
 
-class _NestedTile extends StatelessWidget {
-  const _NestedTile({
+/// A folder rendered at its mini breakpoint: no child grid is mounted, so
+/// the package sees a closed host and turns the tile into a drop target.
+class _CollapsedFolder extends StatefulWidget {
+  const _CollapsedFolder({
     required this.item,
-    required this.backgroundColor,
-    required this.textColor,
+    required this.folder,
+    required this.coordinator,
     super.key,
   });
 
   final LayoutItem item;
-  final Color backgroundColor;
-  final Color textColor;
+  final DashboardController folder;
+  final DashboardNestedCoordinator coordinator;
+
+  @override
+  State<_CollapsedFolder> createState() => _CollapsedFolderState();
+}
+
+class _CollapsedFolderState extends State<_CollapsedFolder> {
+  @override
+  void initState() {
+    super.initState();
+    // Detach the child grid so `hasChildGrid` becomes false and the tile
+    // qualifies as a drop target.
+    //
+    // Why this is an APP decision: NestedDashboard deliberately does NOT
+    // unlink when it unmounts, because sliver virtualization unmounts it
+    // whenever the host scrolls out of view — the link must survive that.
+    // Collapsing, on the other hand, is a real state change, so we say so.
+    // Expanding re-links automatically when NestedDashboard mounts again.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) widget.coordinator.unlinkChildGrid(widget.folder);
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    // Live count: state_beacon is re-exported by the package barrel, so no
+    // extra dependency is needed to watch a controller's layout.
+    final count = widget.folder.layout.watch(context).length;
+
     return Card(
-      color: backgroundColor,
       margin: EdgeInsets.zero,
       elevation: 2,
+      color: theme.colorScheme.secondaryContainer,
       child: Center(
-        child: Text(
-          item.id,
-          style: TextStyle(color: textColor, fontWeight: FontWeight.w600),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.folder, color: theme.colorScheme.onSecondaryContainer),
+            const SizedBox(height: 4),
+            Text(
+              widget.item.id,
+              textAlign: TextAlign.center,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: theme.colorScheme.onSecondaryContainer,
+                fontWeight: FontWeight.w600,
+                fontSize: 11,
+              ),
+            ),
+            Text(
+              '$count',
+              style: TextStyle(
+                color: theme.colorScheme.onSecondaryContainer,
+                fontSize: 11,
+              ),
+            ),
+          ],
         ),
       ),
     );
   }
 }
 
-class _NestedHost extends StatelessWidget {
-  const _NestedHost({
+/// A folder rendered at its normal breakpoint: the real nested grid, with
+/// full cross-grid drag in and out.
+class _OpenFolder extends StatelessWidget {
+  const _OpenFolder({
     required this.item,
-    required this.child,
+    required this.folder,
     required this.sizeToContent,
     super.key,
   });
 
   final LayoutItem item;
-  final DashboardController child;
+  final DashboardController folder;
   final ValueNotifier<bool> sizeToContent;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
-    return ValueListenableBuilder<bool>(
-      valueListenable: sizeToContent,
-      builder: (context, stc, _) {
-        return Card(
-          margin: EdgeInsets.zero,
-          color: theme.colorScheme.surfaceContainerHighest,
-          clipBehavior: Clip.antiAlias,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Container(
-                color: theme.colorScheme.secondary,
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                child: Text(
-                  'Nested grid · ${item.id}',
-                  style: TextStyle(
-                    color: theme.colorScheme.onSecondary,
-                    fontWeight: FontWeight.w700,
+    return Card(
+      margin: EdgeInsets.zero,
+      elevation: 2,
+      clipBehavior: Clip.antiAlias,
+      color: theme.colorScheme.surfaceContainerHighest,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Container(
+            height: 32,
+            color: theme.colorScheme.primaryContainer,
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            alignment: Alignment.centerLeft,
+            child: Row(
+              children: [
+                Icon(
+                  Icons.folder_open,
+                  size: 16,
+                  color: theme.colorScheme.onPrimaryContainer,
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    item.id,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: theme.colorScheme.onPrimaryContainer,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 12,
+                    ),
                   ),
                 ),
-              ),
-              Expanded(
-                child: NestedDashboard(
-                  controller: child,
-                  parentItemId: item.id,
-                  sizeToContent: stc,
-                  chromeExtent: 40,
-                  itemBuilder: (context, leaf) => _NestedTile(
-                    key: ValueKey(leaf.id),
-                    item: leaf,
-                    backgroundColor: theme.colorScheme.secondaryContainer,
-                    textColor: theme.colorScheme.onSecondaryContainer,
-                  ),
-                ),
-              ),
-            ],
+              ],
+            ),
           ),
-        );
-      },
+          Expanded(
+            child: ValueListenableBuilder<bool>(
+              valueListenable: sizeToContent,
+              builder: (context, stc, _) => NestedDashboard(
+                controller: folder,
+                parentItemId: item.id,
+                sizeToContent: stc,
+                chromeExtent: 32,
+                itemBuilder: (context, leaf) =>
+                    _NoteTile(key: ValueKey(leaf.id), item: leaf, dense: true),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _NoteTile extends StatelessWidget {
+  const _NoteTile({required this.item, this.dense = false, super.key});
+
+  final LayoutItem item;
+  final bool dense;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      margin: EdgeInsets.zero,
+      elevation: 1,
+      color: theme.colorScheme.tertiaryContainer,
+      child: Center(
+        child: Text(
+          item.id,
+          textAlign: TextAlign.center,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: theme.colorScheme.onTertiaryContainer,
+            fontWeight: FontWeight.w600,
+            fontSize: dense ? 11 : 13,
+          ),
+        ),
+      ),
     );
   }
 }
