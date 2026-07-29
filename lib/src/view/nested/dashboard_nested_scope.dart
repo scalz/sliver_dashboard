@@ -39,6 +39,20 @@ typedef DashboardNestedGridAbandonedCallback = void Function(
   DashboardController hostGridController,
 );
 
+/// Signature for [DashboardNestedCoordinator.onItemDroppedOnHost]: the
+/// dragged items were released over a tile acting as a DROP TARGET (a closed
+/// nested host, or an item flagged `isDropTarget`).
+///
+/// The grid layout is left untouched — the dragged items stay at their
+/// pre-drag position — so the app owns the outcome: consume them
+/// (`removeItems` + store them in the host's own model), reject the drop
+/// (do nothing), or anything in between.
+typedef DashboardItemDroppedOnHostCallback = void Function(
+  List<LayoutItem> draggedItems,
+  LayoutItem host,
+  DashboardController hostGrid,
+);
+
 /// Callback signature for custom item dimension projection when dragging across asymmetrical grids.
 typedef DimensionProjectionCallback = LayoutItem Function(
   LayoutItem item, {
@@ -183,6 +197,7 @@ class DashboardNestedCoordinator {
     this.onItemMovedToGrid,
     this.onNestedGridRequested,
     this.onNestedGridRequestAbandoned,
+    this.onItemDroppedOnHost,
     this.subGridDynamic = false,
     this.subGridDynamicSameGrid = false,
     this.nestHoverDelay = const Duration(milliseconds: 600),
@@ -211,6 +226,20 @@ class DashboardNestedCoordinator {
   /// requested host. Use it to revert a speculative conversion (delete the
   /// empty panel, clear the `hasNestedGrid` flag, dispose the controller).
   DashboardNestedGridAbandonedCallback? onNestedGridRequestAbandoned;
+
+  /// Fired when dragged items are released over a DROP TARGET tile: a host
+  /// whose `hasNestedGrid` is set but whose child grid is not mounted (a
+  /// "closed folder"), or any item flagged [LayoutItem.isDropTarget].
+  ///
+  /// While such a tile is hovered, layout pushes freeze and the tile shows
+  /// the nest highlight; on release the drag is cancelled (the layout
+  /// returns to its pre-drag state, so nothing lands on the parent grid)
+  /// and this callback runs. Hosts whose child grid IS mounted keep the
+  /// regular cross-grid entry instead.
+  ///
+  /// An overlay-level `onItemDroppedOnHost` takes precedence over this one,
+  /// which serves as the scope-wide default.
+  DashboardItemDroppedOnHostCallback? onItemDroppedOnHost;
 
   // The last fired-but-unresolved nested-grid request. Set when the request
   // fires (both the cross-grid and the same-grid arming paths), resolved at
@@ -1057,6 +1086,7 @@ class DashboardNestedScope extends StatefulWidget {
     this.onItemMovedToGrid,
     this.onNestedGridRequested,
     this.onNestedGridRequestAbandoned,
+    this.onItemDroppedOnHost,
     this.subGridDynamic = false,
     this.subGridDynamicSameGrid = false,
     this.nestHoverDelay = const Duration(milliseconds: 600),
@@ -1084,6 +1114,11 @@ class DashboardNestedScope extends StatefulWidget {
   /// dropping into the requested host's child grid). See
   /// [DashboardNestedCoordinator.onNestedGridRequestAbandoned].
   final DashboardNestedGridAbandonedCallback? onNestedGridRequestAbandoned;
+
+  /// Scope-wide default fired when dragged items are released over a
+  /// drop-target tile (closed nested host, or `isDropTarget` item).
+  /// See [DashboardNestedCoordinator.onItemDroppedOnHost].
+  final DashboardItemDroppedOnHostCallback? onItemDroppedOnHost;
 
   /// Enables `subGridDynamic` behavior: holding a dragged item
   /// over a plain item arms a request to convert it into a nested grid.
@@ -1148,6 +1183,7 @@ class _DashboardNestedScopeState extends State<DashboardNestedScope> {
       ..onItemMovedToGrid = widget.onItemMovedToGrid
       ..onNestedGridRequested = widget.onNestedGridRequested
       ..onNestedGridRequestAbandoned = widget.onNestedGridRequestAbandoned
+      ..onItemDroppedOnHost = widget.onItemDroppedOnHost
       ..subGridDynamic = widget.subGridDynamic
       ..subGridDynamicSameGrid = widget.subGridDynamicSameGrid
       ..nestHoverDelay = widget.nestHoverDelay

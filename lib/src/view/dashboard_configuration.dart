@@ -34,6 +34,8 @@ class DashboardItemStyle {
     this.focusColor,
     this.activeColor,
     this.borderRadius,
+    this.nestTargetColor,
+    this.nestTargetDecoration,
   });
 
   /// The decoration to paint behind the child when the item has focus.
@@ -51,6 +53,15 @@ class DashboardItemStyle {
   /// Border radius for the focus highlight.
   final BorderRadius? borderRadius;
 
+  /// Ring color used while this item is the hovered nest / drop target.
+  /// Ignored if [nestTargetDecoration] is provided. Defaults to
+  /// [activeColor], then to [Colors.deepOrange].
+  final Color? nestTargetColor;
+
+  /// Full decoration used while this item is the hovered nest / drop
+  /// target. Takes precedence over [nestTargetColor].
+  final BoxDecoration? nestTargetDecoration;
+
   /// Default style
   static const DashboardItemStyle defaultStyle = DashboardItemStyle(
     focusColor: Colors.blueAccent,
@@ -64,12 +75,16 @@ class DashboardItemStyle {
     Color? focusColor,
     Color? activeColor,
     BorderRadius? borderRadius,
+    Color? nestTargetColor,
+    BoxDecoration? nestTargetDecoration,
   }) {
     return DashboardItemStyle(
       focusDecoration: focusDecoration ?? this.focusDecoration,
       focusColor: focusColor ?? this.focusColor,
       activeColor: activeColor ?? this.activeColor,
       borderRadius: borderRadius ?? this.borderRadius,
+      nestTargetColor: nestTargetColor ?? this.nestTargetColor,
+      nestTargetDecoration: nestTargetDecoration ?? this.nestTargetDecoration,
     );
   }
 }

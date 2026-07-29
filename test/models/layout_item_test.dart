@@ -187,6 +187,48 @@ void main() {
     });
   });
 
+  group('LayoutItem.isDropTarget — model', () {
+    test('serialization round-trip, equality, signature, copyWith', () {
+      const target = LayoutItem(
+        id: 'folder',
+        x: 0,
+        y: 0,
+        w: 1,
+        h: 1,
+        isDropTarget: true,
+      );
+
+      final restored = LayoutItem.fromMap(target.toMap());
+      expect(restored, target);
+      expect(restored.isDropTarget, isTrue);
+
+      // Absent by default, and kept out of the map when false.
+      const plain = LayoutItem(id: 'p', x: 0, y: 0, w: 1, h: 1);
+      expect(plain.isDropTarget, isFalse);
+      expect(plain.toMap().containsKey('isDropTarget'), isFalse);
+      expect(LayoutItem.fromMap(plain.toMap()).isDropTarget, isFalse);
+
+      // Flipping the flag changes equality AND the content signature (the
+      // tile renders differently), while moving the item never does.
+      final flipped = target.copyWith(isDropTarget: false);
+      expect(flipped == target, isFalse);
+      expect(flipped.contentSignature == target.contentSignature, isFalse);
+      expect(target.copyWith(x: 3).contentSignature, target.contentSignature);
+    });
+
+    test('DashboardItemStyle exposes the drop-target highlight hooks', () {
+      const base = DashboardItemStyle.defaultStyle;
+      expect(base.nestTargetColor, isNull);
+      expect(base.nestTargetDecoration, isNull);
+
+      final styled = base.copyWith(nestTargetColor: const Color(0xFF00FF00));
+      expect(styled.nestTargetColor, const Color(0xFF00FF00));
+      // Untouched fields survive copyWith.
+      expect(styled.activeColor, base.activeColor);
+      expect(styled.borderRadius, base.borderRadius);
+    });
+  });
+
   group('Dashboard Configuration Data Classes', () {
     test('GridStyle equality', () {
       const style1 = GridStyle(fillColor: Colors.red);

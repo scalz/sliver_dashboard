@@ -7,6 +7,8 @@ import 'package:sliver_dashboard/src/view/dashboard_configuration.dart';
 import 'package:sliver_dashboard/src/view/dashboard_overlay.dart';
 import 'package:sliver_dashboard/src/view/dashboard_typedefs.dart';
 import 'package:sliver_dashboard/src/view/guidance/dashboard_guidance.dart';
+import 'package:sliver_dashboard/src/view/nested/dashboard_nested_scope.dart'
+    show DashboardItemDroppedOnHostCallback;
 import 'package:sliver_dashboard/src/view/sliver_dashboard.dart';
 
 /// The main dashboard widget.
@@ -27,6 +29,7 @@ class Dashboard<T extends Object> extends StatefulWidget {
     this.itemBreakpointBuilder,
     this.breakpointResolver,
     this.onSlotTap,
+    this.onItemDroppedOnHost,
     this.onSlotLongPress,
     this.scrollDirection = Axis.vertical,
     this.slotAspectRatio = 1.0,
@@ -110,6 +113,13 @@ class Dashboard<T extends Object> extends StatefulWidget {
 
   /// Long-press variant of [onSlotTap].
   final void Function(int x, int y)? onSlotLongPress;
+
+  /// Fired when dragged items are released over a DROP TARGET tile — an item
+  /// flagged [LayoutItem.isDropTarget], or a nested host whose child grid is
+  /// not mounted ("closed folder"). The layout is restored to its pre-drag
+  /// state (nothing lands on the grid) and the app decides what the drop
+  /// means. See [DashboardOverlay.onItemDroppedOnHost].
+  final DashboardItemDroppedOnHostCallback? onItemDroppedOnHost;
 
   /// The direction of scrolling for the dashboard.
   final Axis scrollDirection;
@@ -320,6 +330,7 @@ class _DashboardState<T extends Object> extends State<Dashboard<T>> {
       onItemDragStart: widget.onItemDragStart,
       onItemDragUpdate: widget.onItemDragUpdate,
       onItemDragEnd: widget.onItemDragEnd,
+      onItemDroppedOnHost: widget.onItemDroppedOnHost,
       onItemResizeStart: widget.onItemResizeStart,
       onItemResizeEnd: widget.onItemResizeEnd,
       onDrop: widget.onDrop,

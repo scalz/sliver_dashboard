@@ -37,6 +37,7 @@ class LayoutItem {
     this.isSectionBarrier = false,
     this.sectionTitle,
     this.hasNestedGrid = false,
+    this.isDropTarget = false,
     this.extra,
   }) : isStatic =
             isStatic || isSectionBarrier; // Ensure section barriers are always static in-memory
@@ -64,6 +65,7 @@ class LayoutItem {
       isSectionBarrier: map['isSectionBarrier'] as bool? ?? false,
       sectionTitle: map['sectionTitle'] as String?,
       hasNestedGrid: map['hasNestedGrid'] as bool? ?? false,
+      isDropTarget: map['isDropTarget'] as bool? ?? false,
       extra: (map['extra'] as Map?)?.cast<String, dynamic>(),
     );
   }
@@ -88,6 +90,7 @@ class LayoutItem {
       'isSectionBarrier': isSectionBarrier,
       'sectionTitle': sectionTitle,
       'hasNestedGrid': hasNestedGrid,
+      if (isDropTarget) 'isDropTarget': isDropTarget,
       if (extra != null) 'extra': extra,
     };
   }
@@ -109,6 +112,7 @@ class LayoutItem {
         isSectionBarrier,
         sectionTitle,
         hasNestedGrid,
+        isDropTarget,
         extra == null
             ? null
             : Object.hashAllUnordered(extra!.entries.map((e) => Object.hash(e.key, e.value))),
@@ -132,6 +136,7 @@ class LayoutItem {
     bool? isSectionBarrier,
     String? sectionTitle,
     bool? hasNestedGrid,
+    bool? isDropTarget,
     Map<String, dynamic>? extra,
   }) {
     return LayoutItem(
@@ -151,6 +156,7 @@ class LayoutItem {
       isSectionBarrier: isSectionBarrier ?? this.isSectionBarrier,
       sectionTitle: sectionTitle ?? this.sectionTitle,
       hasNestedGrid: hasNestedGrid ?? this.hasNestedGrid,
+      isDropTarget: isDropTarget ?? this.isDropTarget,
       extra: extra ?? this.extra,
     );
   }
@@ -176,6 +182,7 @@ class LayoutItem {
           isSectionBarrier == other.isSectionBarrier &&
           sectionTitle == other.sectionTitle &&
           hasNestedGrid == other.hasNestedGrid &&
+          isDropTarget == other.isDropTarget &&
           mapEquals(extra, other.extra);
 
   @override
@@ -196,6 +203,7 @@ class LayoutItem {
         isSectionBarrier,
         sectionTitle,
         hasNestedGrid,
+        isDropTarget,
         extra == null
             ? null
             : Object.hashAllUnordered(extra!.entries.map((e) => Object.hash(e.key, e.value))),
@@ -271,6 +279,21 @@ class LayoutItem {
   /// Included in [contentSignature]: converting an item to or from a grid
   /// host changes its content and must invalidate the cached item widget.
   final bool hasNestedGrid;
+
+  /// Marks this item as a direct DROP TARGET for dragged items, without
+  /// hosting a visible nested grid.
+  ///
+  /// While a drag hovers such a tile, layout pushes freeze (the target stays
+  /// put under the cursor), the tile gets the nest highlight, and releasing
+  /// fires `onItemDroppedOnHost` instead of placing the item on the grid —
+  /// the "closed folder", archive tile or badge pattern. The dragged item's
+  /// own size is irrelevant: targeting is by POINTER position, so a 4x4 tile
+  /// can be dropped onto a 1x1 target.
+  ///
+  /// Items with `hasNestedGrid: true` are treated as drop targets too while
+  /// their child grid is NOT mounted (a closed folder); once mounted, the
+  /// regular cross-grid entry owns the interaction.
+  final bool isDropTarget;
 
   /// Free-form, JSON-serializable business metadata carried by the item
   /// (widget type, title, color, configuration…). Travels through

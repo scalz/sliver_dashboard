@@ -404,13 +404,14 @@ class _DashboardItemState extends State<DashboardItem>
             opacity: (isActive && !widget.isFeedback) ? 0.0 : 1.0,
             child: Container(
               decoration: isNestHovered
-                  ? BoxDecoration(
-                      border: Border.all(
-                        color: style.activeColor ?? Colors.deepOrange,
-                        width: 4,
-                      ),
-                      borderRadius: style.borderRadius,
-                    )
+                  ? (style.nestTargetDecoration ??
+                      BoxDecoration(
+                        border: Border.all(
+                          color: style.nestTargetColor ?? style.activeColor ?? Colors.deepOrange,
+                          width: 4,
+                        ),
+                        borderRadius: style.borderRadius,
+                      ))
                   : widget.isEditing &&
                           (_isFocused ||
                               isSelected) // Show border if editMode && (focused OR selected)

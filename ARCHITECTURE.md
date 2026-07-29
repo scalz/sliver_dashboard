@@ -575,3 +575,33 @@ single-axis move).
   speculative `sizeToContent` growth stay pushed after the revert — pushes
   are permanent by that mode's contract (no push provenance is kept). This
   is documented on `CompactType.none`, not a nested defect.
+
+### Drop Targets — Closed Hosts & `isDropTarget`
+
+A tile can receive dropped items **without rendering a nested grid**
+(closed folder icons, archive bins, badges). Resolution happens in the
+overlay (`_dropTargetAt`), which owns pointer handling:
+
+- **Target predicate:** the item under the POINTER (never the dragged
+  item's footprint — so a 4x4 tile drops onto a 1x1 target) that is either
+  flagged `LayoutItem.isDropTarget` or carries `hasNestedGrid` **while its
+  child grid is NOT mounted**. A mounted child grid is excluded on purpose:
+  the pointer must be able to enter it, and the regular cross-grid session
+  owns that interaction. Section barriers and members of the dragged
+  selection are excluded; **statics are allowed** (an immovable archive
+  tile is a legitimate target and needs no freeze to stay put).
+- **Zero-cost gate (INVARIANT):** `_dropTargetAt` returns null immediately
+  when no callback is registered (overlay param, else scope default), so
+  the per-pointer-move cost for every existing setup is one null check.
+- **Hover:** `freezeDragPushes()` + `setNestTargetHover(id)` once per target
+  entry, then the dragged tile is kept glued to the pointer with the same
+  offset convention as the existing approach-freeze — which this branch is
+  checked BEFORE, since a closed host has no child sliver to enter.
+- **Release = silent exit:** `cancelInteraction()` restores the pre-drag
+  layout (nothing lands on the parent grid), the highlight clears, then the
+  callback runs. The package never removes or mutates the dragged items:
+  the app consumes them (`removeItems` + its own model) or ignores the drop
+  entirely, which simply returns them home.
+- **Arming exclusion:** `isDropTarget` items are excluded from the
+  `subGridDynamic` arming predicate — an explicit target must never also be
+  a speculative nest candidate (two mechanisms competing on one tile).

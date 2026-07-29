@@ -64,6 +64,26 @@ void main() {
     registerFallbackValue(const LayoutItem(id: '_', x: 0, y: 0, w: 0, h: 0));
   });
 
+  Future<void> dragOnto(
+    WidgetTester tester,
+    Finder from,
+    Finder to,
+  ) async {
+    final gesture = await tester.startGesture(
+      tester.getCenter(from),
+      kind: PointerDeviceKind.mouse,
+    );
+    await tester.pump(const Duration(milliseconds: 20));
+    // Two moves: the first crosses the drag threshold, the second settles
+    // over the target so the hover branch runs before the release.
+    await gesture.moveTo(tester.getCenter(to));
+    await tester.pump(const Duration(milliseconds: 20));
+    await gesture.moveTo(tester.getCenter(to));
+    await tester.pump(const Duration(milliseconds: 20));
+    await gesture.up();
+    await tester.pumpAndSettle();
+  }
+
   group('DashboardOverlay Sliver Integration', () {
     late DashboardController controller;
 
@@ -2508,6 +2528,384 @@ void main() {
       await tester.longPressAt(origin + const Offset(60, 60));
       await tester.pumpAndSettle();
       expect(longs.length, 1);
+    });
+  });
+
+  group('onItemDroppedOnHost — drop behavior', () {
+    Widget host({
+      required DashboardController controller,
+      required ScrollController scrollController,
+      DashboardItemDroppedOnHostCallback? onDropped,
+      bool useScope = false,
+    }) {
+      final dashboard = Dashboard<String>(
+        controller: controller,
+        scrollController: scrollController,
+        onItemDroppedOnHost: useScope ? null : onDropped,
+        itemBuilder: (context, item) => Text(item.id),
+      );
+      return MaterialApp(
+        home: Scaffold(
+          body: useScope
+              ? DashboardNestedScope(
+                  onItemDroppedOnHost: onDropped,
+                  child: dashboard,
+                )
+              : dashboard,
+        ),
+      );
+    }
+
+    testWidgets(
+        'releasing over an isDropTarget tile fires the callback and '
+        'leaves the layout untouched', (tester) async {
+      await runOnDesktop(() async {
+        final controller = DashboardController(
+          initialSlotCount: 4,
+          initialLayout: const [
+            LayoutItem(id: 'drag', x: 0, y: 0, w: 1, h: 1),
+            LayoutItem(id: 'target', x: 2, y: 0, w: 1, h: 1, isDropTarget: true),
+          ],
+        )..setEditMode(true);
+        addTearDown(controller.dispose);
+        final sc = ScrollController();
+        addTearDown(sc.dispose);
+
+        // NOTE: never put a List inside a record used as an expected value —
+        // records compare fields with ==, and List.== is IDENTITY equality,
+        // so ( ['drag'], 'target' ) never equals an equal-content literal.
+        // Assert the parts instead: expect() applies deep matchers to lists.
+        final droppedIds = <List<String>>[];
+        final droppedHosts = <String>[];
+        await tester.pumpWidget(
+          host(
+            controller: controller,
+            scrollController: sc,
+            onDropped: (items, host, grid) {
+              droppedIds.add(items.map((i) => i.id).toList());
+              droppedHosts.add(host.id);
+            },
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        await dragOnto(tester, find.text('drag'), find.text('target'));
+
+        expect(droppedHosts, ['target']);
+        expect(droppedIds.single, ['drag']);
+        // Silent exit: the dragged item is back at its origin, nothing was
+        // placed on the target's cell, and the target never moved.
+        final dragged = controller.layout.value.firstWhere((i) => i.id == 'drag');
+        final target = controller.layout.value.firstWhere((i) => i.id == 'target');
+        expect((dragged.x, dragged.y), (0, 0));
+        expect((target.x, target.y), (2, 0));
+        expect(controller.layout.value.length, 2);
+        // The highlight is cleared on release.
+        expect(controller.internal.hoveredNestTargetId.value, isNull);
+      });
+    });
+
+    testWidgets(
+        'a CLOSED nested host (hasNestedGrid, no mounted child grid) '
+        'is a drop target', (tester) async {
+      await runOnDesktop(() async {
+        final controller = DashboardController(
+          initialSlotCount: 4,
+          initialLayout: const [
+            LayoutItem(id: 'drag', x: 0, y: 0, w: 1, h: 1),
+            LayoutItem(id: 'folder', x: 2, y: 0, w: 1, h: 1, hasNestedGrid: true),
+          ],
+        )..setEditMode(true);
+        addTearDown(controller.dispose);
+        final sc = ScrollController();
+        addTearDown(sc.dispose);
+
+        final hosts = <String>[];
+        await tester.pumpWidget(
+          host(
+            controller: controller,
+            scrollController: sc,
+            onDropped: (items, host, grid) => hosts.add(host.id),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        await dragOnto(tester, find.text('drag'), find.text('folder'));
+        expect(hosts, ['folder']);
+      });
+    });
+
+    testWidgets(
+        'the dragged item may be LARGER than the target: targeting is '
+        'by pointer position', (tester) async {
+      await runOnDesktop(() async {
+        final controller = DashboardController(
+          initialSlotCount: 4,
+          initialLayout: const [
+            LayoutItem(id: 'drag', x: 0, y: 0, w: 2, h: 2),
+            LayoutItem(id: 'target', x: 3, y: 0, w: 1, h: 1, isDropTarget: true),
+          ],
+        )..setEditMode(true);
+        addTearDown(controller.dispose);
+        final sc = ScrollController();
+        addTearDown(sc.dispose);
+
+        final hosts = <String>[];
+        await tester.pumpWidget(
+          host(
+            controller: controller,
+            scrollController: sc,
+            onDropped: (items, host, grid) => hosts.add(host.id),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        await dragOnto(tester, find.text('drag'), find.text('target'));
+        expect(
+          hosts,
+          ['target'],
+          reason: 'a 2x2 item must be droppable onto a 1x1 target',
+        );
+      });
+    });
+
+    testWidgets('the scope-wide callback is used when the overlay has none', (tester) async {
+      await runOnDesktop(() async {
+        final controller = DashboardController(
+          initialSlotCount: 4,
+          initialLayout: const [
+            LayoutItem(id: 'drag', x: 0, y: 0, w: 1, h: 1),
+            LayoutItem(id: 'target', x: 2, y: 0, w: 1, h: 1, isDropTarget: true),
+          ],
+        )..setEditMode(true);
+        addTearDown(controller.dispose);
+        final sc = ScrollController();
+        addTearDown(sc.dispose);
+
+        final hosts = <String>[];
+        await tester.pumpWidget(
+          host(
+            controller: controller,
+            scrollController: sc,
+            useScope: true,
+            onDropped: (items, host, grid) => hosts.add(host.id),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        await dragOnto(tester, find.text('drag'), find.text('target'));
+        expect(hosts, ['target']);
+      });
+    });
+
+    testWidgets('multi-selection: every dragged item is reported', (tester) async {
+      await runOnDesktop(() async {
+        final controller = DashboardController(
+          initialSlotCount: 4,
+          initialLayout: const [
+            LayoutItem(id: 'a', x: 0, y: 0, w: 1, h: 1),
+            LayoutItem(id: 'b', x: 1, y: 0, w: 1, h: 1),
+            LayoutItem(id: 'target', x: 3, y: 0, w: 1, h: 1, isDropTarget: true),
+          ],
+        )..setEditMode(true);
+        addTearDown(controller.dispose);
+        final sc = ScrollController();
+        addTearDown(sc.dispose);
+
+        List<String>? reported;
+        await tester.pumpWidget(
+          host(
+            controller: controller,
+            scrollController: sc,
+            onDropped: (items, host, grid) => reported = items.map((i) => i.id).toList()..sort(),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        controller
+          ..toggleSelection('a', multi: true)
+          ..toggleSelection('b', multi: true);
+        await tester.pumpAndSettle();
+
+        await dragOnto(tester, find.text('a'), find.text('target'));
+        expect(reported, ['a', 'b']);
+      });
+    });
+
+    testWidgets(
+        'no callback registered: drop targets behave like plain tiles '
+        '(no behavioral change)', (tester) async {
+      await runOnDesktop(() async {
+        final controller = DashboardController(
+          initialSlotCount: 4,
+          initialLayout: const [
+            LayoutItem(id: 'drag', x: 0, y: 0, w: 1, h: 1),
+            LayoutItem(id: 'target', x: 2, y: 0, w: 1, h: 1, isDropTarget: true),
+          ],
+        )..setEditMode(true);
+        addTearDown(controller.dispose);
+        final sc = ScrollController();
+        addTearDown(sc.dispose);
+
+        await tester.pumpWidget(
+          host(controller: controller, scrollController: sc),
+        );
+        await tester.pumpAndSettle();
+
+        await dragOnto(tester, find.text('drag'), find.text('target'));
+
+        // The drag resolved as a normal move: the dragged item left its
+        // origin cell (exact landing depends on compaction, so assert the
+        // move happened rather than a precise cell).
+        final dragged = controller.layout.value.firstWhere((i) => i.id == 'drag');
+        expect(
+          (dragged.x, dragged.y) == (0, 0),
+          isFalse,
+          reason: 'without a callback the drag must place normally',
+        );
+        expect(controller.internal.hoveredNestTargetId.value, isNull);
+      });
+    });
+
+    testWidgets(
+        'leaving the target without releasing clears the highlight '
+        'and resumes a normal drop', (tester) async {
+      await runOnDesktop(() async {
+        final controller = DashboardController(
+          initialSlotCount: 4,
+          initialLayout: const [
+            LayoutItem(id: 'drag', x: 0, y: 0, w: 1, h: 1),
+            LayoutItem(id: 'target', x: 2, y: 0, w: 1, h: 1, isDropTarget: true),
+          ],
+        )..setEditMode(true);
+        addTearDown(controller.dispose);
+        final sc = ScrollController();
+        addTearDown(sc.dispose);
+
+        var fired = 0;
+        await tester.pumpWidget(
+          host(
+            controller: controller,
+            scrollController: sc,
+            onDropped: (items, host, grid) => fired++,
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        final gesture = await tester.startGesture(
+          tester.getCenter(find.text('drag')),
+          kind: PointerDeviceKind.mouse,
+        );
+        await tester.pump(const Duration(milliseconds: 20));
+        await gesture.moveTo(tester.getCenter(find.text('target')));
+        await tester.pump(const Duration(milliseconds: 20));
+        await gesture.moveTo(tester.getCenter(find.text('target')));
+        await tester.pump(const Duration(milliseconds: 20));
+        expect(
+          controller.internal.hoveredNestTargetId.value,
+          'target',
+          reason: 'hovering a drop target highlights it',
+        );
+
+        // Pointer leaves the target WITHOUT releasing: the highlight clears
+        // and the drag goes back to normal push behavior.
+        final origin = tester.getTopLeft(find.byType(Dashboard<String>));
+        await gesture.moveTo(origin + const Offset(300, 480));
+        await tester.pump(const Duration(milliseconds: 20));
+        expect(
+          controller.internal.hoveredNestTargetId.value,
+          isNull,
+          reason: 'the highlight must follow the pointer out',
+        );
+
+        await gesture.up();
+        await tester.pumpAndSettle();
+        expect(
+          fired,
+          0,
+          reason: 'released off-target: a normal grid drop, no callback',
+        );
+      });
+    });
+
+    testWidgets(
+        'a target removed mid-drag is still reported, from the '
+        'pre-drag snapshot', (tester) async {
+      await runOnDesktop(() async {
+        final controller = DashboardController(
+          initialSlotCount: 4,
+          initialLayout: const [
+            LayoutItem(id: 'drag', x: 0, y: 0, w: 1, h: 1),
+            LayoutItem(id: 'target', x: 2, y: 0, w: 1, h: 1, isDropTarget: true),
+          ],
+        )..setEditMode(true);
+        addTearDown(controller.dispose);
+        final sc = ScrollController();
+        addTearDown(sc.dispose);
+
+        final hosts = <String>[];
+        await tester.pumpWidget(
+          host(
+            controller: controller,
+            scrollController: sc,
+            onDropped: (items, host, grid) => hosts.add(host.id),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        final gesture = await tester.startGesture(
+          tester.getCenter(find.text('drag')),
+          kind: PointerDeviceKind.mouse,
+        );
+        await tester.pump(const Duration(milliseconds: 20));
+        await gesture.moveTo(tester.getCenter(find.text('target')));
+        await tester.pump(const Duration(milliseconds: 20));
+        await gesture.moveTo(tester.getCenter(find.text('target')));
+        await tester.pump(const Duration(milliseconds: 20));
+        expect(controller.internal.hoveredNestTargetId.value, 'target');
+
+        // The app drops the target from the layout while the drag is still
+        // held (a reactive data update, for instance). The release must still
+        // resolve: the host is recovered from the pre-drag snapshot.
+        controller.removeItem('target');
+        await tester.pump();
+
+        await gesture.up();
+        await tester.pumpAndSettle();
+        expect(
+          hosts,
+          ['target'],
+          reason: 'the host comes from the snapshot when the layout lost it',
+        );
+      });
+    });
+
+    testWidgets('releasing over a plain tile never fires the callback', (tester) async {
+      await runOnDesktop(() async {
+        final controller = DashboardController(
+          initialSlotCount: 4,
+          initialLayout: const [
+            LayoutItem(id: 'drag', x: 0, y: 0, w: 1, h: 1),
+            LayoutItem(id: 'plain', x: 2, y: 0, w: 1, h: 1),
+          ],
+        )..setEditMode(true);
+        addTearDown(controller.dispose);
+        final sc = ScrollController();
+        addTearDown(sc.dispose);
+
+        var fired = 0;
+        await tester.pumpWidget(
+          host(
+            controller: controller,
+            scrollController: sc,
+            onDropped: (items, host, grid) => fired++,
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        await dragOnto(tester, find.text('drag'), find.text('plain'));
+        expect(fired, 0);
+      });
     });
   });
 

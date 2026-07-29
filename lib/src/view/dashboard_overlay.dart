@@ -114,6 +114,7 @@ class DashboardOverlay<T extends Object> extends StatefulWidget {
     this.itemFeedbackBuilder,
     this.onSlotTap,
     this.onSlotLongPress,
+    this.onItemDroppedOnHost,
     this.onItemDragStart,
     this.onItemDragUpdate,
     this.onItemDragEnd,
@@ -226,6 +227,22 @@ class DashboardOverlay<T extends Object> extends StatefulWidget {
   /// drag: only empty-slot long-presses reach this callback.
   final void Function(int x, int y)? onSlotLongPress;
 
+  /// Fired when dragged items are released over a DROP TARGET tile: an item
+  /// flagged [LayoutItem.isDropTarget], or a nested host whose child grid is
+  /// not mounted (a "closed folder").
+  ///
+  /// While such a tile is hovered, layout pushes freeze so it stays under
+  /// the cursor and it takes the nest highlight; on release the drag is
+  /// cancelled — the layout returns to its pre-drag state, so nothing lands
+  /// on the parent grid — and this callback runs. The app owns the outcome
+  /// (consume the items with `removeItems`, reject the drop by doing
+  /// nothing, …). Targeting is by POINTER position, so the dragged item may
+  /// be larger than the target.
+  ///
+  /// Falls back to `DashboardNestedScope.onItemDroppedOnHost` when null.
+  /// Zero cost per pointer move while both are null.
+  final DashboardItemDroppedOnHostCallback? onItemDroppedOnHost;
+
   /// Called when a drag operation starts on an item.
   final void Function(LayoutItem item)? onItemDragStart;
 
@@ -321,6 +338,42 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
   /// during an in-grid drag, while collision pushes are frozen (see the
   /// existing-host approach freeze in the drag branch of _performUpdate).
   String? _frozenOverChildHostId;
+
+  // Id of the drop-target tile currently hovered (closed nested host or
+  // isDropTarget item). Non-null means the layout is frozen and the release
+  // resolves as onItemDroppedOnHost instead of a grid placement.
+  String? _dropTargetHostId;
+
+  /// Overlay-level callback, falling back to the scope-wide one.
+  DashboardItemDroppedOnHostCallback? get _dropOnHostCallback =>
+      widget.onItemDroppedOnHost ?? _nestedCoordinator?.onItemDroppedOnHost;
+
+  /// The drop-target tile under [globalPosition], or null.
+  ///
+  /// Returns null immediately when no callback is registered, which is what
+  /// keeps the feature free for every existing setup.
+  LayoutItem? _dropTargetAt(Offset globalPosition) {
+    if (_dropOnHostCallback == null) return null;
+    if (_ownsCrossGridSession || _activeResizeHandle != null) return null;
+    // Pausing over the trash is a delete intent, not a drop intent.
+    if (_isHoveringTrash.peek()) return null;
+    final snapshot = widget.controller.internal.dragOriginSnapshot;
+    if (snapshot == null) return null;
+    final host = _itemAtGlobalIn(snapshot, globalPosition, excludeId: _activeItemId);
+    if (host == null || host.isSectionBarrier) return null;
+    // Never target a member of the dragged cluster.
+    if (widget.controller.selectedItemIds.value.contains(host.id)) return null;
+    // A MOUNTED child grid owns the interaction: the pointer must be able to
+    // enter it for a real cross-grid drop. Only closed hosts are targets.
+    if (_nestedCoordinator?.hasChildGrid(widget.controller, host.id) ?? false) {
+      return null;
+    }
+    if (!host.isDropTarget && !host.hasNestedGrid) return null;
+    // Statics ARE allowed here (unlike the nest-arming path): an immovable
+    // archive tile is a legitimate target, and it needs no freeze to stay
+    // under the cursor.
+    return host;
+  }
 
   /// Number of enclosing dashboards (0 = a root grid). Cached at
   /// registration; drives the nested-grid containment extension in
@@ -1206,6 +1259,40 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
         relativePos -= _dragGrabOffset!;
       }
 
+      // Closed-host / custom drop target. Checked BEFORE the approach
+      // freeze below, which handles hosts whose child grid is mounted: here
+      // the pointer has nowhere to enter, so the tile itself is the target.
+      final dropTarget = _dropTargetAt(position);
+      if (dropTarget != null) {
+        final impl = widget.controller.internal;
+        if (_dropTargetHostId != dropTarget.id) {
+          _dropTargetHostId = dropTarget.id;
+          impl
+            ..freezeDragPushes()
+            ..setNestTargetHover(dropTarget.id);
+        }
+        // Keep the dragged tile glued to the pointer while frozen (same
+        // offset convention as the approach-freeze path below).
+        final frozenSnapshot = impl.dragOriginSnapshot;
+        final pivot = frozenSnapshot?.firstWhereOrNull((i) => i.id == _activeItemId);
+        if (pivot != null) {
+          impl.setDragOffset(
+            relativePos -
+                Offset(
+                  pivot.x * (metrics.slotWidth + metrics.crossAxisSpacing),
+                  pivot.y * (metrics.slotHeight + metrics.mainAxisSpacing),
+                ),
+          );
+        }
+        _checkTrash(position);
+        return; // hold: no pushes, no placement while over a drop target
+      }
+      if (_dropTargetHostId != null) {
+        // Left the target without releasing: resume normal pushes.
+        _dropTargetHostId = null;
+        widget.controller.internal.setNestTargetHover(null);
+      }
+
       // Existing-host approach freeze. While the pointer travels over an
       // item that ALREADY hosts a child grid, revert the collision pushes so
       // the host — and the child grid mounted inside it — stays put long
@@ -1357,6 +1444,30 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
         return;
       }
 
+      // Release over a drop target: silent exit. The pre-drag layout is
+      // restored (nothing lands on the parent grid) and the app decides what
+      // the drop means — consume the items, or ignore the drop entirely.
+      final dropHostId = _dropTargetHostId;
+      if (dropHostId != null && _activeResizeHandle == null && !_ownsCrossGridSession) {
+        final impl = widget.controller.internal;
+        final snapshot = impl.dragOriginSnapshot ?? widget.controller.layout.value;
+        final host = widget.controller.layout.value.firstWhereOrNull((i) => i.id == dropHostId) ??
+            snapshot.firstWhereOrNull((i) => i.id == dropHostId);
+        final selectedIds = widget.controller.selectedItemIds.value;
+        final ids = selectedIds.isEmpty ? {currentItem.id} : selectedIds;
+        final dragged = snapshot.where((i) => ids.contains(i.id)).toList();
+        if (dragged.isEmpty) dragged.add(currentItem);
+        impl
+          ..cancelInteraction()
+          ..setNestTargetHover(null);
+        _dropTargetHostId = null;
+        if (host != null) {
+          _dropOnHostCallback?.call(dragged, host, widget.controller);
+        }
+        widget.onItemDragEnd?.call(currentItem);
+        return;
+      }
+
       if (_ownsCrossGridSession) {
         // The item was dragged into another grid (or back): finalize there.
         // A drop over no grid restores this grid's pre-drag layout.
@@ -1422,6 +1533,7 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
     if (!mounted) return;
     _activeItemId = null;
     _frozenOverChildHostId = null;
+    _dropTargetHostId = null;
     _activeItemInitialLayout = null;
     _operationStartPosition = Offset.zero;
     _activeResizeHandle = null;
@@ -1962,6 +2074,8 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
         !host.isStatic &&
         !host.isSectionBarrier &&
         !host.hasNestedGrid &&
+        // An explicit drop target is never a speculative nest candidate.
+        !host.isDropTarget &&
         !coordinator.hasChildGrid(widget.controller, host.id) &&
         (myReg == null || coordinator.canHostAtDepth(myReg.depth));
     if (!hostable) return;
