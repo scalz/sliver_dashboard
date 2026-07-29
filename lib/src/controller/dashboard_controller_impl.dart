@@ -376,6 +376,18 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     LayoutItem Function(LayoutItem item) transform, {
     bool recompact = true,
   }) {
+    // The per-gesture caches (_dragPivotOriginal, _dragClusterItems,
+    // _dragOriginalBBox, _lastMovedPivot) are captured in onDragStart and are
+    // NOT rewritten here. Replacing the pivot mid-gesture therefore leaves
+    // them pointing at an id the layout no longer contains, and the next
+    // onDragUpdate throws on `firstWhere`. Unreachable through the package's
+    // own flows (every nest-host lookup excludes the dragged item), so this
+    // documents the app-side contract rather than guarding a live path.
+    assert(
+      !(_isDraggingState.peek() || isResizing.peek()) || itemId != _pivotItemId,
+      'replaceItem: cannot replace the item of the active gesture '
+      '("$itemId" is the current pivot).',
+    );
     final current = layout.value;
 
     // Locate the target once. No-op on unknown id (robustness guarantee).
@@ -470,6 +482,19 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
 
   @override
   void replaceItem(String oldItemId, LayoutItem newItem) {
+    // The per-gesture caches (_dragPivotOriginal, _dragClusterItems,
+    // _dragOriginalBBox, _lastMovedPivot) are captured in onDragStart and are
+    // NOT rewritten here. Replacing the pivot mid-gesture therefore leaves
+    // them pointing at an id the layout no longer contains, and the next
+    // onDragUpdate throws on `firstWhere`. Unreachable through the package's
+    // own flows (every nest-host lookup excludes the dragged item), so this
+    // documents the app-side contract rather than guarding a live path.
+    assert(
+      !(_isDraggingState.peek() || isResizing.peek()) || oldItemId != _pivotItemId,
+      'replaceItem: cannot replace the item of the active gesture '
+      '("$oldItemId" is the current pivot).',
+    );
+
     final current = layout.value;
 
     // 1. Locate the old item to ensure it exists

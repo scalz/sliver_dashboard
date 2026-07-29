@@ -716,6 +716,10 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
                           (_isMobile && widget.dragStartGesture == DragStartGesture.longPress) ||
                                   widget.onSlotLongPress != null
                               ? (details) {
+                                  if (_nestedCoordinator?.isPointerClaimedByOther(this) ?? false) {
+                                    return;
+                                  }
+
                                   // Empty-slot long-press wins; item long-press
                                   // keeps its historical role (drag start on
                                   // mobile longPress mode).
@@ -2198,9 +2202,26 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
       excludeItemId: itemId,
     );
 
+    // Ancestor handover requires a REAL exit. `targetAt` can resolve an
+    // ancestor grid while the pointer is still physically inside ours:
+    // containment for a linked child defers to the parent's `itemAtGlobal`,
+    // and any disagreement there (host pushed by a cascade, point mapping to
+    // a neighbouring cell, host momentarily unresolvable) hands the point
+    // back to the parent. Starting a session then silently removes the item
+    // from this grid and drops a placeholder in the parent, whose collision
+    // pushes move the HOST tile while the dragged tile pops into the floating
+    // proxy — both appear to move at once, which is exactly the reported bug.
+    //
+    // Siblings (same depth) and DEEPER grids keep the immediate handover:
+    // they never overlap our own bounds, so resolving one already means the
+    // pointer left us. Only shallower targets need the exit gate.
+    final isEnteringAncestor = reg != null && reg.depth < _nestedDepth;
+    final entersOtherGrid =
+        reg != null && !identical(reg.target, this) && (!isEnteringAncestor || isOutside);
+
     // Start cross-grid session immediately if the pointer exits our overlay bounds,
     // or if it enters another valid registered target.
-    if (isOutside || (reg != null && !identical(reg.target, this))) {
+    if (isOutside || entersOtherGrid) {
       _stopScrollTimer();
       _trashTimer?.cancel();
       _isHoveringTrash.value = false;

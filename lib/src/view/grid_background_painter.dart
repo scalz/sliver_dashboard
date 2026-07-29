@@ -63,14 +63,14 @@ class GridBackgroundPainter extends CustomPainter {
 
     final isVertical = metrics.scrollDirection == Axis.vertical;
 
-    var sliverTop = 0.0;
-    var sliverHeight = 0.0;
+    final double sliverTop;
+    final double sliverHeight;
 
     if (renderSliver != null && renderSliver!.attached && renderSliver!.geometry != null) {
       sliverTop = renderSliver!.constraints.precedingScrollExtent;
       sliverHeight = renderSliver!.geometry!.scrollExtent;
     } else {
-      // Fallback si le sliver n'a pas encore de géométrie calculée
+      sliverTop = isVertical ? metrics.padding.top : metrics.padding.left;
       sliverHeight = isVertical ? size.height : size.width;
     }
 
