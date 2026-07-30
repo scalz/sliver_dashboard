@@ -903,6 +903,194 @@ void main() {
     });
   });
 
+  group('Cross-grid placeholder anchoring', () {
+    // `_showPlaceholderAt` places the tile's TOP-LEFT in the cell under
+    // the point it receives. That is right for the DragTarget path — Flutter's
+    // `DragTargetDetails.offset` IS the feedback's top-left — but the cross-grid
+    // path fed it the PROBE point, so a tile grabbed at its centre dropped its
+    // shadow one grab-offset down-right of the floating proxy. Invisible with
+    // 1x1 tiles (the offset stays inside one cell), obvious with multi-cell
+    // tiles in a dense grid.
+    //
+    // Fixture geometry (zero spacing everywhere, so slot size == stride):
+    //   A: `sourceWidth` x 200 at global y 0, 4 slots.
+    //   B: 400 x 360 at global y 200, 4 slots => slot 100.
+    // B carries a static anchor at (0, 5) for ONE reason: an EMPTY grid in edit
+    // mode reports a sliver extent of exactly 200 px (`performLayout`'s
+    // empty-layout early return), and `_isInsideSliver` tests against
+    // `geometry.paintExtent` — so without content, everything below B-local
+    // y = 200 resolves to no grid at all and no placeholder is ever created.
+    // Row 5 keeps it clear of every cell asserted below.
+    late DashboardController gridB;
+
+    setUp(() {
+      gridB = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: const [
+          LayoutItem(id: 'anchor', x: 0, y: 5, w: 1, h: 1, isStatic: true),
+        ],
+      )
+        ..setEditMode(true)
+        // Free placement: vertical compaction would pull the placeholder back
+        // to y = 0 and hide any error on the main axis.
+        ..setCompactionType(CompactType.none);
+    });
+
+    tearDown(() => gridB.dispose());
+
+    Widget buildTwoGrids(DashboardController gridA, {double sourceWidth = 400}) {
+      return MaterialApp(
+        home: Scaffold(
+          body: DashboardNestedScope(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SizedBox(
+                  height: 200,
+                  width: sourceWidth,
+                  child: Dashboard<String>(
+                    controller: gridA,
+                    mainAxisSpacing: 0,
+                    crossAxisSpacing: 0,
+                    itemBuilder: (context, item) =>
+                        ColoredBox(color: Colors.blue, child: Text('A-${item.id}')),
+                  ),
+                ),
+                SizedBox(
+                  height: 360,
+                  width: 400,
+                  child: Dashboard<String>(
+                    controller: gridB,
+                    mainAxisSpacing: 0,
+                    crossAxisSpacing: 0,
+                    itemBuilder: (context, item) =>
+                        ColoredBox(color: Colors.green, child: Text('B-${item.id}')),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    /// B-local (250, 250): clear of both 50 px auto-scroll hot zones.
+    const inTargetGrid = Offset(250, 450);
+
+    testWidgets('a tile grabbed at its centre drops its shadow under itself', (tester) async {
+      await runOnDesktop(() async {
+        final gridA = DashboardController(
+          initialSlotCount: 4,
+          initialLayout: const [LayoutItem(id: 'a1', x: 0, y: 0, w: 2, h: 2)],
+        )..setEditMode(true);
+        addTearDown(gridA.dispose);
+
+        await tester.pumpWidget(buildTwoGrids(gridA));
+        await tester.pumpAndSettle();
+
+        // a1 is 2x2 at slot 100 => 200x200 px, centred at A-local (100, 100).
+        // Grab offset = (100, 100) => grab fraction = (0.5, 0.5).
+        final gesture = await tester.startGesture(tester.getCenter(find.text('A-a1')));
+        await tester.pump();
+        await gesture.moveBy(const Offset(0, 10)); // engage the drag
+        await tester.pump();
+
+        // The tile is 2x2 in B as well (same slot size), so its top-left sits at
+        // (250 - 100, 250 - 100) = (150, 150) => cell (1, 1). Fed the raw
+        // pointer, the old code produced cell (2, 2).
+        await gesture.moveTo(inTargetGrid);
+        await tester.pump();
+
+        final placeholder = gridB.layout.value.firstWhere((i) => i.id == '__placeholder__');
+        expect(placeholder.x, 1);
+        expect(placeholder.y, 1);
+
+        await gesture.up();
+        await tester.pumpAndSettle();
+
+        final landed = gridB.layout.value.firstWhere((i) => i.id == 'a1');
+        expect(landed.x, 1);
+        expect(landed.y, 1, reason: 'the drop must land where the preview was');
+      });
+    });
+
+    testWidgets('the anchor is re-derived from the tile size in the TARGET grid', (tester) async {
+      await runOnDesktop(() async {
+        // A is twice as wide: slot 200 there, slot 100 in B. The 1x1 tile
+        // measures 200x200 px in A and 100x100 px in B, so the grab FRACTION
+        // (0.5, 0.5) corrects by 50 px in B, not by A's 100 px.
+        final gridA = DashboardController(
+          initialSlotCount: 4,
+          initialLayout: const [LayoutItem(id: 'a1', x: 0, y: 0, w: 1, h: 1)],
+        )..setEditMode(true);
+        addTearDown(gridA.dispose);
+
+        await tester.pumpWidget(buildTwoGrids(gridA, sourceWidth: 800));
+        await tester.pumpAndSettle();
+
+        final gesture = await tester.startGesture(tester.getCenter(find.text('A-a1')));
+        await tester.pump();
+        await gesture.moveBy(const Offset(0, 10));
+        await tester.pump();
+
+        await gesture.moveTo(inTargetGrid);
+        await tester.pump();
+
+        final placeholder = gridB.layout.value.firstWhere((i) => i.id == '__placeholder__');
+        expect(placeholder.x, 2, reason: '250 - 0.5 * 100 = 200 => cell 2');
+        expect(
+          placeholder.y,
+          2,
+          reason: "reusing A's pixel offset (100) would give 150 => cell 1",
+        );
+
+        await gesture.up();
+        await tester.pumpAndSettle();
+      });
+    });
+
+    testWidgets('a tile grabbed near its top-left keeps the historical placement', (tester) async {
+      await runOnDesktop(() async {
+        // Mirror case: a small grab fraction must not shift the placement — the
+        // anchor correction has to be proportional, not a constant nudge.
+        //
+        // The grab point is offset by 25 px on purpose: `resizeHandleSide`
+        // defaults to 20, so the exact corner sits inside the topLeft resize
+        // band and `_onPointerDown` would start a RESIZE instead of a drag —
+        // no session, no placeholder, `No element`.
+        final gridA = DashboardController(
+          initialSlotCount: 4,
+          initialLayout: const [LayoutItem(id: 'a1', x: 0, y: 0, w: 2, h: 2)],
+        )..setEditMode(true);
+        addTearDown(gridA.dispose);
+
+        await tester.pumpWidget(buildTwoGrids(gridA));
+        await tester.pumpAndSettle();
+
+        final gesture = await tester.startGesture(
+          tester.getTopLeft(find.text('A-a1')) + const Offset(25, 25),
+        );
+        await tester.pump();
+        await gesture.moveBy(const Offset(0, 10));
+        await tester.pump();
+
+        // Grab fraction 25/200 = 0.125 => a 25 px correction on a 200x200 tile
+        // in B: anchor (225, 225), still cell (2, 2) — same as the uncorrected
+        // (250, 250). The centre-grab test above is what proves the correction
+        // fires at all; this one proves it does not overshoot.
+        await gesture.moveTo(inTargetGrid);
+        await tester.pump();
+
+        final placeholder = gridB.layout.value.firstWhere((i) => i.id == '__placeholder__');
+        expect(placeholder.x, 2, reason: 'a small grab fraction must not move the cell');
+        expect(placeholder.y, 2);
+
+        await gesture.up();
+        await tester.pumpAndSettle();
+      });
+    });
+  });
+
   group('impl primitives: dragOriginSnapshot & freezeDragPushes', () {
     late DashboardController controller;
 

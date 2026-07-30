@@ -1539,7 +1539,10 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
     if (!mounted) return;
     _activeItemId = null;
     _frozenOverChildHostId = null;
-    _dropTargetHostId = null;
+    if (_dropTargetHostId != null) {
+      widget.controller.internal.setNestTargetHover(null);
+      _dropTargetHostId = null;
+    }
     _activeItemInitialLayout = null;
     _operationStartPosition = Offset.zero;
     _activeResizeHandle = null;
@@ -1679,6 +1682,7 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
             _lastGlobalPosition!,
             w: _foreignDragItem!.w,
             h: _foreignDragItem!.h,
+            grabFraction: _nestedCoordinator?.sessionGrabFraction ?? Offset.zero,
           );
         } else if (widget.controller.currentDragPlaceholder != null) {
           // External DragTarget hover only; never resurrect a placeholder
@@ -1748,10 +1752,20 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
     return (metrics: metrics, dx: dx, dy: dy);
   }
 
-  /// Shows (or moves) the external/foreign placeholder of size [w] x [h] at
-  /// the grid cell under [globalPosition]. Shared by the [DragTarget] path
-  /// (`widget.placeholderWidth/Height`) and by cross-grid drags (dragged item size).
-  void _showPlaceholderAt(Offset globalPosition, {required int w, required int h}) {
+  /// Shows (or moves) the external/foreign placeholder of size [w] x [h] so
+  /// that [globalPosition] falls at [grabFraction] of the tile.
+  ///
+  /// [grabFraction] defaults to `(0,0)` — the top-left — which is exactly what
+  /// the [DragTarget] path supplies, since `DragTargetDetails.offset` already
+  /// IS the feedback's top-left corner. Cross-grid drags pass the raw pointer
+  /// position together with the session's grab fraction, so the placeholder
+  /// lands under the floating proxy instead of one grab-offset away from it.
+  void _showPlaceholderAt(
+    Offset globalPosition, {
+    required int w,
+    required int h,
+    Offset grabFraction = Offset.zero,
+  }) {
     final point = _gridPointAtGlobal(globalPosition);
     if (point == null) return;
 
@@ -1763,30 +1777,26 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
     // throws ArgumentError when the upper bound is negative). The coordinator
     // sanitizes projections, but this method is also reachable via the public
     // DragTarget path with caller-provided dimensions.
-    final clampedW = metrics.scrollDirection == Axis.vertical ? min(w, metrics.slotCount) : w;
-    final clampedH = metrics.scrollDirection != Axis.vertical ? min(h, metrics.slotCount) : h;
+    final isVertical = metrics.scrollDirection == Axis.vertical;
+    final clampedW = isVertical ? min(w, metrics.slotCount) : w;
+    final clampedH = !isVertical ? min(h, metrics.slotCount) : h;
 
-    final x = (point.dx /
-            (metrics.slotWidth +
-                (metrics.scrollDirection == Axis.vertical
-                    ? metrics.crossAxisSpacing
-                    : metrics.mainAxisSpacing)))
-        .floor();
-    final y = (point.dy /
-            (metrics.slotHeight +
-                (metrics.scrollDirection == Axis.vertical
-                    ? metrics.mainAxisSpacing
-                    : metrics.crossAxisSpacing)))
-        .floor();
+    final spacingX = isVertical ? metrics.crossAxisSpacing : metrics.mainAxisSpacing;
+    final spacingY = isVertical ? metrics.mainAxisSpacing : metrics.crossAxisSpacing;
+    final strideX = metrics.slotWidth + spacingX;
+    final strideY = metrics.slotHeight + spacingY;
 
-    final clampedX = max(
-      0,
-      metrics.scrollDirection == Axis.vertical ? x.clamp(0, metrics.slotCount - clampedW) : x,
-    );
-    final clampedY = max(
-      0,
-      metrics.scrollDirection == Axis.vertical ? y : y.clamp(0, metrics.slotCount - clampedH),
-    );
+    // The anchor is re-derived from the tile's size IN THIS GRID.
+    // Reusing the source grid's pixel offset would drift by the density ratio
+    // the moment the item is projected into a grid of a different slot size.
+    final anchorX = point.dx - grabFraction.dx * (clampedW * strideX - spacingX);
+    final anchorY = point.dy - grabFraction.dy * (clampedH * strideY - spacingY);
+
+    final x = (anchorX / strideX).floor();
+    final y = (anchorY / strideY).floor();
+
+    final clampedX = max(0, isVertical ? x.clamp(0, metrics.slotCount - clampedW) : x);
+    final clampedY = max(0, isVertical ? y : y.clamp(0, metrics.slotCount - clampedH));
 
     widget.controller.internal.showPlaceholder(
       x: clampedX,
@@ -1887,7 +1897,12 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
     // Keep the freshest position so the auto-scroll tick can re-anchor the
     // placeholder while the content moves under a stationary pointer.
     _lastGlobalPosition = globalPosition;
-    _showPlaceholderAt(globalPosition, w: item.w, h: item.h);
+    _showPlaceholderAt(
+      globalPosition,
+      w: item.w,
+      h: item.h,
+      grabFraction: _nestedCoordinator?.sessionGrabFraction ?? Offset.zero,
+    );
     _handleAutoScroll(globalPosition);
   }
 

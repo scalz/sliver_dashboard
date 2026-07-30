@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:sliver_dashboard/sliver_dashboard.dart';
 
-/// # Nested 2 — size-driven folders
+/// # Nested — size-driven folders
 ///
 /// Composes two features into one interaction:
 ///
@@ -254,7 +254,7 @@ class _NestedExamplePageState extends State<NestedExamplePage> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Nested 2 — size-driven folders'),
+        title: const Text('Nested — size-driven folders'),
         elevation: 2,
         actions: [
           if (!isDesktop)

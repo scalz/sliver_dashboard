@@ -911,6 +911,151 @@ void main() {
     });
   });
 
+  group('Nest highlight release', () {
+    // `hoveredNestTargetId` is a single-holder slot with three writers
+    // (the drop-target branch of _performUpdate, _armSameGridNest, and the
+    // coordinator's session hover). Two exit paths used to skip its release.
+    late DashboardController gridA;
+    late DashboardController gridB;
+
+    setUp(() {
+      gridA = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: const [
+          LayoutItem(id: 'a1', x: 0, y: 0, w: 1, h: 1),
+          // A CLOSED host: declared nested, but no child grid is ever mounted.
+          LayoutItem(id: 'closed', x: 2, y: 0, w: 1, h: 1, hasNestedGrid: true),
+        ],
+      )..setEditMode(true);
+      gridB = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: const [LayoutItem(id: 'b1', x: 0, y: 0, w: 1, h: 1)],
+      )..setEditMode(true);
+    });
+
+    tearDown(() {
+      gridA.dispose();
+      gridB.dispose();
+    });
+
+    Widget buildTwoGrids({DashboardItemDroppedOnHostCallback? onDroppedOnHost}) {
+      return MaterialApp(
+        home: Scaffold(
+          body: DashboardNestedScope(
+            onItemDroppedOnHost: onDroppedOnHost ?? (_, __, ___, ____) {},
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SizedBox(
+                  height: 250,
+                  width: 400,
+                  child: Dashboard<String>(
+                    controller: gridA,
+                    mainAxisSpacing: 0,
+                    crossAxisSpacing: 0,
+                    itemBuilder: (context, item) =>
+                        ColoredBox(color: Colors.blue, child: Text('A-${item.id}')),
+                  ),
+                ),
+                SizedBox(
+                  height: 250,
+                  width: 400,
+                  child: Dashboard<String>(
+                    controller: gridB,
+                    mainAxisSpacing: 0,
+                    crossAxisSpacing: 0,
+                    itemBuilder: (context, item) =>
+                        ColoredBox(color: Colors.green, child: Text('B-${item.id}')),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    testWidgets('a drop-target hover armed before a cross-grid handoff is released at drag end',
+        (tester) async {
+      await runOnDesktop(() async {
+        await tester.pumpWidget(buildTwoGrids());
+        await tester.pumpAndSettle();
+
+        final gesture = await tester.startGesture(tester.getCenter(find.text('A-a1')));
+        await tester.pump();
+        await gesture.moveBy(const Offset(0, 10));
+        await tester.pump();
+
+        // Arm the closed host.
+        await gesture.moveTo(tester.getCenter(find.text('A-closed')));
+        await tester.pump();
+        expect(
+          gridA.internal.hoveredNestTargetId.value,
+          'closed',
+          reason: 'sanity: the drop target must be armed',
+        );
+
+        // Leave the sliver: _maybeStartCrossGridSession returns true and
+        // _performUpdate returns BEFORE the "left the target" cleanup.
+        await gesture.moveTo(tester.getCenter(find.text('B-b1')));
+        await tester.pump();
+
+        await gesture.up();
+        await tester.pumpAndSettle();
+
+        expect(
+          gridA.internal.hoveredNestTargetId.value,
+          isNull,
+          reason: 'the ring must not survive the gesture that armed it',
+        );
+      });
+    });
+
+    testWidgets('leaving every grid with a target armed clears it and does not swallow the drop',
+        (tester) async {
+      await runOnDesktop(() async {
+        var droppedOnHost = 0;
+        await tester.pumpWidget(
+          buildTwoGrids(onDroppedOnHost: (_, __, ___, ____) => droppedOnHost++),
+        );
+        await tester.pumpAndSettle();
+
+        // Drag OUT of B, so the session's hovered grid is A and the closed host
+        // belongs to the hovered grid rather than to the source.
+        final gesture = await tester.startGesture(tester.getCenter(find.text('B-b1')));
+        await tester.pump();
+        await gesture.moveBy(const Offset(0, 10));
+        await tester.pump();
+
+        await gesture.moveTo(tester.getCenter(find.text('A-closed')));
+        await tester.pump();
+        expect(gridA.internal.hoveredNestTargetId.value, 'closed', reason: 'sanity');
+
+        // Into the void, below both grids: `session.over` becomes null, and the
+        // early return used to skip _clearDropTarget entirely.
+        await gesture.moveTo(const Offset(200, 560));
+        await tester.pump();
+
+        expect(
+          gridA.internal.hoveredNestTargetId.value,
+          isNull,
+          reason: 'the ring belongs to a grid the pointer has left',
+        );
+
+        await gesture.up();
+        await tester.pumpAndSettle();
+
+        expect(
+          droppedOnHost,
+          0,
+          reason: 'a release over no grid must cancel, not resolve as a drop '
+              'onto a folder the pointer had already left',
+        );
+        expect(gridB.layout.value.any((i) => i.id == 'b1'), isTrue);
+      });
+    });
+  });
+
   // Helper to generate a large layout
   List<LayoutItem> generateItems(int count, int cols) {
     final items = <LayoutItem>[];

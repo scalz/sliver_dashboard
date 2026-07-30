@@ -1,5 +1,7 @@
 ## 2.4.0
 
+**No API breaking changes.**
+
 ### Features
 - **Pixel-Preserving Dimension Projection (`preservePixelSize`)**: 
   Added `DimensionProjectionPolicy.preservePixelSize` to preserve an item's exact physical 
@@ -59,6 +61,8 @@
   re-exported by the package, no extra import needed).
 
 ## 2.3.0
+
+**No API breaking changes.**
 
 ### Features
 - **Empty-slot interactivity** (`Dashboard.onSlotTap` / `onSlotLongPress`):

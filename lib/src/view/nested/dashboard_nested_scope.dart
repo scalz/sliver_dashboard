@@ -116,9 +116,11 @@ enum CrossGridProbe {
 
   /// The center of the dragged tile decides.
   ///
-  /// Target detection and placeholder placement follow the tile's visual
-  /// center instead of the cursor, so behavior no longer depends on where
-  /// the tile was grabbed.
+  /// TARGET DETECTION and nest-hover follow the tile's visual center instead of
+  /// the cursor, so which grid and which host are resolved no longer depends on
+  /// where the tile was grabbed. Placeholder PLACEMENT is unaffected by this
+  /// choice: it always anchors on the tile's own grab fraction, so the preview
+  /// sits under the floating proxy in both modes.
   itemCenter,
 }
 
@@ -604,6 +606,27 @@ class DashboardNestedCoordinator {
   /// coordinator's own limit (e.g. to hide an "add sub-grid" affordance).
   bool canHostAtDepth(int depth) => maxNestingDepth == null || depth < maxNestingDepth!;
 
+  /// The grab point of the active cross-grid session, expressed as a FRACTION
+  /// of the dragged tile's own pixel size — `(0,0)` grabbed by its top-left,
+  /// `(0.5,0.5)` grabbed at its centre.
+  ///
+  /// A fraction, not the raw pixel offset: the tile can be RESIZED on
+  /// entering a grid of a different density (see [DimensionProjectionPolicy]),
+  /// so the anchor must be re-derived from the tile's size in the TARGET grid.
+  ///
+  /// Null when no session is active, or when the source tile had a degenerate
+  /// size (a grid laid out at zero extent).
+  Offset? get sessionGrabFraction {
+    final session = _session;
+    if (session == null) return null;
+    final size = session.itemPixelSize;
+    if (!(size.width > 0) || !(size.height > 0)) return null;
+    return Offset(
+      session.grabOffset.dx / size.width,
+      session.grabOffset.dy / size.height,
+    );
+  }
+
   /// The probe point for the active session at pointer [globalPosition]:
   /// the pointer itself, or the dragged tile's visual center.
   Offset probePointFor(
@@ -964,8 +987,12 @@ class DashboardNestedCoordinator {
     if (session == null) return;
     session.proxyPosition.value = globalPosition - session.grabOffset;
 
-    // Target detection, placeholder placement and nest-hover all use the
-    // same probe point so the three stay consistent (see [CrossGridProbe]).
+    // Target detection and nest-hover use the probe point so the two stay
+    // consistent (see [CrossGridProbe]). Placeholder PLACEMENT deliberately
+    // does not: it is anchored on the tile's own grab fraction by the target
+    // overlay, so the preview lands under the floating proxy in either probe
+    // mode. Feeding the probe there put the tile's TOP-LEFT under the probe,
+    // i.e. one grab-offset away from the tile the user actually sees.
     final probePoint = probePointFor(
       globalPosition,
       grabOffset: session.grabOffset,
@@ -990,6 +1017,15 @@ class DashboardNestedCoordinator {
     if (!identical(newTarget, oldTarget)) {
       oldTarget?.foreignDragLeave();
       _clearNestHover(session);
+      // Reason: the drop-target hover must be released here too, symmetrically
+      // with the nest hover. It used to be cleared only further down, inside
+      // the `dropTargetsEnabled` block — which the `over == null` early return
+      // below skips entirely. Leaving a grid with a target armed therefore left
+      // the ring painted on its tile AND left `dropTargetHostId` set, so a
+      // release over no grid resolved as a drop onto a folder the pointer had
+      // long left, handing the items to onItemDroppedOnHost instead of
+      // cancelling.
+      _clearDropTarget(session);
       session.over = newTarget;
     }
     final over = session.over;
@@ -1098,7 +1134,12 @@ class DashboardNestedCoordinator {
       }
     }
 
-    over.foreignDragOver(projectedItem, probePoint);
+    // Reason: the POINTER position, not the probe point. The target overlay
+    // anchors the placeholder with `sessionGrabFraction`, re-derived against
+    // the tile's size in ITS OWN grid — so the preview sits under the floating
+    // proxy whatever the probe mode and whatever the projection did to the
+    // tile's dimensions.
+    over.foreignDragOver(projectedItem, globalPosition);
   }
 
   /// Finalizes an active session on pointer-up.
