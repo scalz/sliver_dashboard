@@ -291,6 +291,8 @@ class _ConfigPanel extends StatelessWidget {
     switch (policy) {
       case DimensionProjectionPolicy.preserveLogicalSize:
         return 'Preserve Logical Size';
+      case DimensionProjectionPolicy.preservePixelSize:
+        return 'Preserve Pixel Size';
       case DimensionProjectionPolicy.preserveVisualProportion:
         return 'Preserve Visual Proportion';
       case DimensionProjectionPolicy.custom:
@@ -378,6 +380,8 @@ class _PolicyCard extends StatelessWidget {
       case DimensionProjectionPolicy.preserveLogicalSize:
         description =
             'Cards preserve their exact logical coordinates. A (2x2) card remains a (2x2) card regardless of the target density, leading to potential overlapping or oversized slots.';
+      case DimensionProjectionPolicy.preservePixelSize:
+        description = 'Cards preserve their exact pixel size.';
       case DimensionProjectionPolicy.preserveVisualProportion:
         description =
             'Proportional scale adjustment is computed dynamically on the fly. Dragging a (2x2) item representing 25% of grid 1 (8 col) scales down to a (1x1) representing 25% of grid 2 (4 col) keeping perfectly aligned aspect ratio ratios.';

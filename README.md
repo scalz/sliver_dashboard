@@ -1031,6 +1031,28 @@ Key options:
   ids, so groups stay portable between grids and across save/load.
 - Programmatic move: `coordinator.moveItemToGrid(from: a, to: b, itemId: 'x')`.
 
+| `DimensionProjectionPolicy` | Preserves | Typical use |
+|---|---|---|
+| `preserveLogicalSize` (default) | `w`/`h` in cells | grids of equal physical density |
+| `preserveVisualProportion` | the fraction of the container | grids of similar width, different density |
+| `preservePixelSize` | the physical pixel span | nested panels; grids of very different widths |
+| `custom` | delegated to the application | domain rules |
+
+> **`preserveVisualProportion` is not "same apparent size".** It preserves the
+> *fraction of the container*. Because a nested grid occupies a cell-range
+> of its parent, its container is physically much narrower: a tile representing
+> "1/6 of the page" becoming "1/6 of the panel" shrinks accordingly. To keep a
+> tile's apparent physical size when entering a panel, use `preservePixelSize`.
+>
+> With a 24-column page 1200 px wide and a panel hosted in a 6-column tile split
+> into 12 columns, a `w:4` tile (193 px) projects to:
+> `preserveLogicalSize` → 87 px, `preserveVisualProportion` → 40 px,
+> `preservePixelSize` → 193 px.
+
+> `moveItemToGrid` is **deliberately unprojected**: the caller is explicit and
+> owns the geometry. To reproduce the sizing a drag would have produced, use
+> `coordinator.projectItemBetween(from:, to:, item:)` then `setItemSize`.
+
 Persistence of the whole tree is a single call each way:
 
 ```dart
@@ -1364,7 +1386,7 @@ The development of `sliver_dashboard` can be assisted using AI coding assistants
 
 *   **Strict Architectural Constraints:** All contributions must align with the State, Logic, and View layers detailed in [ARCHITECTURE.md](ARCHITECTURE.md). AI assistants are further guided by the rules in [AGENTS.md](AGENTS.md) file, which dictates core invariants (such as avoiding allocations during layout phases, enforcing proper tree isolation via `RepaintBoundary`, and maintaining row-index consistency).
 *   **Systematic Human Review:** No generated code is merged without manual review to verify algorithmic efficiency, readability, and overall design cohesion.
-*   **CI Test Verification:** The suite of 500+ regression tests running in CI serves as the final validator. Every contribution, whether handwritten or co-authored with an AI, must pass all tests and respect documented performance budgets.
+*   **CI Test Verification:** The suite of 600+ regression tests running in CI serves as the final validator. Every contribution, whether handwritten or co-authored with an AI, must pass all tests and respect documented performance budgets.
 
 #### How to Contribute:
 1. **Understand the System:** Read [ARCHITECTURE.md](ARCHITECTURE.md) to familiarize yourself with the declarative UI, reactive state management, and nested grids protocol.

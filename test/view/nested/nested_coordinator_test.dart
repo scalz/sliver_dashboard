@@ -11,6 +11,26 @@ import '../../test_helpers.dart';
 //
 // ignore_for_file: cascade_invocations
 
+/// Builds metrics with an exact stride: `stride = slotWidth + crossAxisSpacing`
+/// for a vertical grid.
+SlotMetrics _metrics({
+  required double slotWidth,
+  required double slotHeight,
+  required int slotCount,
+  double mainAxisSpacing = 0,
+  double crossAxisSpacing = 0,
+  Axis scrollDirection = Axis.vertical,
+}) =>
+    SlotMetrics(
+      slotWidth: slotWidth,
+      slotHeight: slotHeight,
+      mainAxisSpacing: mainAxisSpacing,
+      crossAxisSpacing: crossAxisSpacing,
+      padding: EdgeInsets.zero,
+      scrollDirection: scrollDirection,
+      slotCount: slotCount,
+    );
+
 /// A minimal in-test [CrossGridDragTarget]: geometry comes from a real
 /// attached [RenderBox] (pumped by the test), behavior is scripted so the
 /// coordinator's own state machine can be exercised without gestures.
@@ -1504,6 +1524,530 @@ void main() {
   });
 
   group('DashboardNestedCoordinator - Proportional & Custom Projection', () {
+    group('DimensionProjectionPolicy.preservePixelSize', () {
+      late DashboardNestedCoordinator coordinator;
+
+      setUp(() {
+        coordinator = DashboardNestedCoordinator(
+          projectionPolicy: DimensionProjectionPolicy.preservePixelSize,
+        );
+      });
+
+      tearDown(() => coordinator.dispose());
+
+      test('scales by the stride ratio, not by the slot-count ratio', () {
+        // Source: 100 px stride. Target: 25 px stride. A 2-slot item spans 200 px,
+        // which is 8 target slots.
+        final projected = coordinator.projectItem(
+          const LayoutItem(id: 'a', x: 0, y: 0, w: 2, h: 3),
+          sourceSlotCount: 12,
+          targetSlotCount: 24,
+          sourceMetrics: _metrics(slotWidth: 100, slotHeight: 100, slotCount: 12),
+          targetMetrics: _metrics(slotWidth: 25, slotHeight: 25, slotCount: 24),
+        );
+
+        expect(projected.w, 8);
+        expect(projected.h, 12);
+      });
+
+      test('still scales when both grids have the SAME slot count', () {
+        // Regression guard: the `sourceSlotCount == targetSlotCount` shortcut must
+        // not short-circuit this policy. A nested panel typically keeps a similar
+        // column count while being physically much narrower.
+        final projected = coordinator.projectItem(
+          const LayoutItem(id: 'a', x: 0, y: 0, w: 2, h: 2),
+          sourceSlotCount: 6,
+          targetSlotCount: 6,
+          sourceMetrics: _metrics(slotWidth: 120, slotHeight: 120, slotCount: 6),
+          targetMetrics: _metrics(slotWidth: 40, slotHeight: 40, slotCount: 6),
+        );
+
+        expect(projected.w, 6, reason: '2 * 120 / 40 = 6');
+        expect(projected.h, 6);
+      });
+
+      test('absorbs the spacing difference through the augmented span', () {
+        // stride source = 100 + 8 = 108 ; stride target = 40 + 4 = 44.
+        // 3 * 108 / 44 = 7.36 -> 7
+        final projected = coordinator.projectItem(
+          const LayoutItem(id: 'a', x: 0, y: 0, w: 3, h: 1),
+          sourceSlotCount: 12,
+          targetSlotCount: 24,
+          sourceMetrics: _metrics(
+            slotWidth: 100,
+            slotHeight: 100,
+            slotCount: 12,
+            crossAxisSpacing: 8,
+            mainAxisSpacing: 8,
+          ),
+          targetMetrics: _metrics(
+            slotWidth: 40,
+            slotHeight: 40,
+            slotCount: 24,
+            crossAxisSpacing: 4,
+            mainAxisSpacing: 4,
+          ),
+        );
+
+        expect(projected.w, 7);
+      });
+
+      test('uses the per-axis strides, so a different aspect ratio is honoured', () {
+        // Target cells are twice as wide as they are tall relative to the source:
+        // the width and height ratios must differ.
+        final projected = coordinator.projectItem(
+          const LayoutItem(id: 'a', x: 0, y: 0, w: 2, h: 2),
+          sourceSlotCount: 6,
+          targetSlotCount: 6,
+          sourceMetrics: _metrics(slotWidth: 100, slotHeight: 100, slotCount: 6),
+          targetMetrics: _metrics(slotWidth: 50, slotHeight: 25, slotCount: 6),
+        );
+
+        expect(projected.w, 4, reason: '2 * 100 / 50');
+        expect(projected.h, 8, reason: '2 * 100 / 25');
+      });
+
+      test('scales minW/minH so a physical touch-target floor is preserved', () {
+        final projected = coordinator.projectItem(
+          const LayoutItem(id: 'a', x: 0, y: 0, w: 4, h: 4, minW: 2, minH: 2),
+          sourceSlotCount: 24,
+          targetSlotCount: 24,
+          sourceMetrics: _metrics(slotWidth: 100, slotHeight: 100, slotCount: 24),
+          targetMetrics: _metrics(slotWidth: 50, slotHeight: 50, slotCount: 24),
+        );
+
+        expect(projected.w, 8);
+        expect(projected.minW, 4, reason: 'a 2-slot floor at 100 px is a 4-slot floor at 50 px');
+        expect(projected.minH, 4);
+      });
+
+      test('scales a finite maxW/maxH and clamps the result against it', () {
+        final projected = coordinator.projectItem(
+          const LayoutItem(id: 'a', x: 0, y: 0, w: 4, h: 1, maxW: 6),
+          sourceSlotCount: 24,
+          targetSlotCount: 24,
+          sourceMetrics: _metrics(slotWidth: 100, slotHeight: 100, slotCount: 24),
+          targetMetrics: _metrics(slotWidth: 50, slotHeight: 50, slotCount: 24),
+        );
+
+        // Uncapped projection would be 8; the scaled cap is 12, so 8 stands.
+        expect(projected.w, 8);
+        expect(projected.maxW, 12);
+      });
+
+      test('an infinite maxW stays infinite', () {
+        final projected = coordinator.projectItem(
+          const LayoutItem(id: 'a', x: 0, y: 0, w: 2, h: 2),
+          sourceSlotCount: 6,
+          targetSlotCount: 6,
+          sourceMetrics: _metrics(slotWidth: 100, slotHeight: 100, slotCount: 6),
+          targetMetrics: _metrics(slotWidth: 50, slotHeight: 50, slotCount: 6),
+        );
+
+        expect(projected.maxW, double.infinity);
+        expect(projected.maxH, double.infinity);
+      });
+
+      test('clamps to the target width when the item cannot physically fit', () {
+        final projected = coordinator.projectItem(
+          const LayoutItem(id: 'a', x: 0, y: 0, w: 6, h: 1),
+          sourceSlotCount: 6,
+          targetSlotCount: 4,
+          sourceMetrics: _metrics(slotWidth: 100, slotHeight: 100, slotCount: 6),
+          targetMetrics: _metrics(slotWidth: 25, slotHeight: 25, slotCount: 4),
+        );
+
+        // 6 * 100 / 25 = 24, capped to the 4 available columns.
+        expect(projected.w, 4);
+        expect(projected.minW, lessThanOrEqualTo(4), reason: 'minW must stay satisfiable');
+      });
+
+      test('never produces a zero dimension when scaling down hard', () {
+        final projected = coordinator.projectItem(
+          const LayoutItem(id: 'a', x: 0, y: 0, w: 1, h: 1),
+          sourceSlotCount: 24,
+          targetSlotCount: 4,
+          sourceMetrics: _metrics(slotWidth: 10, slotHeight: 10, slotCount: 24),
+          targetMetrics: _metrics(slotWidth: 400, slotHeight: 400, slotCount: 4),
+        );
+
+        expect(projected.w, 1);
+        expect(projected.h, 1);
+      });
+
+      test('degrades to preserveLogicalSize when a grid is not laid out', () {
+        const item = LayoutItem(id: 'a', x: 0, y: 0, w: 3, h: 2);
+
+        expect(
+          coordinator.projectItem(item, sourceSlotCount: 6, targetSlotCount: 12).w,
+          3,
+          reason: 'no metrics at all',
+        );
+        expect(
+          coordinator
+              .projectItem(
+                item,
+                sourceSlotCount: 6,
+                targetSlotCount: 12,
+                sourceMetrics: _metrics(slotWidth: 100, slotHeight: 100, slotCount: 6),
+              )
+              .w,
+          3,
+          reason: 'target metrics missing',
+        );
+      });
+
+      test('a zero-width grid cannot produce Infinity or NaN dimensions', () {
+        final projected = coordinator.projectItem(
+          const LayoutItem(id: 'a', x: 0, y: 0, w: 2, h: 2),
+          sourceSlotCount: 6,
+          targetSlotCount: 6,
+          sourceMetrics: _metrics(slotWidth: 100, slotHeight: 100, slotCount: 6),
+          targetMetrics: _metrics(slotWidth: 0, slotHeight: 0, slotCount: 6),
+        );
+
+        expect(projected.w, 2, reason: 'falls back to the logical size');
+        expect(projected.h, 2);
+      });
+
+      test('horizontal scrolling maps the spacings to the right axes', () {
+        // Horizontal: strideX uses mainAxisSpacing, strideY uses crossAxisSpacing.
+        final projected = coordinator.projectItem(
+          const LayoutItem(id: 'a', x: 0, y: 0, w: 2, h: 2),
+          sourceSlotCount: 6,
+          targetSlotCount: 6,
+          sourceMetrics: _metrics(
+            slotWidth: 90,
+            slotHeight: 90,
+            slotCount: 6,
+            mainAxisSpacing: 10,
+            crossAxisSpacing: 30,
+            scrollDirection: Axis.horizontal,
+          ),
+          targetMetrics: _metrics(
+            slotWidth: 45,
+            slotHeight: 55,
+            slotCount: 6,
+            mainAxisSpacing: 5,
+            crossAxisSpacing: 5,
+            scrollDirection: Axis.horizontal,
+          ),
+        );
+
+        expect(projected.w, 4, reason: '2 * (90+10) / (45+5)');
+        expect(projected.h, 4, reason: '2 * (90+30) / (55+5)');
+      });
+
+      test('clamps height against a finite maxH under preservePixelSize', () {
+        final projected = coordinator.projectItem(
+          const LayoutItem(id: 'a', x: 0, y: 0, w: 2, h: 5, maxH: 2), // h=5 exceeds maxH=2
+          sourceSlotCount: 6,
+          targetSlotCount: 6,
+          sourceMetrics: _metrics(slotWidth: 50, slotHeight: 50, slotCount: 6),
+          targetMetrics: _metrics(slotWidth: 50, slotHeight: 50, slotCount: 6),
+        );
+
+        // if (maxH != null && h > maxH) h = maxH;
+        expect(projected.h, 2, reason: 'h must be clamped to the finite maxH constraint');
+      });
+
+      testWidgets('projectItemBetween projects items between two registered controllers',
+          (tester) async {
+        await runOnDesktop(() async {
+          final fromController = DashboardController(
+            initialSlotCount: 4,
+            initialLayout: const [LayoutItem(id: 'a', x: 0, y: 0, w: 2, h: 2)],
+          );
+          final toController = DashboardController(
+            initialSlotCount: 8,
+            initialLayout: const [],
+          );
+          final unregisteredController = DashboardController(
+            initialSlotCount: 4,
+            initialLayout: const [],
+          );
+          addTearDown(fromController.dispose);
+          addTearDown(toController.dispose);
+          addTearDown(unregisteredController.dispose);
+
+          late DashboardNestedCoordinator coordinator;
+
+          await tester.pumpWidget(
+            MaterialApp(
+              home: Scaffold(
+                body: DashboardNestedScope(
+                  projectionPolicy: DimensionProjectionPolicy.preservePixelSize,
+                  child: Builder(
+                    builder: (context) {
+                      coordinator = DashboardNestedScope.maybeOf(context)!;
+                      return Column(
+                        children: [
+                          SizedBox(
+                            height: 200,
+                            width: 400,
+                            child: Dashboard<String>(
+                              controller: fromController,
+                              itemBuilder: (ctx, item) => Text(item.id),
+                            ),
+                          ),
+                          SizedBox(
+                            height: 200,
+                            width: 800,
+                            child: Dashboard<String>(
+                              controller: toController,
+                              itemBuilder: (ctx, item) => Text(item.id),
+                            ),
+                          ),
+                        ],
+                      );
+                    },
+                  ),
+                ),
+              ),
+            ),
+          );
+          await tester.pumpAndSettle();
+
+          const item = LayoutItem(id: 'a', x: 0, y: 0, w: 2, h: 2);
+
+          // 1. Unregistered controller early return path
+          final unregResult = coordinator.projectItemBetween(
+            from: fromController,
+            to: unregisteredController,
+            item: item,
+          );
+          expect(unregResult, same(item));
+
+          // 2. Nominal path between two registered and laid-out grids
+          final projected = coordinator.projectItemBetween(
+            from: fromController,
+            to: toController,
+            item: item,
+          );
+          expect(projected.w, greaterThan(0));
+        });
+      });
+    });
+
+    group('Other policies are unaffected by the new parameters', () {
+      test('preserveLogicalSize ignores the metrics', () {
+        final c = DashboardNestedCoordinator();
+        addTearDown(c.dispose);
+
+        final projected = c.projectItem(
+          const LayoutItem(id: 'a', x: 0, y: 0, w: 2, h: 2),
+          sourceSlotCount: 6,
+          targetSlotCount: 12,
+          sourceMetrics: _metrics(slotWidth: 100, slotHeight: 100, slotCount: 6),
+          targetMetrics: _metrics(slotWidth: 25, slotHeight: 25, slotCount: 12),
+        );
+
+        expect(projected.w, 2);
+        expect(projected.h, 2);
+      });
+
+      test('preserveVisualProportion still uses the slot-count ratio', () {
+        final c = DashboardNestedCoordinator(
+          projectionPolicy: DimensionProjectionPolicy.preserveVisualProportion,
+        );
+        addTearDown(c.dispose);
+
+        final projected = c.projectItem(
+          const LayoutItem(id: 'a', x: 0, y: 0, w: 4, h: 4),
+          sourceSlotCount: 8,
+          targetSlotCount: 4,
+          sourceMetrics: _metrics(slotWidth: 100, slotHeight: 100, slotCount: 8),
+          targetMetrics: _metrics(slotWidth: 25, slotHeight: 25, slotCount: 4),
+        );
+
+        expect(projected.w, 2, reason: '4 * 4/8 — metrics must be ignored here');
+        expect(projected.h, 2);
+      });
+
+      test('custom callback still wins and is still sanitized', () {
+        final c = DashboardNestedCoordinator(
+          projectionPolicy: DimensionProjectionPolicy.custom,
+          customProjectionCallback: (item, {required sourceSlotCount, required targetSlotCount}) =>
+              item.copyWith(w: 99, h: 7),
+        );
+        addTearDown(c.dispose);
+
+        final projected = c.projectItem(
+          const LayoutItem(id: 'a', x: 0, y: 0, w: 1, h: 1),
+          sourceSlotCount: 6,
+          targetSlotCount: 4,
+          sourceMetrics: _metrics(slotWidth: 100, slotHeight: 100, slotCount: 6),
+          targetMetrics: _metrics(slotWidth: 25, slotHeight: 25, slotCount: 4),
+        );
+
+        expect(projected.w, 4, reason: 'clamped to the target width');
+        expect(projected.h, 7);
+      });
+    });
+
+    group('preservePixelSize end to end', () {
+      testWidgets('a tile dragged into a physically narrower grid keeps its pixel width',
+          (tester) async {
+        await runOnDesktop(() async {
+          // Same column count on both sides, different widths: the case the
+          // count-based policies cannot express.
+          final wide = DashboardController(
+            initialSlotCount: 4,
+            initialLayout: const [LayoutItem(id: 'a1', x: 0, y: 0, w: 2, h: 1)],
+          )..setEditMode(true);
+          final narrow = DashboardController(
+            initialSlotCount: 4,
+            initialLayout: const [LayoutItem(id: 'b1', x: 0, y: 0, w: 1, h: 1)],
+          )..setEditMode(true);
+          addTearDown(wide.dispose);
+          addTearDown(narrow.dispose);
+
+          await tester.pumpWidget(
+            MaterialApp(
+              home: Scaffold(
+                body: DashboardNestedScope(
+                  projectionPolicy: DimensionProjectionPolicy.preservePixelSize,
+                  child: Column(
+                    children: [
+                      SizedBox(
+                        height: 200,
+                        width: 800,
+                        child: Dashboard<String>(
+                          controller: wide,
+                          mainAxisSpacing: 0,
+                          crossAxisSpacing: 0,
+                          itemBuilder: (context, item) =>
+                              ColoredBox(color: Colors.blue, child: Text('A-${item.id}')),
+                        ),
+                      ),
+                      SizedBox(
+                        height: 300,
+                        width: 400,
+                        child: Dashboard<String>(
+                          controller: narrow,
+                          mainAxisSpacing: 0,
+                          crossAxisSpacing: 0,
+                          itemBuilder: (context, item) =>
+                              ColoredBox(color: Colors.green, child: Text('B-${item.id}')),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          );
+          await tester.pumpAndSettle();
+
+          final pixelWidthBefore = tester.getSize(find.text('A-a1')).width;
+
+          final gesture = await tester.startGesture(tester.getCenter(find.text('A-a1')));
+          await tester.pump();
+          await gesture.moveBy(const Offset(0, 10));
+          await tester.pump();
+          await gesture.moveTo(tester.getCenter(find.text('B-b1')) - const Offset(0, 40));
+          await tester.pump();
+          await gesture.up();
+          await tester.pumpAndSettle();
+
+          final landed = narrow.layout.value.firstWhere((i) => i.id == 'a1');
+          expect(landed.w, 4, reason: '2 slots of 200 px = 400 px = the whole 4-slot target');
+
+          final pixelWidthAfter = tester.getSize(find.text('B-a1')).width;
+          expect(
+            pixelWidthAfter,
+            closeTo(pixelWidthBefore, 1),
+            reason: 'the physical width must survive the move',
+          );
+        });
+      });
+
+      testWidgets('the projection re-runs when the target is resized mid-drag', (tester) async {
+        await runOnDesktop(() async {
+          // Guards the memo key: with only (sourceSlotCount, targetSlotCount) in
+          // it, a stride change mid-gesture would keep a stale projection.
+          final source = DashboardController(
+            initialSlotCount: 4,
+            initialLayout: const [LayoutItem(id: 'a1', x: 0, y: 0, w: 2, h: 1)],
+          )..setEditMode(true);
+          final target = DashboardController(
+            initialSlotCount: 4,
+            initialLayout: const [LayoutItem(id: 'b1', x: 0, y: 0, w: 1, h: 1)],
+          )..setEditMode(true);
+          addTearDown(source.dispose);
+          addTearDown(target.dispose);
+
+          final targetWidth = ValueNotifier<double>(400);
+          addTearDown(targetWidth.dispose);
+
+          await tester.pumpWidget(
+            MaterialApp(
+              home: Scaffold(
+                body: DashboardNestedScope(
+                  projectionPolicy: DimensionProjectionPolicy.preservePixelSize,
+                  child: Column(
+                    children: [
+                      SizedBox(
+                        height: 200,
+                        width: 800,
+                        child: Dashboard<String>(
+                          controller: source,
+                          mainAxisSpacing: 0,
+                          crossAxisSpacing: 0,
+                          itemBuilder: (context, item) =>
+                              ColoredBox(color: Colors.blue, child: Text('A-${item.id}')),
+                        ),
+                      ),
+                      ValueListenableBuilder<double>(
+                        valueListenable: targetWidth,
+                        builder: (context, w, _) => SizedBox(
+                          height: 300,
+                          width: w,
+                          child: Dashboard<String>(
+                            controller: target,
+                            mainAxisSpacing: 0,
+                            crossAxisSpacing: 0,
+                            itemBuilder: (context, item) =>
+                                ColoredBox(color: Colors.green, child: Text('B-${item.id}')),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          );
+          await tester.pumpAndSettle();
+
+          final gesture = await tester.startGesture(tester.getCenter(find.text('A-a1')));
+          await tester.pump();
+          await gesture.moveBy(const Offset(0, 10));
+          await tester.pump();
+
+          final inTarget = tester.getCenter(find.text('B-b1')) - const Offset(0, 40);
+          await gesture.moveTo(inTarget);
+          await tester.pump();
+
+          // Widen the target: its stride doubles, so the same tile now needs half
+          // the columns. Slot COUNTS are unchanged on both sides.
+          targetWidth.value = 800;
+          await tester.pumpAndSettle();
+          await gesture.moveTo(inTarget + const Offset(1, 0));
+          await tester.pump();
+          await gesture.up();
+          await tester.pumpAndSettle();
+
+          final landed = target.layout.value.firstWhere((i) => i.id == 'a1');
+          expect(
+            landed.w,
+            2,
+            reason: 'the stride change must invalidate the projection memo',
+          );
+        });
+      });
+    });
+
     test('projectItem respects preserveLogicalSize policy', () {
       final localCoordinator = DashboardNestedCoordinator(
         projectionPolicy: DimensionProjectionPolicy.preserveLogicalSize,

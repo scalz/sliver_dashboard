@@ -73,6 +73,34 @@ enum DimensionProjectionPolicy {
   /// The height is scaled proportionally to preserve the item's aspect ratio relative to slot count.
   preserveVisualProportion,
 
+  /// Preserves the item's PHYSICAL size: `w`/`h` are re-derived from the two
+  /// grids' live slot strides, so the tile occupies the same pixel span after
+  /// the move.
+  ///
+  /// This is what [preserveVisualProportion] is commonly mistaken for. That
+  /// policy preserves the *fraction of its container*, which SHRINKS the tile
+  /// whenever the target container is physically narrower — and a nested panel
+  /// always is, since it lives inside one cell-range of its parent. Concretely,
+  /// with a 24-column page 1200 px wide and a panel hosted in a 6-column-wide
+  /// tile split into 12 columns, a `w:4` tile (193 px) projects to:
+  ///
+  /// | policy                     | w | pixels |
+  /// |----------------------------|---|--------|
+  /// | [preserveLogicalSize]      | 4 | 87 px  |
+  /// | [preserveVisualProportion] | 2 | 40 px  |
+  /// | [preservePixelSize]        | 8 | 193 px |
+  ///
+  /// `minW`/`minH` are scaled by the same factor, so a touch-target floor
+  /// (e.g. "at least 120 physical px") keeps its meaning in the denser grid;
+  /// finite `maxW`/`maxH` are scaled too. The result is always sanitized
+  /// against the target grid, so a tile that cannot physically fit is clamped
+  /// to the full target width rather than overflowing.
+  ///
+  /// Requires both grids to be laid out. When either sliver is not attached
+  /// yet, the projection degrades to [preserveLogicalSize] — the strides are
+  /// unknown, and guessing would be worse than keeping the logical size.
+  preservePixelSize,
+
   /// Delegates the projection to a developer-defined custom callback.
   custom,
 }
@@ -344,7 +372,15 @@ class DashboardNestedCoordinator {
   double hoverJitterTolerance;
 
   /// Projects an item's width and height based on the active [projectionPolicy]
-  /// and the column ratio between the source and target grids.
+  /// and the geometry of the source and target grids.
+  ///
+  /// [sourceMetrics] / [targetMetrics] are only consulted by
+  /// [DimensionProjectionPolicy.preservePixelSize], which needs the two grids'
+  /// live slot strides — slot COUNTS alone cannot express a physical size, two
+  /// 4-column grids of different widths having different strides. They are
+  /// optional so that existing callers (and the pre-existing unit tests) keep
+  /// compiling; when the policy needs them and they are missing, the projection
+  /// degrades to [DimensionProjectionPolicy.preserveLogicalSize].
   ///
   /// The result is always sanitized against the target grid (see
   /// [_sanitizeForTarget]): every policy — including
@@ -361,6 +397,8 @@ class DashboardNestedCoordinator {
     LayoutItem item, {
     required int sourceSlotCount,
     required int targetSlotCount,
+    SlotMetrics? sourceMetrics,
+    SlotMetrics? targetMetrics,
   }) {
     // Reason: Handle developer-defined custom projection rules first if policy is set to custom
     if (projectionPolicy == DimensionProjectionPolicy.custom && customProjectionCallback != null) {
@@ -372,6 +410,25 @@ class DashboardNestedCoordinator {
       // Callback output is developer-controlled and therefore untrusted
       // with respect to the target grid's invariants.
       return _sanitizeForTarget(custom, targetSlotCount);
+    }
+
+    // Evaluated BEFORE the sourceSlotCount == targetSlotCount
+    // short-circuit below. That shortcut is valid for the
+    // count-based policies, but two grids with the SAME column count and
+    // different widths have different slot strides — which is precisely the
+    // nested-panel case, since a panel occupies one cell-range of its parent.
+    // Short-circuiting here would silently no-op the policy exactly where it
+    // matters most.
+    if (projectionPolicy == DimensionProjectionPolicy.preservePixelSize) {
+      if (sourceMetrics == null || targetMetrics == null) {
+        return _sanitizeForTarget(item, targetSlotCount);
+      }
+      return _projectPixelSize(
+        item,
+        from: sourceMetrics,
+        to: targetMetrics,
+        targetSlotCount: targetSlotCount,
+      );
     }
 
     if (projectionPolicy == DimensionProjectionPolicy.preserveLogicalSize ||
@@ -404,6 +461,116 @@ class DashboardNestedCoordinator {
     return _sanitizeForTarget(
       item.copyWith(w: projectedW, h: projectedH),
       targetSlotCount,
+    );
+  }
+
+  /// The pixel stride of one slot along each axis: the distance between the
+  /// left/top edges of two adjacent cells. `w * strideX` is the item's pixel
+  /// width PLUS one spacing.
+  ///
+  /// Reason for the axis mapping: the cross-axis spacing separates columns in a
+  /// vertically scrolling grid and rows in a horizontal one — the same
+  /// convention as `RenderSliverDashboard.performLayout` and
+  /// `DashboardFeedbackItem`.
+  static ({double x, double y}) _stridesOf(SlotMetrics m) {
+    final isVertical = m.scrollDirection == Axis.vertical;
+    return (
+      x: m.slotWidth + (isVertical ? m.crossAxisSpacing : m.mainAxisSpacing),
+      y: m.slotHeight + (isVertical ? m.mainAxisSpacing : m.crossAxisSpacing),
+    );
+  }
+
+  /// Re-derives w/h (and the min/max constraints) so the item keeps its
+  /// physical size across two grids of different densities.
+  ///
+  /// Matches the AUGMENTED span (w * stride, i.e. pixel size + one spacing)
+  /// rather than the exact pixel width: it absorbs a spacing difference between
+  /// the two grids to first order and keeps the whole projection in a single
+  /// ratio per axis. The residual error is bounded by one spacing, well under
+  /// the half-slot rounding the .round() already introduces.
+  LayoutItem _projectPixelSize(
+    LayoutItem item, {
+    required SlotMetrics from,
+    required SlotMetrics to,
+    required int targetSlotCount,
+  }) {
+    final f = _stridesOf(from);
+    final t = _stridesOf(to);
+    // A grid laid out at zero width (collapsed host, first frame) yields
+    // non-positive or non-finite strides: keep the logical size rather than
+    // producing Infinity/NaN dimensions.
+    if (!(f.x > 0) || !(f.y > 0) || !(t.x > 0) || !(t.y > 0)) {
+      return _sanitizeForTarget(item, targetSlotCount);
+    }
+
+    final rx = f.x / t.x;
+    final ry = f.y / t.y;
+
+    int scaled(num value, double ratio) {
+      final result = (value * ratio).round();
+      return result < 1 ? 1 : result;
+    }
+
+    var w = scaled(item.w, rx);
+    var h = scaled(item.h, ry);
+
+    // Constraints are physical intents too: a minW computed for "at least
+    // 120 px wide" in the source grid means MORE columns in a denser target.
+    // Leaving them untouched silently dropped the touch-target floor.
+    final minW = scaled(item.minW, rx);
+    final minH = scaled(item.minH, ry);
+    final maxW = item.maxW.isFinite ? scaled(item.maxW, rx) : null;
+    final maxH = item.maxH.isFinite ? scaled(item.maxH, ry) : null;
+
+    if (maxW != null && w > maxW) w = maxW;
+    if (maxH != null && h > maxH) h = maxH;
+    if (w < minW) w = minW;
+    if (h < minH) h = minH;
+
+    // _sanitizeForTarget then clamps w into [1, targetSlotCount] and caps
+    // minW/minH so they stay satisfiable — a tile too wide to fit physically
+    // becomes a full-width tile instead of overflowing.
+    return _sanitizeForTarget(
+      item.copyWith(
+        w: w,
+        h: h,
+        minW: minW,
+        minH: minH,
+        maxW: maxW?.toDouble() ?? item.maxW,
+        maxH: maxH?.toDouble() ?? item.maxH,
+      ),
+      targetSlotCount,
+    );
+  }
+
+  /// Projects [item] between two LIVE grids exactly as a cross-grid drag
+  /// would, honouring the active [projectionPolicy].
+  ///
+  /// Exposed because [moveItemToGrid] is deliberately unprojected (an explicit
+  /// caller owns the geometry), yet an application moving items programmatically
+  /// usually wants the same sizing the user would get by dragging:
+  ///
+  /// ```dart
+  /// final sized = coordinator.projectItemBetween(from: page, to: panel, item: tile);
+  /// coordinator.moveItemToGrid(from: page, to: panel, itemId: tile.id);
+  /// panel.internal.setItemSize(tile.id, w: sized.w, h: sized.h);
+  /// ```
+  ///
+  /// Returns [item] unchanged when either grid is not currently laid out.
+  LayoutItem projectItemBetween({
+    required DashboardController from,
+    required DashboardController to,
+    required LayoutItem item,
+  }) {
+    final fromTarget = registrationOf(from)?.target;
+    final toTarget = registrationOf(to)?.target;
+    if (fromTarget == null || toTarget == null) return item;
+    return projectItem(
+      item,
+      sourceSlotCount: from.slotCount.peek(),
+      targetSlotCount: to.slotCount.peek(),
+      sourceMetrics: fromTarget.currentSlotMetrics(),
+      targetMetrics: toTarget.currentSlotMetrics(),
     );
   }
 
@@ -461,18 +628,40 @@ class DashboardNestedCoordinator {
   LayoutItem _projectedItemFor(_CrossGridSession session, CrossGridDragTarget over) {
     final src = session.origin.controller.slotCount.peek();
     final dst = over.controller.slotCount.peek();
+
+    final pixelPolicy = projectionPolicy == DimensionProjectionPolicy.preservePixelSize;
+    final srcInternal = session.origin.controller.internal;
+    final dstInternal = over.controller.internal;
+    final srcSlotW = pixelPolicy ? (srcInternal.viewSlotWidth ?? 0) : 0.0;
+    final srcSlotH = pixelPolicy ? (srcInternal.viewSlotHeight ?? 0) : 0.0;
+    final dstSlotW = pixelPolicy ? (dstInternal.viewSlotWidth ?? 0) : 0.0;
+    final dstSlotH = pixelPolicy ? (dstInternal.viewSlotHeight ?? 0) : 0.0;
+
     final memo = session.projMemoResult;
-    if (memo != null && session.projMemoSrc == src && session.projMemoDst == dst) {
+    if (memo != null &&
+        session.projMemoSrc == src &&
+        session.projMemoDst == dst &&
+        session.projMemoSrcSlotW == srcSlotW &&
+        session.projMemoSrcSlotH == srcSlotH &&
+        session.projMemoDstSlotW == dstSlotW &&
+        session.projMemoDstSlotH == dstSlotH) {
       return memo;
     }
+
     final projected = projectItem(
       session.item,
       sourceSlotCount: src,
       targetSlotCount: dst,
+      sourceMetrics: pixelPolicy ? session.origin.currentSlotMetrics() : null,
+      targetMetrics: pixelPolicy ? over.currentSlotMetrics() : null,
     );
     session
       ..projMemoSrc = src
       ..projMemoDst = dst
+      ..projMemoSrcSlotW = srcSlotW
+      ..projMemoSrcSlotH = srcSlotH
+      ..projMemoDstSlotW = dstSlotW
+      ..projMemoDstSlotH = dstSlotH
       ..projMemoResult = projected;
     return projected;
   }
@@ -1149,11 +1338,16 @@ class _CrossGridSession {
   Offset? nestHoverAnchor;
 
   // Projection memo: the dragged item is immutable for the whole session, so
-  // the projected copy only changes when the hovered grid (or its live slot
-  // count) changes. Caching it removes one LayoutItem allocation per pointer
-  // event (60-120 Hz) from the cross-grid routing hot path on dart2js.
+  // the projected copy only changes when the hovered grid, its live slot count,
+  // or (preservePixelSize) its live slot SIZE changes. Caching it removes one
+  // LayoutItem allocation per pointer event (60-120 Hz) from the cross-grid
+  // routing hot path on dart2js.
   int projMemoSrc = -1;
   int projMemoDst = -1;
+  double projMemoSrcSlotW = -1;
+  double projMemoSrcSlotH = -1;
+  double projMemoDstSlotW = -1;
+  double projMemoDstSlotH = -1;
   LayoutItem? projMemoResult;
 }
 

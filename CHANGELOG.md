@@ -1,6 +1,11 @@
 ## 2.4.0
 
 ### Features
+- **Pixel-Preserving Dimension Projection (`preservePixelSize`)**: 
+  Added `DimensionProjectionPolicy.preservePixelSize` to preserve an item's exact physical 
+  pixel dimensions across grids of different densities or container widths (e.g. dragging 
+  tiles into narrow nested panels). Includes the programmatic 
+  utility `coordinator.projectItemBetween`.
 - **Closed hosts & custom drop targets (`onItemDroppedOnHost`)**: a tile can
   now receive dropped items WITHOUT rendering a nested grid — closed folder
   icons, archive tiles, compact badges.
@@ -24,7 +29,18 @@
   size-driven collapsible folders (`itemBreakpointBuilder` + `_HostSize.mini` +
   `onItemDroppedOnHost`). Shrinking a folder to 1 slot collapses it into an
   interactive drop-target icon; dropping notes onto it files them away, and
-  enlarging reopens the nested grid with contents intact. Added full test suite.
+  enlarging reopens the nested grid with contents intact.
+
+- Added tests.
+
+### Fixes & Performance
+- **Nested Grid Drag Isolation**: Fixed a bug where dragging an item inside a `NestedDashboard` could trigger a premature cross-grid exit session and move the parent host tile.
+- **Padded Grid Background Alignment**: Fixed an issue where background grid lines were offset by `padding.top` in padded/nested grids after slot-count updates due to a stale render object reference in `_findRenderSliver`.
+- **Zero-Allocation Hot Path**: Optimized `performLayout` and `paint` passes by storing paint offsets as primitive doubles (`paintOffsetX`/`paintOffsetY`), caching `BoxConstraints`, and caching `ValueKey` instances across geometric reorders.
+- **Reflow Animation Order Decoupling**: Decoupled `animateReflow` toggles from property assignment order in `updateRenderObject`, ensuring reflow transitions seed reliably when enabled alongside a layout mutation.
+- **Multi-Sliver `sliverKey` Isolation**: Enforced strict `sliverKey` scoping in `DashboardGrid` without unscoped fallbacks, preventing background grids from painting foreign origins in multi-sliver layouts.
+- **Metrics Backchannel for Empty Grids**: Ensured empty layouts publish metrics onto the controller so minimaps and fallback origins update cleanly when a grid is emptied.
+- **Pivot Mutation Safeguards**: Added assertions preventing mid-drag active pivot replacements in `updateItem` and `replaceItem`.
 
 ## 2.3.1
 
