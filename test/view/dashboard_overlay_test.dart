@@ -3450,4 +3450,117 @@ void main() {
       await tester.pumpAndSettle();
     });
   });
+
+  group('Nested in-grid drag containment', () {
+    late DashboardController parent;
+    late DashboardController child;
+
+    setUp(() {
+      parent = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: const [
+          LayoutItem(id: 'group', x: 0, y: 0, w: 2, h: 2),
+          LayoutItem(id: 'p1', x: 2, y: 0, w: 2, h: 1),
+        ],
+      )..setEditMode(true);
+      child = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: const [
+          LayoutItem(id: 'c1', x: 0, y: 0, w: 1, h: 1),
+          LayoutItem(id: 'c2', x: 1, y: 0, w: 1, h: 1),
+        ],
+      )..setEditMode(true);
+    });
+
+    tearDown(() {
+      parent.dispose();
+      child.dispose();
+    });
+
+    Widget buildNested({DashboardItemMovedToGridCallback? onMoved}) {
+      return MaterialApp(
+        home: Scaffold(
+          body: DashboardNestedScope(
+            onItemMovedToGrid: onMoved,
+            child: Dashboard<String>(
+              controller: parent,
+              itemBuilder: (context, item) {
+                if (item.id == 'group') {
+                  return NestedDashboard(
+                    controller: child,
+                    parentItemId: 'group',
+                    autoSlotCount: false,
+                    itemBuilder: (context, nested) => ColoredBox(
+                      color: Colors.orange,
+                      child: Text('C-${nested.id}'),
+                    ),
+                  );
+                }
+                return ColoredBox(
+                  color: Colors.blue,
+                  child: Text('P-${item.id}'),
+                );
+              },
+            ),
+          ),
+        ),
+      );
+    }
+
+    testWidgets('an in-grid drag inside a nested grid never hands over to the parent',
+        (tester) async {
+      await runOnDesktop(() async {
+        await tester.pumpWidget(buildNested());
+        await tester.pumpAndSettle();
+
+        final parentBefore = parent.layout.value.map((i) => (i.id, i.x, i.y)).toSet();
+
+        final gesture = await tester.startGesture(tester.getCenter(find.text('C-c1')));
+        await tester.pump();
+        await gesture.moveBy(const Offset(0, 10));
+        await tester.pump();
+        await gesture.moveTo(tester.getCenter(find.text('C-c2')));
+        await tester.pump();
+
+        expect(
+          child.layout.value.any((i) => i.id == 'c1'),
+          isTrue,
+          reason: 'no cross-grid exit while the pointer stays inside the child',
+        );
+        expect(parent.layout.value.any((i) => i.id == '__placeholder__'), isFalse);
+        expect(
+          parent.layout.value.map((i) => (i.id, i.x, i.y)).toSet(),
+          parentBefore,
+          reason: 'the host tile must not be pushed by a parent placeholder',
+        );
+
+        await gesture.up();
+        await tester.pumpAndSettle();
+      });
+    });
+
+    testWidgets('dragging OUT of a nested grid into the parent still works', (tester) async {
+      await runOnDesktop(() async {
+        var moves = 0;
+        await tester.pumpWidget(buildNested(onMoved: (_, __, ___) => moves++));
+        await tester.pumpAndSettle();
+
+        final gesture = await tester.startGesture(tester.getCenter(find.text('C-c1')));
+        await tester.pump();
+        await gesture.moveBy(const Offset(0, 10));
+        await tester.pump();
+        // 'p1' sits inside the parent sliver and outside the host tile: the exit
+        // tolerance (max(24, 0.5 * childSlotHeight) = 46.5 px) is cleared by
+        // ~200 px, so the handover must happen.
+        await gesture.moveTo(tester.getCenter(find.text('P-p1')));
+        await tester.pump();
+        await gesture.up();
+        await tester.pumpAndSettle();
+
+        expect(parent.layout.value.any((i) => i.id == 'c1'), isTrue);
+        expect(child.layout.value.any((i) => i.id == 'c1'), isFalse);
+        expect(moves, 1);
+      });
+    });
+  });
 }

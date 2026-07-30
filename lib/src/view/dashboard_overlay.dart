@@ -511,10 +511,10 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
     final double itemSize;
 
     if (metrics.scrollDirection == Axis.vertical) {
-      itemStart = item.y * (metrics.slotHeight + metrics.mainAxisSpacing) + metrics.padding.top;
+      itemStart = item.y * (metrics.slotHeight + metrics.mainAxisSpacing);
       itemSize = item.h * (metrics.slotHeight + metrics.mainAxisSpacing) - metrics.mainAxisSpacing;
     } else {
-      itemStart = item.x * (metrics.slotWidth + metrics.mainAxisSpacing) + metrics.padding.left;
+      itemStart = item.x * (metrics.slotWidth + metrics.mainAxisSpacing);
       itemSize = item.w * (metrics.slotWidth + metrics.mainAxisSpacing) - metrics.mainAxisSpacing;
     }
 
@@ -646,6 +646,7 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
                       controller: widget.controller,
                       scrollController: widget.scrollController,
                       gridStyle: widget.gridStyle!,
+                      sliverKey: widget.sliverKey,
                       slotAspectRatio: widget.slotAspectRatio,
                       mainAxisSpacing: widget.mainAxisSpacing,
                       crossAxisSpacing: widget.crossAxisSpacing,
@@ -874,9 +875,9 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
 
         final Offset currentSliverStart;
         if (isVertical) {
-          currentSliverStart = Offset(metrics.padding.left, visualStart + metrics.padding.top);
+          currentSliverStart = Offset(metrics.padding.left, visualStart);
         } else {
-          currentSliverStart = Offset(visualStart + metrics.padding.left, metrics.padding.top);
+          currentSliverStart = Offset(visualStart, metrics.padding.top);
         }
 
         Rect? sliverBounds;
@@ -1011,38 +1012,6 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
   RenderSliverDashboard? _findRenderSliver() {
     if (_renderSliver != null && _renderSliver!.attached) return _renderSliver;
 
-    // In multi-sliver environments, resolve the exact targeted render object
-    // by searching strictly within the localized subtree of the sliver's GlobalKey.
-    if (widget.sliverKey != null) {
-      final sliverContext = widget.sliverKey!.currentContext;
-      if (sliverContext != null) {
-        final rootObject = sliverContext.findRenderObject();
-        if (rootObject != null) {
-          RenderSliverDashboard? found;
-          void visitor(RenderObject child) {
-            if (found != null) return;
-            if (child is RenderSliverDashboard) {
-              found = child;
-              return;
-            }
-            child.visitChildren(visitor);
-          }
-
-          if (rootObject is RenderSliverDashboard) {
-            _renderSliver = rootObject;
-          } else {
-            // Localized search inside specific SliverDashboard subtree only
-            rootObject.visitChildren(visitor);
-            _renderSliver = found;
-          }
-
-          if (_renderSliver != null) {
-            return _renderSliver;
-          }
-        }
-      }
-    }
-
     RenderSliverDashboard? found;
     void visitor(RenderObject child) {
       if (found != null) return;
@@ -1051,6 +1020,31 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
         return;
       }
       child.visitChildren(visitor);
+    }
+
+    final key = widget.sliverKey;
+    if (key != null) {
+      // In multi-sliver environments, resolve the exact targeted render object
+      // by searching strictly within the localized subtree of the sliver's
+      // GlobalKey.
+      //
+      // Reason — NO fallback to the unscoped walk below once a key was given.
+      // The key's context can be null for a frame (mount, remount, GlobalKey
+      // move), and the unscoped walk would then return a SIBLING grid's sliver.
+      // That reference is attached, so the cache guard above would keep it
+      // forever: `_hitTest` would stop matching this grid's own items
+      // (`identical(parent, ownSliver)` never true, hence no drag at all) and
+      // `_isInsideSliver` would report another grid's bounds. Returning null for
+      // one frame is recoverable — every caller null-checks — latching a foreign
+      // sliver is not.
+      final rootObject = key.currentContext?.findRenderObject();
+      if (rootObject is RenderSliverDashboard) {
+        found = rootObject;
+      } else {
+        rootObject?.visitChildren(visitor);
+      }
+      _renderSliver = found;
+      return found;
     }
 
     final root = context.findRenderObject();

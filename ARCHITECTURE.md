@@ -10,13 +10,14 @@ The architecture is built on a foundation of modern, idiomatic Flutter principle
 2.  **Reactive State Management:** State is centralized in a controller and exposed as reactive streams (`Beacons`). The UI listens to these streams and rebuilds automatically.
 3.  **Separation of Concerns:** The codebase is cleanly divided into three distinct layers: State, Logic, and View.
 4.  **Performance First:**
-    *   **Virtualization:** The core view is built on Flutter's `Sliver` protocol to render only visible items.
-    *   **Aggressive Caching:** Individual item widgets are cached and protected from unnecessary rebuilds using a "Firewall" widget strategy.
-    *   **Paint Isolation:** Use of `RepaintBoundary` ensures that layout changes (moving an item) do not trigger expensive repaints of the item's content.
-    *   **Allocation Discipline:** Per-frame hot paths (drag updates, `performLayout`, minimap paints) must be allocation-free or use reusable scratch buffers. New allocations in these paths are treated as regressions.
+  *   **Virtualization:** The core view is built on Flutter's `Sliver` protocol to render only visible items.
+  *   **Aggressive Caching:** Individual item widgets are cached and protected from unnecessary rebuilds using a "Firewall" widget strategy.
+  *   **Paint Isolation:** Use of `RepaintBoundary` ensures that layout changes (moving an item) do not trigger expensive repaints of the item's content.
+  *   **Allocation Discipline:** Per-frame hot paths (drag updates, `performLayout`, minimap paints) must be allocation-free or use reusable scratch buffers. New allocations in these paths are treated as regressions.
 5.  **Immutability:** State objects, particularly the `LayoutItem` model, are immutable.
-    *   **`LayoutItem.extra`**: shallow-equality map (`mapEquals` + `Object.hashAllUnordered` in signature/hash); mutating the map in place is invisible to change detection by design.
+  *   **`LayoutItem.extra`**: shallow-equality map (`mapEquals` + `Object.hashAllUnordered` in signature/hash); mutating the map in place is invisible to change detection by design.
 6.  **Accessibility (A11y):** The dashboard is designed to be fully usable via keyboard and screen readers, treating accessibility as a first-class citizen, not an afterthought.
+7.  **One Rule Per Transform:** any coordinate conversion, projection or resolution that appears at more than one call site must be stated once as an invariant and reused. Duplicated derivations drift silently — see the Content-Origin Convention in §6, which two of five sites had drifted away from by exactly one padding.
 
 ## Core Layers
 
@@ -53,6 +54,7 @@ graph TD
     O -- Notifies --> D;
     N -- Calls Pure Functions --> P;
     P -- Returns New Layout --> N;
+    E -. "layout metrics backchannel" .-> N;
 
     style A fill:#cde4ff,color:#000000
     style B fill:#dae8fc,color:#000000
@@ -68,33 +70,39 @@ graph TD
 - **Location:** `lib/src/controller/`
 - **Responsibility:** To be the single source of truth for the dashboard's state and to expose a clean, public API.
 - **Implementation:**
-    - **Interface Separation:** The public `DashboardController` is an abstract interface. The logic resides in `DashboardControllerImpl`.
-    - **Multi-Selection State:** Manages `selectedItemIds` (Set) and `isDragging` (bool). The concept of "Active Item" is derived: it is the **Pivot** during a drag, or the primary selection otherwise.
-    - **Drag Offset:** Manages a `dragOffset` beacon to provide smooth visual feedback during drags without committing every pixel change to the logical grid layout.
-    - **Default Compactor:** The controller defaults to `FastVerticalCompactor` (skyline algorithm, O(N·k)). The legacy `VerticalCompactor` (O(N²·R): measured 1.99M collision checks + 500k list scans per drop at N=1000) remains available via `setCompactor` for behavioral compatibility, but is never the default.
-    - **Drag-Start Invariant Caching:** Everything constant for the duration of a gesture (pivot's original item, the dragged cluster's items, the cluster bounding box) is computed **once** in `onDragStart`, cached, and cleared in `onDragEnd` / `cancelInteraction`. `onDragUpdate` must never recompute per-event what is invariant per-gesture.
-    - **Cross-Grid Exit Transaction:** `beginCrossGridExit(ids)` removes items *silently* (temporary removal: internal drag state reset, **no `onLayoutChanged`** — the gesture is still in flight) and snapshots the pre-drag layout. `finishCrossGridExit(outcome:)` resolves it three ways: `movedAway` (commit + exactly one `onLayoutChanged`), `returned` (discard silently — the re-insert path already emitted the final layout), `canceled` (restore the snapshot silently). This guarantees observers see **one event per affected grid, at drop time**.
-    - **Template-Preserving External Drop:** `onDropExternalItem(template:)` finalizes a placeholder into a full `LayoutItem`, preserving id, min/max constraints and flags (`onDropExternal` only carries an id). `setItemSize(id, w:, h:)` provides clamped programmatic resizing (used by `sizeToContent`).
-    - **`hoveredNestTargetId` beacon:** drives the `subGridDynamic` host highlight; watched only by the light item shells (content stays behind its `RepaintBoundary`).
-    - **Orchestrator:** It acts as a bridge. When an action occurs (e.g., `onDragUpdate` or `moveActiveItemBy`). It calculates the delta based on the **Pivot Item** and applies it to the entire cluster via the Engine.
-        1. Reads the current state.
-        2. Calls the pure `LayoutEngine`.
-        3. Updates the beacons with the result.
-    - **`maxRows`**: enforced at the four user-driven placement choke points (drag clamp, interactive resize clamp on the anchored axis, setItemSize, bounded placeNewItems search with below-cap fallback). Push cascades are not truncated: rejecting a cascade would require speculative simulation per pointer event.
+  - **Interface Separation:** The public `DashboardController` is an abstract interface. The logic resides in `DashboardControllerImpl`.
+  - **Multi-Selection State:** Manages `selectedItemIds` (Set) and `isDragging` (bool). The concept of "Active Item" is derived: it is the **Pivot** during a drag, or the primary selection otherwise.
+  - **Drag Offset:** Manages a `dragOffset` beacon to provide smooth visual feedback during drags without committing every pixel change to the logical grid layout.
+  - **Default Compactor:** The controller defaults to `FastVerticalCompactor` (skyline algorithm, O(N·k)). The legacy `VerticalCompactor` (O(N²·R): measured 1.99M collision checks + 500k list scans per drop at N=1000) remains available via `setCompactor` for behavioral compatibility, but is never the default.
+  - **Drag-Start Invariant Caching:** Everything constant for the duration of a gesture (pivot's original item, the dragged cluster's items, the cluster bounding box) is computed **once** in `onDragStart`, cached, and cleared in `onDragEnd` / `cancelInteraction`. `onDragUpdate` must never recompute per-event what is invariant per-gesture.
+    - **Consequence — the pivot is immutable mid-gesture.** `replaceItem` / `updateItem` write through to `layout`, `originalLayoutOnStart` and `_crossGridExitSnapshot`, but **not** to these caches. Targeting the active pivot therefore leaves `_pivotItemId` pointing at an id the layout no longer contains and the next `onDragUpdate` throws. This is unreachable through the package's own flows (both `subGridDynamic` arming paths resolve their host with `excludeId: <dragged item>`, and arming requires a single-item selection), so it is enforced by a debug `assert` documenting an application-side contract rather than by rewriting the caches.
+  - **Cross-Grid Exit Transaction:** `beginCrossGridExit(ids)` removes items *silently* (temporary removal: internal drag state reset, **no `onLayoutChanged`** — the gesture is still in flight) and snapshots the pre-drag layout. `finishCrossGridExit(outcome:)` resolves it three ways: `movedAway` (commit + exactly one `onLayoutChanged`), `returned` (discard silently — the re-insert path already emitted the final layout), `canceled` (restore the snapshot silently). This guarantees observers see **one event per affected grid, at drop time**.
+  - **Template-Preserving External Drop:** `onDropExternalItem(template:)` finalizes a placeholder into a full `LayoutItem`, preserving id, min/max constraints and flags (`onDropExternal` only carries an id). `setItemSize(id, w:, h:)` provides clamped programmatic resizing (used by `sizeToContent`).
+  - **`hoveredNestTargetId` beacon:** drives the `subGridDynamic` host highlight; watched only by the light item shells (content stays behind its `RepaintBoundary`).
+  - **Layout-Metrics Backchannel:** `viewMainAxisLeadingExtent`, `viewMainAxisContentExtent`, `viewSlotWidth`, `viewSlotHeight` are **plain fields**, written by `RenderSliverDashboard` at the end of every `performLayout`. They are deliberately not beacons: the layout phase forbids notifying listeners. Freshness is guaranteed by ordering — any scroll tick relayouts the sliver before its consumers repaint. Consumers: `DashboardMinimap` (viewport segment mapping) and `DashboardGrid` (geometry fallback tier 2). **They are published on every exit path of `performLayout`, including the empty-layout early return** — skipping one leaves consumers holding the metrics of a previous, different layout.
+  - **Orchestrator:** It acts as a bridge. When an action occurs (e.g., `onDragUpdate` or `moveActiveItemBy`). It calculates the delta based on the **Pivot Item** and applies it to the entire cluster via the Engine.
+    1. Reads the current state.
+    2. Calls the pure `LayoutEngine`.
+    3. Updates the beacons with the result.
+  - **`maxRows`**: enforced at the four user-driven placement choke points (drag clamp, interactive resize clamp on the anchored axis, setItemSize, bounded placeNewItems search with below-cap fallback). Push cascades are not truncated: rejecting a cascade would require speculative simulation per pointer event.
+
 ### 2. The Logic Layer (LayoutEngine)
 
 - **Location:** `lib/src/engine/layout_engine.dart`
 - **Responsibility:** To perform all pure, CPU-intensive layout calculations.
 - **Implementation:**
-    - A library of top-level, pure functions (e.g., `compact`, `moveElement`, `resizeItem`).
-    - **Decoupled:** Has no knowledge of Flutter widgets or the controller. Operates purely on the `LayoutItem` data model.
-    - **Deterministic:** Given the same input layout and parameters, it always returns the same output layout.
-    - **Cluster Logic:** Handles group movements by calculating a **Bounding Box** for selected items. The engine moves this virtual box against obstacles and applies the resulting delta to all items in the cluster.
-    - **Strategy Pattern:** Compaction logic is delegated to a `CompactorDelegate`. Default implementations (`VerticalCompactor`, `HorizontalCompactor`, `FastVerticalCompactor`) are provided, but can be swapped at runtime.
-    - **Overlap-Free Invariant:** `moveElement` uses a **monotonic re-push cascade** (items may be re-queued when pushed again, instead of a one-shot `processed` set) followed by an O(N·k) verification pass over a row index (`_RowIndex`). The unconditional O(N²) all-pairs `resolveCollisions` safety net was removed from the per-crossing hot path (499,500 pair checks at N=1000 → ~16,000 indexed checks, 31× fewer). Property (fuzz-tested, 200 seeded dense layouts): **the returned layout contains zero overlapping non-static items.**
-    - **Static-Jump Correctness:** When the moved item jumps over a static obstacle, collision resolution restarts from the item's **new** position; stale collision lists computed for the pre-jump position must never be consumed (`break` after re-queue).
-    - **Index Stability Invariant:** Every engine function that returns a layout preserves **ascending ID order**, including `moveCluster` (which previously appended the dragged cluster at the tail). Element/widget identity in the sliver depends on this ordering; violating it causes full remount churn (`finalizeTree` / `_InactiveElements._unmount`).
-    - **INVARIANT — No Cluster Duplication:** `moveCluster` must guarantee that selecting pure static items alongside dynamic items does not result in duplicated elements in the final layout. Static items are treated as immovable obstacles within the collision path and are naturally returned by the coordinate solver; they must never be appended a second time (avoiding `ValueKey` crashes in the sliver).
+  - A library of top-level, pure functions (e.g., `compact`, `moveElement`, `resizeItem`).
+  - **Decoupled:** Has no knowledge of Flutter widgets or the controller. Operates purely on the `LayoutItem` data model.
+  - **Deterministic:** Given the same input layout and parameters, it always returns the same output layout.
+  - **Cluster Logic:** Handles group movements by calculating a **Bounding Box** for selected items. The engine moves this virtual box against obstacles and applies the resulting delta to all items in the cluster.
+  - **Strategy Pattern:** Compaction logic is delegated to a `CompactorDelegate`. Default implementations (`VerticalCompactor`, `HorizontalCompactor`, `FastVerticalCompactor`) are provided, but can be swapped at runtime.
+  - **Overlap-Free Invariant:** `moveElement` uses a **monotonic re-push cascade** (items may be re-queued when pushed again, instead of a one-shot `processed` set) followed by an O(N·k) verification pass over a row index (`_RowIndex`). The unconditional O(N²) all-pairs `resolveCollisions` safety net was removed from the per-crossing hot path (499,500 pair checks at N=1000 → ~16,000 indexed checks, 31× fewer). Property (fuzz-tested, 200 seeded dense layouts): **the returned layout contains zero overlapping non-static items.**
+  - **Static-Jump Correctness:** When the moved item jumps over a static obstacle, collision resolution restarts from the item's **new** position; stale collision lists computed for the pre-jump position must never be consumed (`break` after re-queue).
+  - **Index Stability Invariant:** Every engine function that returns a layout preserves **ascending ID order**, including `moveCluster` (which previously appended the dragged cluster at the tail).
+    - **Why it still matters:** this is the canonical order the controller, the tree codec and `_reconcileLayouts` (breakpoint layout caching) diff against. Breaking it makes layout comparison, breakpoint reconciliation and exports non-deterministic.
+    - **Why the historical justification is obsolete:** sliver element identity no longer depends on it. Since the geometric child ordering was introduced (§Geometric child ordering), the view feeds the sliver a *reordered* view on every collision push, and identity is carried by per-id cached `ValueKey`s plus `findChildIndexCallback`. Do not restore the "full remount churn / `finalizeTree`" rationale — it is no longer true and misleads readers.
+  - **INVARIANT — No Cluster Duplication:** `moveCluster` must guarantee that selecting pure static items alongside dynamic items does not result in duplicated elements in the final layout. Static items are treated as immovable obstacles within the collision path and are naturally returned by the coordinate solver; they must never be appended a second time (avoiding `ValueKey` crashes in the sliver).
+  - **Policy symmetry (application contract):** a `DashboardPolicy.canCollide` implementation must be symmetric. The engine's argument order is an implementation detail of the cascade direction; an asymmetric policy (`itemB.hasNestedGrid` only) makes push behaviour depend on which side the cascade reaches first.
 
 ### 3. The View Layer (Overlay & Slivers)
 
@@ -107,63 +115,75 @@ The view layer has been refactored to support native Sliver composition. It is c
 - **Role:** Handles all pointer interactions (Gestures), visual feedback (Drag placeholders, Resize handles), Auto-scrolling, and the Trash bin.
 - **Placement:** It must wrap the `CustomScrollView`.
 - **Logic:**
-    - **Global Key:** Uses a unique `GlobalKey` on its internal `Stack` to strictly identify the viewport boundaries for hit-testing and auto-scrolling.
-    - **Matrix Transformation:** Uses `renderSliver.getTransformTo(overlay)` to calculate the exact pixel position of the grid, ensuring perfect synchronization between the feedback item and the grid, even inside nested scrolling views.
-    - **Overlap-Aware Clipping:** dynamically calculates a `ClipRect` for the feedback item that respects `SliverConstraints.overlap` (e.g., sliding under a pinned `SliverAppBar`).
-    - **Web Throttle Flush:** The 16 ms pointer-event throttle used on web keeps the freshest position and flushes it on a short timer, so the item never settles one event behind the cursor at the end of a burst.
-    - **`CrossGridDragTarget`:** the overlay state implements this interface so the nested-grid coordinator can drive it (`foreignDragOver`/`foreignDragLeave`/`foreignDrop`, `itemAtGlobal`, `currentSlotMetrics`, highlight). It registers with the nearest `DashboardNestedScope` in `didChangeDependencies` (depth = number of enclosing dashboards) and unregisters on dispose.
-    - **Hit-Test Ownership:** `_hitTest` filters hit-path entries by **sliver ownership**. The hit-test path is deepest-first, so with nested grids the first `SliverDashboardParentData` under the pointer may belong to an *inner* grid; without the filter the outer overlay would start a drag on a foreign item id (StateError). Entries from foreign slivers are skipped and the walk naturally reaches the overlay's own host item.
-    - **Pointer Claim & Target Exclusions:** on pointer-down, the deepest overlay that actually starts an operation claims the pointer at the coordinator; ancestor overlays check `isPointerClaimedByOther` first and skip (Flutter dispatches pointer events deepest-first, so the claim is always set before ancestors run).
-    - **Placeholder Refactor:** `_updatePlaceholderPosition` (the `DragTarget` external-drop path) now delegates to `_gridPointAtGlobal` + `_showPlaceholderAt(w:, h:)`, shared with cross-grid drags so both flows use the exact same geometry and clamping.
+  - **Global Key:** Uses a unique `GlobalKey` on its internal `Stack` to strictly identify the viewport boundaries for hit-testing and auto-scrolling.
+  - **Content-Origin Arithmetic:** the overlay converts between grid-content coordinates and overlay-local coordinates using the single rule stated in §6 (Content-Origin Convention). It does **not** use `getTransformTo`/`MatrixUtils` — an earlier revision of this document claimed it did, while every call site computed the transform arithmetically, and two of them double-counted the leading padding as a result.
+  - **Overlap-Aware Clipping:** dynamically calculates a `ClipRect` for the feedback item that respects `SliverConstraints.overlap` (e.g., sliding under a pinned `SliverAppBar`).
+  - **Web Throttle Flush:** The 16 ms pointer-event throttle used on web keeps the freshest position and flushes it on a short timer, so the item never settles one event behind the cursor at the end of a burst.
+  - **`CrossGridDragTarget`:** the overlay state implements this interface so the nested-grid coordinator can drive it (`foreignDragOver`/`foreignDragLeave`/`foreignDrop`, `itemAtGlobal`, `currentSlotMetrics`, highlight). It registers with the nearest `DashboardNestedScope` in `didChangeDependencies` (depth = number of enclosing dashboards) and unregisters on dispose.
+  - **Hit-Test Ownership:** `_hitTest` filters hit-path entries by **sliver ownership**. The hit-test path is deepest-first, so with nested grids the first `SliverDashboardParentData` under the pointer may belong to an *inner* grid; without the filter the outer overlay would start a drag on a foreign item id (StateError). Entries from foreign slivers are skipped and the walk naturally reaches the overlay's own host item.
+    - **Documented consequence:** when the child grid is **not** editing, its `_onPointerDown` returns before claiming the pointer and the walk reaches the host — so the parent drags the panel. Intentional (iOS-folder feel) and pinned by a test, but it is a by-product of an early return rather than an explicit decision, and it is the most frequent integration surprise. Applications must propagate their edit state to the child controller.
+  - **Pointer Claim & Target Exclusions:** on pointer-down, the deepest overlay that actually starts an operation claims the pointer at the coordinator; ancestor overlays check `isPointerClaimedByOther` first and skip (Flutter dispatches pointer events deepest-first, so the claim is always set before ancestors run).
+    - **Do not pre-claim on raw pointer-down.** On mobile the competing `LongPressGestureRecognizer`s already resolve in the gesture arena (the innermost arms its deadline first and closes the arena on acceptance), so there is nothing to fix; and a claim taken at pointer-down leaks — the mobile-tap branch of `onPointerUp` bypasses `_onPointerUp`, hence `releasePointer`, locking ancestors out permanently after a plain tap.
+  - **Sliver Resolution:** `_findRenderSliver` caches the resolved render object while it stays attached, using a **local** search sentinel and, when a `sliverKey` is supplied, a walk strictly scoped to that key's subtree with **no unscoped fallback** — see §6 (Sliver Resolution) for why both properties are load-bearing.
+  - **Placeholder Refactor:** `_updatePlaceholderPosition` (the `DragTarget` external-drop path) now delegates to `_gridPointAtGlobal` + `_showPlaceholderAt(w:, h:)`, shared with cross-grid drags so both flows use the exact same geometry and clamping.
 - **Slot gestures**: `_handleSlotGesture` reuses the drag pipeline's
   `SlotMetrics.pixelToGrid` with
   `offset = viewportScroll - precedingScrollExtent + padding.top` (reduces
-  to the plain scroll offset for a single grid). Containment = strict
+  to the plain scroll offset for a single grid — `pixelToGrid` subtracts
+  `padding.top` itself, so the two cancel; this is the one place where the
+  main-axis padding legitimately appears). Containment = strict
   sliver bounds, relaxed to the remaining viewport under `fillViewport`
   (which only exists in single-grid setups).
-  
+
 #### B. `SliverDashboard` (The Rendering Layer)
 - **Role:** Renders the actual items within the scroll view using the Sliver protocol.
 - **Logic:**
-    - **Focus Scope (Parent):** The parent `Dashboard` widget wraps the `CustomScrollView` in a `FocusTraversalGroup` with `OrderedTraversalPolicy` to ensure Tab navigation follows the visual grid logic (Row-major order).
-    - **Responsive Logic:** Handles `breakpoints` internally using "Skip Frame" optimization.
-    - **Item Persistence:** Unlike standard drag-and-drop lists, items being dragged are **NOT removed** from the tree. They are rendered with `Opacity(0.0)`. This is crucial to preserve their `FocusNode` state during keyboard interactions.
-    - **Identity Guards:** The `items` setter no-ops when the incoming list is `identical` to the current one (the controller emits a new instance only on real layout changes). The Key→Index map is reused whenever the **ID sequence** is unchanged (allocation-free O(N) string-identity walk), instead of rebuilding an N-entry `ValueKey` map on every drag frame.
+  - **Focus Scope (Parent):** The parent `Dashboard` widget wraps the `CustomScrollView` in a `FocusTraversalGroup` with `OrderedTraversalPolicy` to ensure Tab navigation follows the visual grid logic (Row-major order).
+  - **Responsive Logic:** Handles `breakpoints` internally using "Skip Frame" optimization.
+  - **Item Persistence:** Unlike standard drag-and-drop lists, items being dragged are **NOT removed** from the tree. They are rendered with `Opacity(0.0)`. This is crucial to preserve their `FocusNode` state during keyboard interactions.
+  - **Identity Guards (render-object contract):** The `items` setter no-ops when the incoming list is `identical` to the current one (the controller emits a new instance only on real layout changes).
+    - **Scope of the guarantee:** it is a *render-object* contract, not a widget one. `SliverDashboard` wraps its content in a `SliverLayoutBuilder`, and `_LayoutBuilderElement.update` calls `renderObject.markNeedsLayout()` unconditionally on every widget update — so no widget-level rebuild can ever skip a layout pass, with or without the trailing `markNeedsLayout()` in `SliverDashboardLayout.updateRenderObject` (which is therefore redundant, not harmful). What the guard actually buys: it gates the reflow seed pass (a scroll relayout must not animate anything) and keeps direct render-object updates cheap.
+    - **Slot-count keying:** the `SliverLayoutBuilder` carries `ValueKey('sliver-layout-builder-$slotCount')`, so **any slot-count change rebuilds a brand-new `RenderSliverDashboard`**. Anything caching that render object from outside the subtree (notably `DashboardGrid`) must be able to re-resolve it.
+  - **Key Cache:** item `ValueKey`s are cached per item id and reused across frames; the Key→Index map is updated **in place** on a pure reorder (same id set, new positions), and rebuilt only on a structural change. The geometric view (below) reorders the layout on every collision push, so the previous "same ID sequence" fast path missed on exactly the frames where the engine is busiest and rebuilt N `ValueKey`s + N interpolated strings + one N-entry map. The cache is cleared when `itemGlobalKeySuffix` changes (the keys embed it) and pruned when it drifts past twice the live item count.
+  - **Delegate Identity & Child Rebuilds (Framework Contract):** `SliverDashboard.build` creates a new `SliverChildBuilderDelegate` on every build pass. Because Flutter's `SliverChildBuilderDelegate.shouldRebuild` returns `true` unconditionally, `SliverMultiBoxAdaptorElement.update` calls `performRebuild()`, executing `updateChild` on the $V$ mounted child widgets whenever `SliverDashboard` rebuilds (e.g. from ancestor state changes). Heavy user content remains completely shielded from GPU repaints by the `RepaintBoundary` firewall inside `DashboardItem`. Memoizing the delegate instance is deliberately avoided to prevent silent stale-closure bugs.
 
 #### C. `RenderSliverDashboard` (The Engine Room)
 - **Role:** Implements `RenderSliverMultiBoxAdaptor` to perform the actual layout and painting.
 - **Virtualization:** Only lays out and paints items that are currently visible in the viewport.
-- **Zero-Allocation Geometry:** Item geometry is computed into a reusable `Float64List` scratch buffer (`[left, top, width, height]` per item) instead of allocating a `List<Rect>` per layout pass (previously ~60k short-lived `Rect`s per second during autoscroll drags at N=1000, a measurable dart2js minor-GC source).
+- **Allocation Discipline:** item geometry is computed into a reusable `Float64List` scratch buffer (`[left, top, width, height]` per item) instead of allocating a `List<Rect>` per layout pass (previously ~60k short-lived `Rect`s per second during autoscroll drags at N=1000, a measurable dart2js minor-GC source). Paint offsets are two `double` fields in `SliverDashboardParentData` rather than an `Offset` per child per pass, and `BoxConstraints` are reused per child (`parentData.tightFor`) while the size is unchanged — a scroll relayout re-lays out every visible child at the exact same size, and `RenderObject.layout` compares constraints by value, so reusing the instance changes nothing else. The pass therefore allocates exactly **one** object: the `SliverGeometry` the protocol mandates.
+- **`parentData` casts are unconditional:** `child.parentData! as SliverDashboardParentData` is sound inside the pass. `setupParentData` replaces any non-conforming parent data, the framework calls it in `adoptChild` for every inserted child, `indexOf` already hard-casts one line earlier, and `remove` unlinks the child before `dropChild` nulls the field. A defensive `is` check leaves an unreachable else branch.
 - **Layout Protocol (Critical):** The `performLayout` method manages a **doubly linked list** of children. It strictly follows this sequence to ensure stability (the buffer change does **not** alter this order):
-    1.  **Metrics:** Calculate slot sizes based on constraints and aspect ratio.
-    2.  **Garbage Collection:** Remove invisible children *before* insertion to clear invalid references.
-    3.  **Initial Child:** Find and insert the first visible item based on scroll offset.
-    4.  **Fill Trailing/Leading:** Insert remaining visible items outwards from the initial child.
+  1.  **Metrics:** Calculate slot sizes based on constraints and aspect ratio — **before** the empty-layout early return, so the metrics backchannel is published on every exit path.
+  2.  **Garbage Collection:** Remove invisible children *before* insertion to clear invalid references.
+  3.  **Initial Child:** Find and insert the first visible item based on scroll offset.
+  4.  **Fill Trailing/Leading:** Insert remaining visible items outwards from the initial child.
 
 #### D. `DashboardItem` (The Smart Wrapper)
 - **Role:** The atomic unit of the grid. It handles Caching, Focus, Accessibility, and Visual Decoration.
 - **Structure:**
-    - **Outer Shell:** `FocusableActionDetector` handling keyboard shortcuts and focus states. Rebuilt on state changes (Focus/Grab).
-    - **Inner Core:** Cached User Content wrapped in `RepaintBoundary`.
+  - **Outer Shell:** `FocusableActionDetector` handling keyboard shortcuts and focus states. Rebuilt on state changes (Focus/Grab).
+  - **Inner Core:** Cached User Content wrapped in `RepaintBoundary`.
 - **Allocation-Free Shell Rebuilds:** The `Actions` map (4 `CallbackAction` closures) is built once per `State` (`late final`); actions read live controller state at invoke time. Shortcut maps are cached per `DashboardShortcuts` config instance (active + idle variants). Shell rebuilds during drags allocate nothing.
 - **Keep-Alive Trade-off (documented):** `wantKeepAlive = isDragging` prevents unmount thrash at the cache edge, but during a long autoscroll drag the keep-alive bucket can grow toward N items, released in one `finalizeTree` burst after the drop. If profiling shows this, scope keep-alive to the dragged cluster + recently laid-out items (re-exposes flicker for non-cluster items; gate behind measurement).
 
 #### E. Internal Components
 - **`DashboardItemWrapper`:**
-    - **Role:** The final visual layer before the user's content.
-    - **Logic:** Adds visual decorations needed for editing, such as the **Resize Handles**.
-    - **Integration:** Wraps the content in a `GuidanceInteractor` if guidance is enabled.
+  - **Role:** The final visual layer before the user's content.
+  - **Logic:** Adds visual decorations needed for editing, such as the **Resize Handles**.
+  - **Integration:** Wraps the content in a `GuidanceInteractor` if guidance is enabled.
 - **`GuidanceInteractor`:**
-    - **Role:** Handles contextual user guidance.
-    - **Logic:** Detects hover (desktop) and tap/long-press (mobile) events to display contextual guidance messages.
-    - **Conflict Management:** Manages gesture conflicts on mobile to ensure drag operations are not blocked.
-- **`GridBackgroundPainter`:** `SlotMetrics` implements value-based `==`/`hashCode` so `shouldRepaint` can short-circuit; the row-line loop is bounded by the clip rect instead of a hard-coded 10,000 px extent (~80–150 mostly-clipped `drawLine` commands per repaint reduced to the visible ~10–20).
+  - **Role:** Handles contextual user guidance.
+  - **Logic:** Detects hover (desktop) and tap/long-press (mobile) events to display contextual guidance messages.
+  - **Conflict Management:** Manages gesture conflicts on mobile to ensure drag operations are not blocked.
+- **`DashboardGrid` (background host):** resolves the sliver and hands the painter **value-typed scalars**. It owns the three-tier geometry resolution and the one-shot post-frame retry described in §6.
+- **`GridBackgroundPainter`:** a pure function of value-typed inputs — `SlotMetrics` implements value-based `==`/`hashCode`, and the sliver geometry enters as two plain `double`s (`sliverLayoutStart`, `sliverContentExtent`) so `shouldRepaint` can short-circuit soundly. The row-line loop is bounded by the clip rect instead of a hard-coded 10,000 px extent (~80–150 mostly-clipped `drawLine` commands per repaint reduced to the visible ~10–20).
+  - **Why it must not hold the `RenderSliverDashboard`:** a render-object reference is stable across mutations of its own `constraints`/`geometry`, so `shouldRepaint` cannot detect them. An earlier revision passed the render object; when the lookup went stale the painter kept a zero main-axis origin **permanently**, painting the background one padding too high, and no repaint could correct it. Handing it scalars turned a permanent misalignment into, at worst, a one-frame one.
 
 #### F. DashboardMinimap (Visualization Tool)
 - **Role:** Provides a "bird's-eye view" of the entire dashboard layout and the current viewport.
 - **Two-Layer Painting:** The minimap is split into:
-    - `_MinimapItemsPainter` behind its own `RepaintBoundary`, repainted **only** when the layout list instance changes, batching all item rects into two `drawPath` calls (previously up to 1000 individual `drawRRect`s per drag cell-crossing);
-    - `_MinimapViewportPainter` constructed with `super(repaint: scrollController)`, so the viewport indicator repaints on scroll **without** rebuilding the widget. This also fixes the stale-indicator bug (the indicator previously did not track scrolling because `shouldRepaint` ignored the scroll offset).
+  - `_MinimapItemsPainter` behind its own `RepaintBoundary`, repainted **only** when the layout list instance changes, batching all item rects into two `drawPath` calls (previously up to 1000 individual `drawRRect`s per drag cell-crossing);
+  - `_MinimapViewportPainter` constructed with `super(repaint: scrollController)`, so the viewport indicator repaints on scroll **without** rebuilding the widget. This also fixes the stale-indicator bug (the indicator previously did not track scrolling because `shouldRepaint` ignored the scroll offset).
 - **Scaling:** Automatically scales the logical grid dimensions to fit the widget's constraints while maintaining the aspect ratio.
 - **Interaction:** Supports "Scrubbing" (Tap/Drag) to instantly scroll the dashboard to a specific position. It calculates the inverse ratio (Minimap Pixel -> Scroll Offset) to perform the jump.
 
@@ -181,28 +201,29 @@ The package implements a comprehensive A11y strategy based on Flutter's `Actions
 The biggest challenge in a grid layout is preventing the reconstruction of child widgets when the parent layout changes (e.g., resizing the window or dragging an item). `sliver_dashboard` solves this using a **Smart Caching** strategy:
 
 1.  **Content Isolation (The Firewall):**
-    - The expensive part (the user's widget provided via `itemBuilder`) is cached in a local state `_cachedWidget`.
-    - **Smart Invalidation:** In `didUpdateWidget`, the system compares the `contentSignature` of the new item vs. the old item.
-        - **Rule:** `contentSignature` is a hash of properties that affect *content* (width, height, id, static status, `hasNestedGrid`, and the `extra` business-metadata map — shallow-hashed) and **crucially ignores** position changes (`x`, `y`).
-    - If the signature matches, the cached widget instance is returned. Flutter detects `oldWidget == newWidget` and stops the rebuild propagation immediately.
-    - **Breakpoint hoisting**: `DashboardItem.didUpdateWidget` resolves old-vs-new breakpoints itself on the breakpoint-only path and keeps the outer cache when unchanged; `DashboardBreakpointBuilder`'s inner guard remains as defense in depth.
-    - **Edit-mode toggles are deliberately NOT an invalidation cause**. The edit chrome (handles, borders, gestures, a11y) lives OUTSIDE the cache and adapts on its own, so toggling is nearly free even with heavy tile subtrees. Content that depends on the edit state must read it reactively (`controller.isEditing.watch(context)` inside the tile — state_beacon is re-exported by the barrel for this). Contract is pinned by a test.
+  - The expensive part (the user's widget provided via `itemBuilder`) is cached in a local state `_cachedWidget`.
+  - **Smart Invalidation:** In `didUpdateWidget`, the system compares the `contentSignature` of the new item vs. the old item.
+    - **Rule:** `contentSignature` is a hash of properties that affect *content* (width, height, id, static status, `hasNestedGrid`, and the `extra` business-metadata map — shallow-hashed) and **crucially ignores** position changes (`x`, `y`).
+  - If the signature matches, the cached widget instance is returned. Flutter detects `oldWidget == newWidget` and stops the rebuild propagation immediately.
+  - **Breakpoint hoisting**: `DashboardItem.didUpdateWidget` resolves old-vs-new breakpoints itself on the breakpoint-only path and keeps the outer cache when unchanged; `DashboardBreakpointBuilder`'s inner guard remains as defense in depth.
+  - **Edit-mode toggles are deliberately NOT an invalidation cause**. The edit chrome (handles, borders, gestures, a11y) lives OUTSIDE the cache and adapts on its own, so toggling is nearly free even with heavy tile subtrees. Content that depends on the edit state must read it reactively (`controller.isEditing.watch(context)` inside the tile — state_beacon is re-exported by the barrel for this). Contract is pinned by a test.
 
 2.  **Lazy Loading:**
-    - **Rule:** The cache is initialized lazily in the `build()` method (not `initState`). This ensures that `InheritedWidgets` (like `Theme` or `Provider`) are accessible during the first build, preventing runtime errors.
+  - **Rule:** The cache is initialized lazily in the `build()` method (not `initState`). This ensures that `InheritedWidgets` (like `Theme` or `Provider`) are accessible during the first build, preventing runtime errors.
 
 3.  **Shell Reconstruction:**
-    - The "Interaction Shell" (border, focus detector, semantics) is rebuilt frequently (e.g., when gaining focus or being grabbed).
-    - Because the heavy user content is cached and wrapped in `RepaintBoundary`, rebuilding the shell is extremely cheap (sub-millisecond).
+  - The "Interaction Shell" (border, focus detector, semantics) is rebuilt frequently (e.g., when gaining focus or being grabbed).
+  - Because the heavy user content is cached and wrapped in `RepaintBoundary`, rebuilding the shell is extremely cheap (sub-millisecond).
 
 4.  **RepaintBoundary:**
-    - When an item moves, the cached widget tree includes a `RepaintBoundary` wrapping the user's content. The GPU simply translates the existing texture without repainting the pixels of the child widget.
+  - When an item moves, the cached widget tree includes a `RepaintBoundary` wrapping the user's content. The GPU simply translates the existing texture without repainting the pixels of the child widget.
 
 5.  **Measured Hot-Path Budgets (N=1000, 8 columns, 2×2 items):**
-    - Drag cell-crossing: ≤ ~20,000 collision checks total (indexed verification), vs 499,500 all-pairs checks pre-audit. Top-of-grid drags additionally traverse up to ~250 cascade queue steps (bottom: 1) — this asymmetry is inherent to push-based grids and is bounded, not eliminated.
-    - Drop compaction (default compactor): O(N·k) skyline; regression threshold in CI: < 50 ms at N=1000 on the test runner.
-    - `performLayout`: zero heap allocations besides the (amortized) scratch buffer growth.
-    - Minimap during drags: 2 `drawPath` calls for items; viewport indicator repaints only on scroll.
+  - Drag cell-crossing: ≤ ~20,000 collision checks total (indexed verification), vs 499,500 all-pairs checks pre-audit. Top-of-grid drags additionally traverse up to ~250 cascade queue steps (bottom: 1) — this asymmetry is inherent to push-based grids and is bounded, not eliminated.
+  - Drop compaction (default compactor): O(N·k) skyline; regression threshold in CI: < 50 ms at N=1000 on the test runner.
+  - `performLayout`: one `SliverGeometry` per pass (protocol-mandated) and **zero** per-child allocations; the scratch buffer grows amortized. An earlier version of this document claimed "zero heap allocations", which is unsatisfiable — `SliverGeometry` is immutable and required once per pass. An impossible budget guarantees nothing and hides real regressions.
+  - Mutation passes additionally pay the geometric view: O(N log N) plus **one** N-element list. The copy cannot be a reused scratch buffer, because the render object's `items` setter relies on instance identity to detect real changes.
+  - Minimap during drags: 2 `drawPath` calls for items; viewport indicator repaints only on scroll.
 
 
 ### Performance Budgets & CI Runhead Safety Ceilings
@@ -223,7 +244,7 @@ Moving a cluster into a dense grid triggers a cascading push sequence strictly a
 
 #### Cross-Grid Target Selection Budget (`< 15ms` for N = 1000 items)
 While a cross-grid drag is active, the coordinator must resolve which target grid is under the cursor on every pointer move event.
-* **The Complexity Guarantee:** The `targetAt` method must maintain O(G) complexity (where G is the number of live grids under the scope) and **never** degrade to O(N) linear scans of all items.
+* **The Complexity Guarantee:** The `targetAt` method must maintain O(G) complexity (where G is the number of live grids under the scope) and **never** degrade to O(N) linear scans of all items. The dimension-projection memo key must likewise stay O(1) and allocation-free — it reads the controller's published slot sizes (plain doubles), never `currentSlotMetrics()`, which allocates.
 * **The Fail-Safe:** In a dense layout of 1,000 items, an O(N) scan would cause massive CPU spikes on every touch move. A 15ms budget on JIT execution ensures that we are only performing point-in-rect tests on registered overlays, completely bypassing individual item coordinate checks. This guarantees microsecond-level execution in production while remaining resilient to CI runner scheduling overhead.
 
 ## 6. Core Technical Patterns
@@ -233,22 +254,103 @@ The system strictly separates logical grid coordinates from visual pixel coordin
 - **Engine:** Operates strictly in **Grid Coordinates** (`int x, y`). It never sees pixel values.
 - **View:** Handles translation to **Pixel Coordinates** (`double offset`) using `SlotMetrics`.
 
-### Matrix-Based Coordinate Mapping
-To support complex Sliver compositions (e.g., inside a `CustomScrollView` with `SliverAppBar`, `SliverPadding`, etc.), we do not rely on simple offset addition.
-- `DashboardOverlay` obtains the **Transformation Matrix** between the `RenderSliverDashboard` and the overlay root.
-- This accounts for scroll offsets, overlaps, and parent transforms precisely.
+### Content-Origin Convention (INVARIANT)
+
+`Dashboard` composes `CustomScrollView → SliverPadding(padding) → SliverDashboard`.
+`RenderSliverEdgeInsetsPadding` forwards
+`precedingScrollExtent: beforePadding + constraints.precedingScrollExtent` to its
+child, so `RenderSliverDashboard.constraints.precedingScrollExtent` **already
+contains the leading main-axis padding**.
+
+One rule, applied identically by every site that converts between grid-content
+coordinates and overlay-local coordinates:
+
+- **main axis** — `origin = precedingScrollExtent - scrollOffset`. Never add
+  `padding.top` / `padding.left` on top of it.
+- **cross axis** — `origin = padding.left` / `padding.top`. The cross-axis
+  padding is not part of the scroll extent and IS added manually.
+
+The five sites bound by this rule: `GridBackgroundPainter` (via the scalars
+resolved by `DashboardGrid`), `DashboardOverlay._buildFeedbackLayer`,
+`_gridPointAtGlobal`, `_isInsideSliver`, `_handleScrollRequest`. A divergence
+between any two of them is a bug — and was one: the feedback layer and
+`scrollToItem` double-counted the leading padding, so the dragged copy sat one
+padding away from the real tile for the whole gesture (a constant offset; the
+scroll terms cancel) and `scrollToItem` over-scrolled by the same amount. The
+error is exactly **zero pixels on a padding-free grid**, which is the only
+configuration the test suite exercised — hence months of 100% line coverage over
+a live defect. Any new site must reuse an existing one rather than re-derive.
+
+The single legitimate exception is `_handleSlotGesture`, which adds `padding.top`
+to the offset it feeds `SlotMetrics.pixelToGrid` *because `pixelToGrid` subtracts
+it again*; the net is zero.
+
+### Sliver Resolution (INVARIANT)
+
+`DashboardOverlay` and `DashboardGrid` both live in the overlay's `Stack`,
+outside the scroll view's subtree, and both need the `RenderSliverDashboard`.
+Their `_findRenderSliver` implementations must:
+
+1. **Use a local search sentinel**, never the cached field. Reading the field as
+   the "already found" guard turns the whole walk into a no-op the moment the
+   field holds a stale detached object — and it does, on **every slot-count
+   change**, because `SliverDashboard` keys its `SliverLayoutBuilder` on the slot
+   count and rebuilds a brand-new render object while these `State`s survive.
+   `NestedDashboard(autoSlotCount: true)` triggers this on its first frame.
+2. **Never fall back to the unscoped walk when a `sliverKey` was given.** The
+   key's context is null for a frame at mount (these `State`s are *siblings* of
+   the scroll view, built before it), and the unscoped walk returns the **first**
+   `RenderSliverDashboard` under the shared overlay stack — a sibling grid's. That
+   reference is attached, so the cache guard would lock it in forever: the
+   background would paint a foreign origin, and in the overlay `_hitTest` would
+   stop matching its own items (`identical(parent, ownSliver)` never true), which
+   disables dragging entirely for that grid.
+3. **Never cache a stale reference in preference to `null`.** The fallbacks below
+   are exact; a detached render object degrades to nothing.
+
+### Background Geometry Resolution & the Two-Pass Dependency
+
+`DashboardGrid` resolves the two main-axis scalars the painter needs in three
+tiers of decreasing precision:
+
+1. the live sliver `constraints`/`geometry`;
+2. the controller's published metrics (`viewMainAxisLeadingExtent`,
+   `viewMainAxisContentExtent`) — exact, and valid while the render object is
+   momentarily unreachable;
+3. the enclosing `SliverPadding`'s leading extent — exact for a single-grid
+   composition, approximate when other slivers precede this one.
+
+Two consequences worth internalising:
+
+- **The background is child 0 of the overlay's `Stack`; the `CustomScrollView` is
+  child 1.** On the frame both are first built, no `RenderSliverDashboard` exists
+  and `performLayout` has not run, so tiers 1 and 2 are both unavailable. A grid
+  that never scrolls emits no notification afterwards and nothing would rebuild
+  this subtree, so tier 1 would be unreachable **forever** for a static grid.
+  Exactly one post-frame `setState` retry is scheduled, guarded by a flag cleared
+  only on success: bounded to one extra build per failure episode and provably
+  non-looping (a composition with no `SliverDashboard` settles after one retry —
+  `pumpAndSettle` would time out otherwise). This is a genuine two-pass layout
+  dependency, not a workaround; Flutter offers no cleaner mechanism here, since
+  publishing from `performLayout` cannot notify listeners.
+- **All three tiers produce a correct origin in single-grid compositions**, so no
+  behavioural assertion can distinguish them and a silent degradation goes
+  unnoticed. A `@visibleForTesting` `GridGeometrySource` marker (set under
+  `kDebugMode`) exists precisely for that. It has already caught two real
+  defects: a `sliverKey` that was not propagated to the background, and a
+  latching bug in the resolution itself.
 
 ### Transactional Drag State (Anti-Drift)
 To prevent floating-point rounding errors and position "drift" during drag operations:
 - The controller stores the `originalLayoutOnStart` when a gesture begins.
 - Every `onDragUpdate` calculates the new position relative to this **initial state**.
 - The `dragOffset` beacon handles the smooth visual translation (pixels) separately from the logical grid updates.
-- **[AUDIT]** Gesture-invariant data (pivot original, cluster, bounding box) is part of this transaction: captured at start, cleared at end/cancel.
+- **[AUDIT]** Gesture-invariant data (pivot original, cluster, bounding box) is part of this transaction: captured at start, cleared at end/cancel — and, per §1, not rewritten by `updateItem`/`replaceItem`.
 
 ### Feedback Layering & Clipping
 When an item is being dragged:
 1.  **Grid:** The actual item stays in the tree but is made invisible (`Opacity 0`) to keep its FocusNode alive.
-2.  **Overlay:** A visual copy (Feedback) is rendered in the `DashboardOverlay` stack.
+2.  **Overlay:** A visual copy (Feedback) is rendered in the `DashboardOverlay` stack, positioned from the content origin defined by the Content-Origin Convention above.
 3.  **Clipping:** The feedback item is clipped using a `ClipRect` calculated from the Sliver's `overlap` constraint. This ensures the item appears to slide "under" pinned headers like an AppBar, rather than floating over them.
 
 ### Feedback Layering
@@ -329,32 +431,40 @@ and a drag can travel continuously between any grids sharing a
   `InheritedWidget`. Scope parameters (`onItemMovedToGrid`,
   `onNestedGridRequested`, `subGridDynamic`, `nestHoverDelay`) are the single
   source of truth and are synced onto the coordinator.
+  - **INVARIANT — one coordinator per tree.** Exactly one scope and one
+    coordinator for the whole grid tree. A sub-page widget must *consume* the
+    ancestor scope (`DashboardNestedScope.maybeOf(context)`) and only create a
+    coordinator when there is none. Two scopes isolate the grids: pointer
+    claims, cross-grid routing and the link registry all become per-scope, so
+    `unlinkChildGrid` and `moveItemToGrid` silently operate on an empty
+    registry.
 - **`DashboardNestedCoordinator`** — the control plane:
-    - **Registry & Target Resolution (INVARIANT):** Every `DashboardOverlay` under the scope registers with its nesting **depth**. `targetAt(globalPosition)` resolves the deepest registered grid containing the point — O(G) point-in-rect tests per pointer event (G = live grids), never per item.
-      - **Recursive Nesting Safeguard:** `targetAt` prevents a parent grid item from being dragged inside its own child grid or deep descendant subtrees. This lookup uses the authoritative link-registry `_childLinks` (persistent walk-up check `isDescendantOf`) instead of unmounted/virtualized overlay states.
-      - **Same-Grid Drag Session Isolation:** Dragging within the source grid remains valid without triggering cross-grid sessions. The source controller itself is not excluded, allowing fluid local movements.
-      - **Sliver-precise containment:** `targetAt` delegates containment to `CrossGridDragTarget.isPointInsideSliver`, which tests the sliver's *visible paint bounds* (constraints + geometry, allocation-free) instead of the overlay's render box. This is what allows several sibling `SliverDashboard`s to share one `CustomScrollView` (each overlay box covers the whole viewport and could not discriminate). Requirement: in multi-sliver trees, every overlay MUST receive a `sliverKey` matching its `SliverDashboard`, a `controller` must be passed to each `SliverDashboard` (provider shadowing), and the overlay `padding` must match the surrounding `SliverPadding`.
-      - **Dimension Projection:** on grid enter and on drop, the coordinator projects the dragged item through `projectItem` (`preserveLogicalSize` | `preserveVisualProportion` | `custom`). The projection is memoized per (source, target) slot-count pair for the whole session, and its output is ALWAYS sanitized (`w` clamped to `[1, targetSlotCount]`, `minW`/`minH` capped) — including custom callback output — so a target grid can never receive an item violating `correctBounds` invariants.
-      - **Exit-by-void hysteresis:** a source overlay only opens a session into empty space when the pointer is outside the sliver bounds by more than half a slot (min 24 px), when at least one *other* accepting grid is registered, and when the pointer is not over the trash zone. Entering another registered grid remains immediate.
-    - **Pointer claim:** `claimPointer` / `isPointerClaimedByOther` prevents
-      ancestor grids from stealing drags started in nested grids.
-    - **Cross-grid session:** the state machine driving an item's move between grids — temporary 
-      removal from the source grid, a live push-preview placeholder in the hovered grid, 
-      and the final drop or cancel (see the sequence below). 
-      Includes the floating proxy (`OverlayEntry` + `ValueNotifier<Offset>`; requires 
-      a Flutter `Overlay` ancestor, gracefully skipped otherwise).
-    - **Tree links & stash:** `NestedDashboard` declares parent links
-      (`linkChildGrid`); links are recorded in a pending map because a
-      `NestedDashboard` mounts *before* the overlay of the grid it hosts, and
-      applied at registration. Serialized payloads for grids that are not
-      mounted yet are stashed and consumed on mount.
+  - **Registry & Target Resolution (INVARIANT):** Every `DashboardOverlay` under the scope registers with its nesting **depth**. `targetAt(globalPosition)` resolves the deepest registered grid containing the point — O(G) point-in-rect tests per pointer event (G = live grids), never per item.
+    - **Recursive Nesting Safeguard:** `targetAt` prevents a parent grid item from being dragged inside its own child grid or deep descendant subtrees. This lookup uses the authoritative link-registry `_childLinks` (persistent walk-up check `isDescendantOf`) instead of unmounted/virtualized overlay states.
+    - **Same-Grid Drag Session Isolation:** Dragging within the source grid remains valid without triggering cross-grid sessions. The source controller itself is not excluded, allowing fluid local movements.
+    - **Ancestor handover requires a real exit (INVARIANT):** a source overlay must not open a session against a **shallower** grid while the pointer is still inside its own bounds (`reg.depth < ownDepth` ⇒ require the exit condition). `_registrationContains` defers a linked child's containment to the parent's `itemAtGlobal`, and any disagreement there — host pushed by a cascade, point mapping to a neighbouring cell, painted extent shrunk below the host height mid-drag by the main-axis growth cap — hands the point back to the parent. A session started then silently removes the item from the child grid and drops a placeholder in the parent, whose pushes move the **host** while the dragged tile pops into the floating proxy: both appear to move at once. Siblings (same depth) and deeper grids keep the immediate handover — they never overlap the source's own bounds.
+    - **Sliver-precise containment:** `targetAt` delegates containment to `CrossGridDragTarget.isPointInsideSliver`, which tests the sliver's *visible paint bounds* (constraints + geometry, allocation-free) instead of the overlay's render box. This is what allows several sibling `SliverDashboard`s to share one `CustomScrollView` (each overlay box covers the whole viewport and could not discriminate). Requirement: in multi-sliver trees, every overlay MUST receive a `sliverKey` matching its `SliverDashboard` — **and that key must reach the overlay's `DashboardGrid` too**, which performs its own lookup — a `controller` must be passed to each `SliverDashboard` (provider shadowing), and the overlay `padding` must match the surrounding `SliverPadding`.
+    - **Dimension Projection:** on grid enter and on drop, the coordinator projects the dragged item through `projectItem` (`preserveLogicalSize` | `preserveVisualProportion` | `preservePixelSize` | `custom`). Every branch's output is sanitized (`w` clamped to `[1, targetSlotCount]`, `minW`/`minH` capped) — including custom callback output — so a target grid can never receive an item violating `correctBounds` invariants. See §Dimension projection below.
+    - **Exit-by-void hysteresis:** a source overlay only opens a session into empty space when the pointer is outside the sliver bounds by more than half a slot (min 24 px), when at least one *other* accepting grid is registered, and when the pointer is not over the trash zone. Entering another registered grid remains immediate.
+  - **Pointer claim:** `claimPointer` / `isPointerClaimedByOther` prevents
+    ancestor grids from stealing drags started in nested grids.
+  - **Cross-grid session:** the state machine driving an item's move between grids — temporary
+    removal from the source grid, a live push-preview placeholder in the hovered grid,
+    and the final drop or cancel (see the sequence below).
+    Includes the floating proxy (`OverlayEntry` + `ValueNotifier<Offset>`; requires
+    a Flutter `Overlay` ancestor, gracefully skipped otherwise).
+  - **Tree links & stash:** `NestedDashboard` declares parent links
+    (`linkChildGrid`); links are recorded in a pending map because a
+    `NestedDashboard` mounts *before* the overlay of the grid it hosts, and
+    applied at registration. Serialized payloads for grids that are not
+    mounted yet are stashed and consumed on mount.
 - **`NestedDashboard`** (`lib/src/view/nested/nested_dashboard.dart`) — a
   child `Dashboard` wrapper with `parentItemId`:
-    - `autoSlotCount`: child slot count follows the
-      host item's `w`, deferred post-frame with an applied-value guard.
-    - `sizeToContent`: computes needed child pixels from `SlotMetrics` and asks
-      the parent (via `setItemSize`) for the matching host `h`, post-frame,
-      loop-guarded, and skipped while the parent grid is mid-gesture.
+  - `autoSlotCount`: child slot count follows the
+    host item's `w`, deferred post-frame with an applied-value guard.
+  - `sizeToContent`: computes needed child pixels from `SlotMetrics` and asks
+    the parent (via `setItemSize`) for the matching host `h`, post-frame,
+    loop-guarded, and skipped while the parent grid is mid-gesture.
 - **Codec** (`lib/src/view/nested/nested_layout_codec.dart`) —
   `exportNestedTree` / `loadNestedTree`, recursive, `subGrid: {slotCount,
   items}` payloads. Item ids must be unique across the tree.
@@ -436,17 +546,76 @@ Key properties:
 - **`hasNestedGrid` is declarative, links are authoritative:** the flag marks intent (builders, persistence, policies) and is self-healed by the codec (set on export for linked hosts, normalized on import from `subGrid` payloads); runtime decisions (`hasChildGrid`, export recursion, delivery) must keep reading the coordinator's persistent `_childLinks` map. The flag participates in `==`/`hashCode`/`contentSignature` — any change to it must keep the equality-law tests green.
 - **`updateItem` is the single-item mutation entry point:** never rewrite `layout.value` by hand to change one item. `updateItem` enforces id identity, corrects bounds, no-ops on unknown id / equal result, and emits one `onLayoutChanged`. New per-item mutations should go through it (or a thin wrapper over it), not around it.
 - **Id uniqueness:** cross-grid moves and the tree codec assume item ids are unique across the whole tree (debug-asserted in `moveItemToGrid`). Document this on any new cross-grid API.
+- **Edit-state propagation is an application responsibility:** a `NestedDashboard` whose controller is not editing hands every pointer-down to its host (see §3A, Hit-Test Ownership). Apps embedding nested grids must mirror their edit state onto the child controller, deferred post-frame (no beacon mutation during build).
+
+### Dimension projection
+
+`projectItem` maps the dragged item's dimensions when it crosses into a grid of
+a different geometry. Four policies:
+
+| Policy | Preserves | Typical use |
+|---|---|---|
+| `preserveLogicalSize` (default) | `w`/`h` in cells | grids of equal physical density |
+| `preserveVisualProportion` | the fraction of the container | grids of similar width, different density |
+| `preservePixelSize` | the physical pixel span | nested panels; grids of very different widths |
+| `custom` | delegated to the application | domain rules |
+
+**`preserveVisualProportion` is not "same apparent size".** It preserves the
+*fraction of the container*, and a nested grid's container is one cell-range of
+its parent — physically much narrower. With a 24-column page 1200 px wide and a
+panel hosted in a 6-column tile split into 12 columns, a `w:4` tile (193 px)
+lands at 87 px under `preserveLogicalSize`, **40 px** under
+`preserveVisualProportion`, and 193 px under `preservePixelSize`.
+
+`preservePixelSize` specifics:
+
+- Scales by the **stride ratio per axis** (`stride = slotSize + spacing`), not by
+  the slot-count ratio. Matching the *augmented* span (`w * stride`, i.e. pixel
+  size plus one spacing) absorbs a spacing difference between the two grids to
+  first order; the residual error is bounded by one spacing, below the half-slot
+  rounding `.round()` already introduces.
+- **Not short-circuited by `sourceSlotCount == targetSlotCount`.** Two grids with
+  the same column count and different widths have different strides — precisely
+  the nested-panel case.
+- Scales `minW`/`minH` and finite `maxW`/`maxH` by the same factor: those encode
+  physical intents (a "at least 120 px" touch target needs more columns in a
+  denser grid) that silently evaporate otherwise.
+- Degrades to `preserveLogicalSize` when either grid is unlaid-out or a stride is
+  non-positive/non-finite. It never produces Infinity/NaN dimensions.
+
+**Why this is a policy and not a callback.** `DimensionProjectionCallback`
+receives only the two slot counts, and a count cannot express a physical size:
+the correct pixel-preserving width reduces to `w * n_target / host.w`, in which
+the *source* slot count cancels out entirely. Any factor built on
+`targetSlotCount / sourceSlotCount` therefore reintroduces a spurious dependency
+whose error changes **sign** as the host tile widens. Widening the callback
+signature would break every existing callback; new semantics go in as enum values.
+
+`moveItemToGrid` is deliberately **unprojected** (an explicit caller owns the
+geometry). `projectItemBetween(from:, to:, item:)` reproduces the drag-time
+sizing for programmatic moves.
+
+The projection is memoized per session. The memo key includes the two grids'
+slot counts **and**, for `preservePixelSize`, their live slot sizes — a window or
+host resize mid-drag changes the strides without changing the counts. The key
+reads the controller's published slot-size doubles, never `currentSlotMetrics()`
+(which allocates), so it stays allocation-free at 60–120 Hz; `SlotMetrics`
+objects are built only on a memo miss. For other policies the slot keys are
+frozen at 0, leaving invalidation behaviour bit-for-bit unchanged.
 
 ### Performance contract
 
 - Without a `DashboardNestedScope`: three null-checks per pointer event, zero
   allocations, zero registry.
-- With a scope: `targetAt` is O(G) per pointer event; a cross-grid hover runs
+- With a scope: `targetAt` is O(G) per pointer event; the projection memo key is
+  O(1) and allocation-free; a cross-grid hover runs
   the pre-existing `showPlaceholder` path on the hovered grid (same cost as
   the shipped `DragTarget` flow, on the audited skyline compactor); the proxy
   repositions via one `ValueNotifier` without rebuilding any grid.
 - Layering is preserved: the engine is untouched; controller additions are
-  pure state/orchestration; all geometry stays in the view layer.
+  pure state/orchestration; all geometry stays in the view layer. The
+  coordinator *reads* view-published metrics for `preservePixelSize`; it never
+  derives them.
 
 ### Paint-Phase Reflow Animations
 
@@ -455,13 +624,21 @@ position changed (`animateReflow`, off by default; 150 ms easeOutCubic).
 Invariant-preserving design:
 
 - **Layout untouched:** `performLayout` still writes final coordinates in one
-  pass (order GC → Initial → Trailing → Leading unchanged); the transition
-  seeding is a per-child double comparison inside the existing offset
+  pass (order Metrics → GC → Initial → Trailing → Leading unchanged); the
+  transition seeding is a per-child double comparison inside the existing offset
   assignment (`_applyChildGeometry`) and costs one bool check when disabled.
 - **Seeding gate:** transitions are seeded only when the `items` *instance*
   changed since the previous pass (genuine layout mutation) AND slot metrics
   are unchanged. Scroll relayouts reuse the instance → zero cost; metric
   changes (resize/breakpoint/slot count) snap and clear in-flight transitions.
+  - **The gate must not depend on property assignment order.** The `items`
+    setter latches only the raw fact that the instance changed
+    (`_itemsChangedSincePass`); `_animateReflow` is read in `performLayout`.
+    Latching `_animateReflow` in the setter made a `false → true` toggle lose its
+    first seed pass, because `updateRenderObject` assigned `items` before
+    `animateReflow` — and that frame is usually the layout mutation worth
+    animating. A functional behaviour depending on cascade order is a regression
+    waiting for the next reorder.
 - **Paint-only interpolation:** the child (a `RepaintBoundary`) is painted at
   the interpolated offset — a GPU layer translation, no `TransformLayer`
   allocation, no rebuild. Hit-testing/semantics (`childMainAxisPosition`,
@@ -529,6 +706,16 @@ identity guards (render-object items setter, reflow seed pass) see a new
 instance iff the layout actually changed. The controller list itself stays
 ID-ordered (engine invariant untouched); only the view adapts. Element
 state survives reorders via ValueKeys + `findChildIndexCallback`.
+
+**Cost, and its consequence on the key cache.** The view costs O(N log N) plus
+one N-element list per genuine layout mutation (scroll passes hit the memo). The
+copy cannot become a reused scratch buffer: the render object's `items` setter
+relies on instance identity to detect real changes, so a recycled list would make
+every mutation look like a no-op. More importantly, the ordering changes on
+**every collision push**, which invalidated the original Key→Index reuse
+heuristic ("same ID sequence") on exactly the busiest frames. The map is now
+updated in place on a pure reorder, with `ValueKey`s cached per item id — see
+§3B, Key Cache.
 
 ### Skyline vertical compaction
 
@@ -605,6 +792,7 @@ overlay (`_dropTargetAt`), which owns pointer handling:
 - **Arming exclusion:** `isDropTarget` items are excluded from the
   `subGridDynamic` arming predicate — an explicit target must never also be
   a speculative nest candidate (two mechanisms competing on one tile).
+
 **Cross-grid path (same feature, other entry point).** A drag coming from
 another grid — including a nested one — is owned by the coordinator's
 session, not by the source overlay, so the target resolution lives in
@@ -630,3 +818,20 @@ session, not by the source overlay, so the target resolution lives in
   are back in the grid the drag started from, which is not `hostGrid`.
   Consume with `sourceGrid.removeItems(...)`; for a same-grid drop both
   arguments are the same controller.
+
+## 8. Known Defect Patterns (post-mortems)
+
+Kept here because each one shipped, and each one was invisible to a green test
+suite. If a symptom below matches, start from the stated root cause.
+
+| Symptom | Root cause | Guard now in place |
+|---|---|---|
+| Background grid one padding too high, nested + padded grids only, permanent | `_findRenderSliver` used the state field as its own search sentinel → the walk became a no-op behind a stale reference; the painter's fallback assumed a zero main-axis origin, and `shouldRepaint` compared the render-object reference so nothing could correct it | local sentinel; three-tier scalar resolution; `GridGeometrySource` hook; padded-geometry tests |
+| Dragged copy offset by one padding for the whole gesture | `_buildFeedbackLayer` added `padding.top` to an origin (`precedingScrollExtent`) that already contained it | Content-Origin Convention (§6) + feedback-anchoring test with non-zero padding |
+| `scrollToItem(alignment: 0)` overshoots by one padding | same double count in `_handleScrollRequest` | same |
+| Host panel moves while dragging inside a nested grid | a session opened against the **ancestor** grid while the pointer was still inside the child (parent/child containment disagreement) | ancestor-handover exit gate (§7) |
+| Dragging a child tile drags the host panel instead | child grid not in edit mode → early return before `claimPointer` → the hit-test walk reaches the host | documented as an application contract (propagate edit state) |
+| Nested sub-page could not receive cross-grid items; links never unlinked | a second `DashboardNestedCoordinator` instantiated per widget state | one-coordinator-per-tree invariant (§7) |
+| Tiles shrink when dropped into a nested panel | `preserveVisualProportion` preserves the *container fraction*, and the panel's container is far narrower | `preservePixelSize` policy |
+| First `animateReflow` toggle does not animate | the `items` setter latched `_animateReflow`, and `updateRenderObject` assigned `items` first | latch only the instance change; read the flag in `performLayout` |
+| Minimap draws a viewport over an empty grid | `performLayout`'s empty-layout early return skipped `onLayoutMetrics` | metrics published on every exit path |

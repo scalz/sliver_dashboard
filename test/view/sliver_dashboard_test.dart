@@ -3,6 +3,29 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sliver_dashboard/sliver_dashboard.dart';
+import 'package:sliver_dashboard/src/controller/utility.dart';
+import 'package:sliver_dashboard/src/view/dashboard_feedback_widget.dart'
+    show DashboardFeedbackItem;
+import 'package:sliver_dashboard/src/view/dashboard_grid.dart';
+
+import '../test_helpers.dart';
+
+/// Paints [finder]'s [GridBackgroundPainter] into a recording canvas and
+/// returns the grid's content origin, in the painter's own local coordinates.
+Offset _backgroundOriginOf(WidgetTester tester, Finder finder) {
+  final paint = tester.widget<CustomPaint>(
+    find.descendant(of: finder, matching: find.byType(CustomPaint)).first,
+  );
+  final painter = paint.painter! as GridBackgroundPainter;
+  final canvas = RecordingCanvas();
+  painter.paint(canvas, tester.getSize(finder));
+  expect(
+    canvas.translations,
+    hasLength(1),
+    reason: 'the painter must apply exactly one origin translate',
+  );
+  return canvas.translations.single;
+}
 
 void main() {
   testWidgets('SliverDashboard layouts leading children when scrolling up', (tester) async {
@@ -453,6 +476,439 @@ void main() {
     // Verify scroll offset updated safely without causing any layout exceptions
     expect(scrollController.offset, 1500);
     expect(find.byType(CustomScrollView), findsOneWidget);
+  });
+
+  group('SliverDashboardParentData.paintOffset', () {
+    // The paint offset is stored as two doubles — an `Offset` per child
+    // per layout pass was ~1.8k short-lived objects/s at 60 Hz with 30 visible
+    // tiles. `paintOffset` survives as a convenience VIEW for call sites outside
+    // the hot path (and for tests); this pins the grid math it exposes.
+    testWidgets('exposes the child grid position in content coordinates', (tester) async {
+      final controller = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: const [LayoutItem(id: 'a', x: 1, y: 2, w: 1, h: 1)],
+      );
+      addTearDown(controller.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Dashboard<String>(
+              controller: controller,
+              itemBuilder: (context, item) => Text('T-${item.id}'),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final render = tester.renderObject<RenderSliverDashboard>(
+        find.byType(SliverDashboardLayout),
+      );
+      final parentData = render.firstChild!.parentData! as SliverDashboardParentData;
+
+      // Derived from the metrics the sliver publishes, so the expectation holds
+      // whatever the test surface size is.
+      final slotWidth = controller.internal.viewSlotWidth!;
+      final slotHeight = controller.internal.viewSlotHeight!;
+
+      expect(parentData.hasPaintOffset, isTrue);
+      expect(
+        parentData.paintOffset,
+        within(
+          distance: 0.01,
+          from: Offset(1 * (slotWidth + 8), 2 * (slotHeight + 8)),
+        ),
+        reason: 'x stride uses crossAxisSpacing, y stride uses mainAxisSpacing',
+      );
+      expect(parentData.paintOffset.dx, parentData.paintOffsetX);
+      expect(parentData.paintOffset.dy, parentData.paintOffsetY);
+    });
+  });
+
+  group('SliverDashboard key cache', () {
+    // The cached ValueKeys embed `itemGlobalKeySuffix`. Without dropping
+    // the cache on a suffix change, `_keyFor` would keep handing out keys built
+    // from the OLD suffix, so the item elements would never be re-keyed — a
+    // silent divergence between the keys the delegate emits and the suffix the
+    // widget was configured with.
+    testWidgets('a suffix change re-keys every item', (tester) async {
+      final controller = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: const [
+          LayoutItem(id: 'i1', x: 0, y: 0, w: 1, h: 1),
+          LayoutItem(id: 'i2', x: 1, y: 0, w: 1, h: 1),
+        ],
+      );
+      addTearDown(controller.dispose);
+
+      Widget build(String suffix) => MaterialApp(
+            home: Scaffold(
+              body: Dashboard<String>(
+                controller: controller,
+                itemGlobalKeySuffix: suffix,
+                itemBuilder: (context, item) => Text('T-${item.id}'),
+              ),
+            ),
+          );
+
+      await tester.pumpWidget(build('-v1'));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('i1-v1')), findsOneWidget);
+      expect(find.byKey(const ValueKey('i2-v1')), findsOneWidget);
+
+      // Same widget position and no key change: this is didUpdateWidget, the
+      // State (and its caches) survives.
+      await tester.pumpWidget(build('-v2'));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const ValueKey('i1-v1')),
+        findsNothing,
+        reason: 'a stale cached key would still be emitted here',
+      );
+      expect(find.byKey(const ValueKey('i1-v2')), findsOneWidget);
+      expect(find.byKey(const ValueKey('i2-v2')), findsOneWidget);
+    });
+  });
+
+  group('DashboardGrid sliverKey scoping', () {
+    setUp(() => debugLastGridGeometrySource = null);
+    tearDown(() => debugLastGridGeometrySource = null);
+
+    testWidgets('resolves directly when the key is on the SliverDashboardLayout', (tester) async {
+      const items = [LayoutItem(id: 'a', x: 0, y: 0, w: 1, h: 1)];
+      final controller = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: items,
+      )..setEditMode(true);
+      addTearDown(controller.dispose);
+      final scrollController = ScrollController();
+      addTearDown(scrollController.dispose);
+      final sliverKey = GlobalKey();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: DashboardOverlay<String>(
+              controller: controller,
+              scrollController: scrollController,
+              sliverKey: sliverKey,
+              gridStyle: const GridStyle(),
+              padding: const EdgeInsets.all(20),
+              itemBuilder: (context, item) => Text('T-${item.id}'),
+              child: CustomScrollView(
+                controller: scrollController,
+                slivers: [
+                  SliverPadding(
+                    padding: const EdgeInsets.all(20),
+                    sliver: SliverDashboardLayout(
+                      key: sliverKey,
+                      items: items,
+                      slotCount: 4,
+                      vsync: tester,
+                      delegate: SliverChildBuilderDelegate(
+                        (context, index) => Text('T-${items[index].id}'),
+                        childCount: items.length,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // The key's render object IS the RenderSliverDashboard: no walk needed.
+      expect(sliverKey.currentContext!.findRenderObject(), isA<RenderSliverDashboard>());
+      expect(debugLastGridGeometrySource, GridGeometrySource.liveSliver);
+
+      final overlayOrigin = tester.getTopLeft(find.byType(DashboardOverlay<String>));
+      expect(
+        _backgroundOriginOf(tester, find.byType(DashboardGrid)),
+        within(distance: 0.5, from: tester.getTopLeft(find.text('T-a')) - overlayOrigin),
+      );
+    });
+
+    testWidgets('walks the subtree when the key is on the SliverDashboard', (tester) async {
+      // `SliverDashboard` builds a SliverLayoutBuilder, so the key's render
+      // object is NOT the RenderSliverDashboard — the visitor has to walk down.
+      final controller = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: const [LayoutItem(id: 'a', x: 0, y: 0, w: 1, h: 1)],
+      )..setEditMode(true);
+      addTearDown(controller.dispose);
+      final scrollController = ScrollController();
+      addTearDown(scrollController.dispose);
+      final sliverKey = GlobalKey();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: DashboardOverlay<String>(
+              controller: controller,
+              scrollController: scrollController,
+              sliverKey: sliverKey,
+              gridStyle: const GridStyle(),
+              padding: const EdgeInsets.all(20),
+              itemBuilder: (context, item) => Text('T-${item.id}'),
+              child: CustomScrollView(
+                controller: scrollController,
+                slivers: [
+                  SliverPadding(
+                    padding: const EdgeInsets.all(20),
+                    sliver: SliverDashboard(
+                      key: sliverKey,
+                      controller: controller,
+                      itemBuilder: (context, item) => Text('T-${item.id}'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(sliverKey.currentContext!.findRenderObject(), isNot(isA<RenderSliverDashboard>()));
+      expect(debugLastGridGeometrySource, GridGeometrySource.liveSliver);
+
+      final overlayOrigin = tester.getTopLeft(find.byType(DashboardOverlay<String>));
+      expect(
+        _backgroundOriginOf(tester, find.byType(DashboardGrid)),
+        within(distance: 0.5, from: tester.getTopLeft(find.text('T-a')) - overlayOrigin),
+        reason: 'the scoped walk must find THIS grid, at its padded origin',
+      );
+    });
+
+    testWidgets('two grids sharing one scroll view paint their own origins', (tester) async {
+      // The composition sliverKey exists for. Each overlay's Stack covers the
+      // whole viewport, so an unscoped lookup cannot tell the two apart.
+      final a = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: const [LayoutItem(id: 'a1', x: 0, y: 0, w: 1, h: 1)],
+      )..setEditMode(true);
+      final b = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: const [LayoutItem(id: 'b1', x: 0, y: 0, w: 1, h: 1)],
+      )..setEditMode(true);
+      addTearDown(a.dispose);
+      addTearDown(b.dispose);
+      final scrollController = ScrollController();
+      addTearDown(scrollController.dispose);
+      final keyA = GlobalKey();
+      final keyB = GlobalKey();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: DashboardOverlay<String>(
+              controller: a,
+              scrollController: scrollController,
+              sliverKey: keyA,
+              gridStyle: const GridStyle(),
+              itemBuilder: (context, item) => Text('A-${item.id}'),
+              child: DashboardOverlay<String>(
+                controller: b,
+                scrollController: scrollController,
+                sliverKey: keyB,
+                gridStyle: const GridStyle(),
+                itemBuilder: (context, item) => Text('B-${item.id}'),
+                child: CustomScrollView(
+                  controller: scrollController,
+                  slivers: [
+                    SliverDashboard(
+                      key: keyA,
+                      controller: a,
+                      itemBuilder: (context, item) => Text('A-${item.id}'),
+                    ),
+                    SliverDashboard(
+                      key: keyB,
+                      controller: b,
+                      itemBuilder: (context, item) => Text('B-${item.id}'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final grids = find.byType(DashboardGrid);
+      expect(grids, findsNWidgets(2));
+
+      // Tree order: the outer overlay's background comes first.
+      final originA = _backgroundOriginOf(tester, grids.at(0));
+      final originB = _backgroundOriginOf(tester, grids.at(1));
+
+      expect(originA.dy, closeTo(0, 0.5));
+      expect(
+        originB.dy,
+        greaterThan(originA.dy + 100),
+        reason: 'grid B starts after grid A content; an unscoped lookup would '
+            'give both the same origin',
+      );
+    });
+
+    testWidgets(
+        'an overlay with no SliverDashboard degrades to the padding origin '
+        'and retries at most once', (tester) async {
+      // Covers the tier-3 fallback AND the `_resolveRetryScheduled`
+      // guard. Frame 1 finds nothing and schedules the retry; frame 2 finds
+      // nothing again and must NOT schedule another one — the flag is cleared
+      // only on success, so this is what bounds the retry to a single extra
+      // build instead of an infinite rebuild loop.
+      final controller = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: const [LayoutItem(id: 'a', x: 0, y: 0, w: 1, h: 1)],
+      )..setEditMode(true);
+      addTearDown(controller.dispose);
+      final scrollController = ScrollController();
+      addTearDown(scrollController.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: DashboardOverlay<String>(
+              controller: controller,
+              scrollController: scrollController,
+              gridStyle: const GridStyle(),
+              padding: const EdgeInsets.all(20),
+              itemBuilder: (context, item) => const SizedBox(),
+              // No SliverDashboard anywhere: the lookup can never succeed.
+              child: CustomScrollView(
+                controller: scrollController,
+                slivers: const [SliverToBoxAdapter(child: SizedBox(height: 400))],
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(debugLastGridGeometrySource, GridGeometrySource.padding);
+      expect(
+        _backgroundOriginOf(tester, find.byType(DashboardGrid)),
+        const Offset(20, 20),
+        reason: 'the padding tier is exact for a single-grid composition',
+      );
+
+      // A further rebuild must still not resolve, and must not loop.
+      controller.toggleSelection('a');
+      await tester.pumpAndSettle();
+      expect(debugLastGridGeometrySource, GridGeometrySource.padding);
+    });
+  });
+
+  group('Padded grid geometry (regression: everything is off by padding.top)', () {
+    const padding = EdgeInsets.all(20);
+
+    late DashboardController controller;
+
+    setUp(() {
+      controller = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: const [
+          LayoutItem(id: 'i1', x: 0, y: 0, w: 1, h: 1),
+          LayoutItem(id: 'i2', x: 1, y: 0, w: 1, h: 1),
+        ],
+      )..setEditMode(true);
+    });
+
+    tearDown(() => controller.dispose());
+
+    Widget buildPadded({EdgeInsets? insets}) => MaterialApp(
+          home: Scaffold(
+            body: Dashboard<String>(
+              controller: controller,
+              padding: insets ?? padding,
+              gridStyle: const GridStyle(),
+              itemBuilder: (context, item) =>
+                  ColoredBox(color: Colors.blue, child: Text('T-${item.id}')),
+            ),
+          ),
+        );
+
+    testWidgets('background grid origin matches the real tile origin', (tester) async {
+      await runOnDesktop(() async {
+        await tester.pumpWidget(buildPadded());
+        await tester.pumpAndSettle();
+
+        final boxOrigin = tester.getTopLeft(find.byType(Dashboard<String>));
+        final realTileOrigin = tester.getTopLeft(find.text('T-i1')) - boxOrigin;
+
+        expect(
+          _backgroundOriginOf(tester, find.byType(DashboardGrid)),
+          within(distance: 0.5, from: realTileOrigin),
+          reason: 'grid lines must be anchored on cell (0,0), i.e. at the padding',
+        );
+      });
+    });
+
+    testWidgets('drag feedback stays anchored on the pointer', (tester) async {
+      await runOnDesktop(() async {
+        await tester.pumpWidget(buildPadded());
+        await tester.pumpAndSettle();
+
+        final tileOrigin = tester.getTopLeft(find.text('T-i1'));
+        const delta = Offset(0, 4); // engage the drag without crossing a cell
+
+        final gesture = await tester.startGesture(tester.getCenter(find.text('T-i1')));
+        await tester.pump();
+        await gesture.moveBy(delta);
+        await tester.pump();
+
+        expect(
+          tester.getTopLeft(find.byType(DashboardFeedbackItem)) - tileOrigin,
+          within(distance: 0.5, from: delta),
+          reason: 'the feedback must follow the pointer delta only; '
+              'padding.top must not be counted twice',
+        );
+
+        await gesture.up();
+        await tester.pumpAndSettle();
+      });
+    });
+
+    testWidgets('zero padding keeps the historical geometry (mirror case)', (tester) async {
+      await runOnDesktop(() async {
+        await tester.pumpWidget(buildPadded(insets: EdgeInsets.zero));
+        await tester.pumpAndSettle();
+
+        final boxOrigin = tester.getTopLeft(find.byType(Dashboard<String>));
+        expect(
+          _backgroundOriginOf(tester, find.byType(DashboardGrid)),
+          within(distance: 0.5, from: tester.getTopLeft(find.text('T-i1')) - boxOrigin),
+        );
+      });
+    });
+
+    testWidgets('scrollToItem(alignment: 0) is not offset by the padding', (tester) async {
+      await runOnDesktop(() async {
+        controller.addItems([
+          for (var y = 1; y < 30; y++) LayoutItem(id: 'r$y', x: 0, y: y, w: 1, h: 1),
+        ]);
+        await tester.pumpWidget(buildPadded());
+        await tester.pumpAndSettle();
+
+        final viewportTop = tester.getTopLeft(find.byType(Dashboard<String>)).dy;
+        await controller.scrollToItem('r20', duration: Duration.zero);
+        await tester.pumpAndSettle();
+
+        expect(
+          tester.getTopLeft(find.text('T-r20')).dy,
+          closeTo(viewportTop, 1),
+          reason: 'alignment 0 puts the item top at the viewport top, '
+              'not one padding above it',
+        );
+      });
+    });
   });
 
   // Helper to generate a large layout

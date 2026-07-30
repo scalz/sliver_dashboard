@@ -376,16 +376,13 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     LayoutItem Function(LayoutItem item) transform, {
     bool recompact = true,
   }) {
-    // The per-gesture caches (_dragPivotOriginal, _dragClusterItems,
-    // _dragOriginalBBox, _lastMovedPivot) are captured in onDragStart and are
-    // NOT rewritten here. Replacing the pivot mid-gesture therefore leaves
-    // them pointing at an id the layout no longer contains, and the next
-    // onDragUpdate throws on `firstWhere`. Unreachable through the package's
-    // own flows (every nest-host lookup excludes the dragged item), so this
-    // documents the app-side contract rather than guarding a live path.
+    // See replaceItem: geometry/flag changes on the ACTIVE pivot are not
+    // propagated to the per-gesture caches. Changing a non-pivot item
+    // mid-gesture is supported (that is what the snapshot write-through below
+    // is for).
     assert(
       !(_isDraggingState.peek() || isResizing.peek()) || itemId != _pivotItemId,
-      'replaceItem: cannot replace the item of the active gesture '
+      'updateItem: cannot transform the item of the active gesture '
       '("$itemId" is the current pivot).',
     );
     final current = layout.value;

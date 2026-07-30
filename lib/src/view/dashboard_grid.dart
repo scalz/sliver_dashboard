@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:sliver_dashboard/src/controller/dashboard_controller_interface.dart';
@@ -10,11 +11,6 @@ import 'package:sliver_dashboard/src/view/sliver_dashboard.dart';
 import 'package:state_beacon/state_beacon.dart';
 
 /// A widget that paints the dashboard grid lines and the active item background.
-///
-/// This widget is designed to be placed in a [Stack] behind the scrollable content
-/// within DashboardOverlay. It synchronizes with the [ScrollController] to
-/// draw the grid lines as if they were part of the scroll view, while actually
-/// residing in a static overlay.
 class DashboardGrid extends StatefulWidget {
   /// Creates a [DashboardGrid].
   const DashboardGrid({
@@ -44,10 +40,11 @@ class DashboardGrid extends StatefulWidget {
   /// belongs to.
   ///
   /// Required in multi-sliver trees (several dashboards sharing one
-  /// `CustomScrollView`): without it the render-tree walk below returns the
-  /// FIRST `RenderSliverDashboard` under the shared overlay stack, so every
-  /// grid would paint the background of the same sliver. Mirrors
-  /// `DashboardOverlay.sliverKey`.
+  /// `CustomScrollView`): without it the render-tree walk
+  /// would returns the FIRST `RenderSliverDashboard` under the
+  /// shared overlay stack, so every grid would paint the background of the same
+  /// sliver. Mirrors `DashboardOverlay.sliverKey`, which must be given the same
+  /// key.
   final GlobalKey? sliverKey;
 
   /// The aspect ratio of a single slot.
@@ -60,12 +57,16 @@ class DashboardGrid extends StatefulWidget {
   final double crossAxisSpacing;
 
   /// Padding around the grid content.
+  ///
+  /// Must match the `SliverPadding` surrounding the `SliverDashboard`: the
+  /// cross-axis component is applied to the painted origin, and the main-axis
+  /// component is the last-resort fallback when the sliver cannot be resolved.
   final EdgeInsets padding;
 
   /// The scroll direction of the dashboard.
   final Axis scrollDirection;
 
-  /// If true, force grid to fill viewport
+  /// If true, force grid to fill viewport.
   final bool fillViewport;
 
   @override
@@ -75,10 +76,7 @@ class DashboardGrid extends StatefulWidget {
 class _DashboardGridState extends State<DashboardGrid> {
   RenderSliverDashboard? _renderSliver;
 
-  /// Guards the one-shot post-frame retry below. Set when a resolution
-  /// attempt failed and a retry is already queued; cleared as soon as a
-  /// resolution succeeds. Bounds the self-heal to a single extra build per
-  /// failure episode — it can never turn into a rebuild loop.
+  /// One-shot post-frame retry guard for two-pass Stack sibling resolution.
   bool _resolveRetryScheduled = false;
 
   @override
@@ -113,7 +111,7 @@ class _DashboardGridState extends State<DashboardGrid> {
         // Reasoning: We attempt to find the RenderSliverDashboard on every frame
         // (or rebuild) because the render object might have been detached/attached
         // or moved within the tree.
-        _findRenderSliver();
+        final sliver = _findRenderSliver();
 
         return LayoutBuilder(
           builder: (context, constraints) {
@@ -134,12 +132,12 @@ class _DashboardGridState extends State<DashboardGrid> {
             final selectedIds = widget.controller.selectedItemIds.watch(context);
             var draggedItems = <LayoutItem>[];
 
-            // Only show shadows if we are actively dragging (or resizing)
             if (isDragging || widget.controller.internal.isResizing.value) {
               draggedItems = layout.where((i) => selectedIds.contains(i.id)).toList();
             }
 
             final placeholder = widget.controller.currentDragPlaceholder;
+            final geometry = _resolveSliverGeometry(constraints, sliver);
 
             return CustomPaint(
               size: constraints.biggest,
@@ -147,12 +145,13 @@ class _DashboardGridState extends State<DashboardGrid> {
                 metrics: metrics,
                 scrollOffset:
                     widget.scrollController.hasClients ? widget.scrollController.offset : 0.0,
+                sliverLayoutStart: geometry.layoutStart,
+                sliverContentExtent: geometry.contentExtent,
                 draggedItems: draggedItems,
                 placeholder: placeholder,
                 lineColor: widget.gridStyle.lineColor,
                 lineWidth: widget.gridStyle.lineWidth,
                 fillColor: widget.gridStyle.fillColor,
-                renderSliver: _renderSliver,
                 fillViewport: widget.fillViewport,
               ),
             );
@@ -162,44 +161,65 @@ class _DashboardGridState extends State<DashboardGrid> {
     );
   }
 
+  /// Resolves the two main-axis scalars in 3 decreasing precision tiers:
+  /// 1) live sliver geometry, 2) published controller metrics, 3) leading padding.
+  ///
+  /// Reason — why scalars: CustomPainter.shouldRepaint compares value parameters.
+  /// Passing plain doubles guarantees repaints on geometry changes.
+  ({double layoutStart, double contentExtent}) _resolveSliverGeometry(
+    BoxConstraints constraints,
+    RenderSliverDashboard? sliver,
+  ) {
+    final isVertical = widget.scrollDirection == Axis.vertical;
+
+    if (sliver != null && sliver.attached && sliver.geometry != null) {
+      _recordGeometrySource(GridGeometrySource.liveSliver);
+      return (
+        layoutStart: sliver.constraints.precedingScrollExtent,
+        contentExtent: sliver.geometry!.scrollExtent,
+      );
+    }
+
+    final internal = widget.controller.internal;
+    final publishedStart = internal.viewMainAxisLeadingExtent;
+    final publishedExtent = internal.viewMainAxisContentExtent;
+    if (publishedStart != null && publishedExtent != null) {
+      _recordGeometrySource(GridGeometrySource.publishedMetrics);
+      return (layoutStart: publishedStart, contentExtent: publishedExtent);
+    }
+
+    _recordGeometrySource(GridGeometrySource.padding);
+    return (
+      layoutStart: isVertical ? widget.padding.top : widget.padding.left,
+      contentExtent: isVertical ? constraints.maxHeight : constraints.maxWidth,
+    );
+  }
+
+  static void _recordGeometrySource(GridGeometrySource source) {
+    if (kDebugMode) debugLastGridGeometrySource = source;
+  }
+
   /// Locates the [RenderSliverDashboard] associated with this grid.
   ///
   /// This is necessary because the [DashboardGrid] (Overlay) and the
-  /// [SliverDashboard] (Scroll View Content) are in different branches of the
+  /// `SliverDashboard` (Scroll View Content) are in different branches of the
   /// widget tree, but we need the RenderObject of the latter to get precise
   /// layout metrics.
-  void _findRenderSliver() {
+  RenderSliverDashboard? _findRenderSliver() {
     // Optimization: keep the cached reference while it is still usable.
     //
-    // Reason — `geometry != null` matters as much as `attached`: the painter
-    // reads `constraints.precedingScrollExtent` and `geometry.scrollExtent`.
-    // A render object that is attached but not laid out yet would silently
-    // send it down its fallback path.
+    // Reason — `geometry != null` matters as much as `attached`: the caller
+    // reads `constraints.precedingScrollExtent` and `geometry.scrollExtent`, so
+    // a render object that is attached but not laid out yet must not satisfy the
+    // cache and silently send the caller down its fallback tiers.
     final cached = _renderSliver;
     if (cached != null && cached.attached && cached.geometry != null) {
       _resolveRetryScheduled = false;
-      return;
+      return cached;
     }
 
-    // Reason — the search state MUST be local (`found`), never the field.
-    // Reading the field as the "already found" guard made the whole walk a
-    // no-op the moment the field held a STALE (detached) render object: the
-    // guard fired on the very first visitor call and the reference could
-    // never be refreshed again.
-    //
-    // This is not a corner case. `SliverDashboard` keys its
-    // `SliverLayoutBuilder` on the slot count, so ANY slot-count change
-    // rebuilds a brand-new `RenderSliverDashboard`, while this State — which
-    // lives in the overlay's Stack, outside that subtree — survives with a
-    // dead reference. `NestedDashboard(autoSlotCount: true)` hits it on its
-    // very first frame (post-frame `setSlotCount(host.w)`).
-    //
-    // Consequence before the fix: `GridBackgroundPainter` fell back to
-    // `sliverTop = 0` permanently, painting the background grid `padding.top`
-    // too high — invisible at `padding: EdgeInsets.zero` (0 happens to be the
-    // right value there), blatant on a padded nested grid. `shouldRepaint`
-    // could not recover it either: it compares the renderSliver *reference*,
-    // which never changed again.
+    // Reason: Search state MUST be local (`found`) to prevent stale detached references
+    // from permanently blocking the walk.
     RenderSliverDashboard? found;
     void visitor(RenderObject child) {
       if (found != null) return;
@@ -210,45 +230,60 @@ class _DashboardGridState extends State<DashboardGrid> {
       child.visitChildren(visitor);
     }
 
-    // Multi-sliver trees: restrict the walk to the subtree of the sliver this
-    // background belongs to. Same contract as
-    // `DashboardOverlay._findRenderSliver`.
-    final scopedRoot = widget.sliverKey?.currentContext?.findRenderObject();
-    if (scopedRoot != null) {
+    final key = widget.sliverKey;
+    if (key != null) {
+      // Reason: Scoped walk without fallback. An unscoped fallback when context is null on frame 1
+      // would latch a sibling grid's sliver permanently.
+      final scopedRoot = key.currentContext?.findRenderObject();
       if (scopedRoot is RenderSliverDashboard) {
         found = scopedRoot;
       } else {
-        scopedRoot.visitChildren(visitor);
+        scopedRoot?.visitChildren(visitor);
       }
     } else {
-      // Reasoning: We search for the RenderSliverDashboard by traversing the
-      // render tree, starting from the nearest `RenderStack` ancestor. This
-      // `RenderStack` corresponds to the Stack in `DashboardOverlay`, which is
-      // the common ancestor of both this Grid and the CustomScrollView
-      // containing the Sliver.
       context.findAncestorRenderObjectOfType<RenderStack>()?.visitChildren(visitor);
     }
 
-    // A stale reference is worse than none: the painter's fallback is exact
-    // for a single-grid composition, a detached render object is not.
-    _renderSliver = found;
+    final resolved = found;
+    _renderSliver = resolved;
 
-    if (found != null && found!.geometry != null) {
+    if (resolved != null && resolved.geometry != null) {
       _resolveRetryScheduled = false;
-      return;
+      return resolved;
     }
 
-    // Self-heal: the sliver exists but has not been laid out yet (first frame
-    // of a freshly mounted grid). Nothing else would necessarily rebuild this
-    // subtree — a nested grid that never scrolls emits no scroll notification
-    // — so schedule exactly ONE retry. Guarded so a permanently unresolvable
-    // sliver costs one extra build, not a loop.
+    // Reason: Stack children are built in order (background = 0, scroll view = 1).
+    // On frame 1, child 1 has not laid out yet. One post-frame retry ensures resolution on frame 2.
+    //
+    // Bounded to ONE extra build per failure episode (the flag is cleared only
+    // on success), so it can never loop — a composition with no
+    // `SliverDashboard` at all settles after exactly one retry. A grid that is
+    // off-screen at mount needs no further retry either: scrolling it into view
+    // rebuilds this subtree through the AnimatedBuilder anyway.
     if (!_resolveRetryScheduled) {
       _resolveRetryScheduled = true;
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        setState(() {});
+        if (mounted) setState(() {});
       });
     }
+
+    return resolved;
   }
 }
+
+/// Which tier `_resolveSliverGeometry` used on its last run (test hook).
+@visibleForTesting
+enum GridGeometrySource {
+  /// Resolved directly from the attached [RenderSliverDashboard].
+  liveSliver,
+
+  /// Resolved from the exact metrics published on the controller.
+  publishedMetrics,
+
+  /// Resolved from the fallback leading padding.
+  padding,
+}
+
+/// The tier `_resolveSliverGeometry` used on its last run (test hook).
+@visibleForTesting
+GridGeometrySource? debugLastGridGeometrySource;

@@ -21,13 +21,46 @@ typedef LayoutProfileCallback = void Function(Duration duration);
 ///
 /// Stores the calculated pixel offset for painting each child.
 class SliverDashboardParentData extends SliverMultiBoxAdaptorParentData {
-  /// The paint offset of the child (full content coordinates, scroll-invariant).
-  Offset paintOffset = Offset.zero;
+  /// Cross-axis paint offset (full content coordinates, scroll-invariant).
+  ///
+  /// Reason — two doubles instead of an `Offset`: this is written for every
+  /// visible child on every layout pass. An `Offset` per child per pass was
+  /// ~1.8k short-lived objects/s at 60 Hz with 30 visible tiles, pure dart2js
+  /// minor-GC pressure. The [paintOffset] view below is kept for call sites
+  /// outside the hot path.
+  double paintOffsetX = 0;
 
-  /// Whether [paintOffset] has been assigned at least once. Freshly created
+  /// Main-axis paint offset (full content coordinates, scroll-invariant).
+  double paintOffsetY = 0;
+
+  /// Whether the paint offset has been assigned at least once. Freshly created
   /// children (scrolled into view) have no previous position: reflow
   /// animations snap them instead of animating from `Offset.zero`.
   bool hasPaintOffset = false;
+
+  /// Convenience view over [paintOffsetX]/[paintOffsetY].
+  ///
+  /// ALLOCATES. Never call it from `paint` or `performLayout` — both read the
+  /// two doubles directly.
+  Offset get paintOffset => Offset(paintOffsetX, paintOffsetY);
+
+  BoxConstraints? _tightCache;
+
+  /// `BoxConstraints.tightFor(width:, height:)` for this child, reusing the
+  /// previous instance while the size is unchanged.
+  ///
+  /// Reason: a scroll-driven relayout re-lays out every visible child at the
+  /// exact same size, so the constraints object was reallocated per child per
+  /// pass for nothing. `RenderObject.layout` compares constraints by value, so
+  /// reusing the instance changes no behaviour — including its own
+  /// `constraints == _constraints` short-circuit.
+  BoxConstraints tightFor(double width, double height) {
+    final cached = _tightCache;
+    if (cached != null && cached.maxWidth == width && cached.maxHeight == height) {
+      return cached;
+    }
+    return _tightCache = BoxConstraints.tightFor(width: width, height: height);
+  }
 }
 
 /// A sliver that displays the dashboard grid.
@@ -160,6 +193,18 @@ class SliverDashboard extends StatefulWidget {
 }
 
 class _SliverDashboardState extends State<SliverDashboard> with TickerProviderStateMixin {
+  // One ValueKey instance per item id, reused across frames.
+  //
+  // The geometric view below reorders the layout on EVERY collision push, so
+  // the previous "same ID sequence" fast path in _getOrUpdateKeyToIndex missed
+  // on exactly the frames where the engine is busiest, and rebuilt N ValueKeys
+  // + N string interpolations + one N-entry Map. With the cache, a pure
+  // reorder costs N hash probes and zero allocation.
+  final Map<String, ValueKey<String>> _keyCache = <String, ValueKey<String>>{};
+
+  ValueKey<String> _keyFor(String id) =>
+      _keyCache[id] ??= ValueKey<String>('$id${widget.itemGlobalKeySuffix}');
+
   // ==========================================================================
   // Geometric child ordering
   // ==========================================================================
@@ -185,6 +230,13 @@ class _SliverDashboardState extends State<SliverDashboard> with TickerProviderSt
   late List<LayoutItem>? _geoViewCache;
   Axis? _geoViewAxis;
 
+  /// Geometrically sorted view of [src], memoized per list instance.
+  ///
+  /// Cost (budgeted, see §5bis): O(N log N) plus ONE N-element list, paid only
+  /// on a genuine layout mutation — scroll passes hit the `identical` memo. The
+  /// copy cannot be turned into a reused scratch buffer: the render object's
+  /// `items` setter relies on instance identity to detect real changes, and a
+  /// recycled list would make every mutation look like a no-op.
   List<LayoutItem> _geometricViewOf(List<LayoutItem> src) {
     if (identical(_geoViewSrc, src) && _geoViewAxis == widget.scrollDirection) {
       return _geoViewCache!;
@@ -229,36 +281,48 @@ class _SliverDashboardState extends State<SliverDashboard> with TickerProviderSt
   List<LayoutItem>? _lastLayout;
   Map<Key, int>? _cachedKeyToIndex;
 
-  /// Retrieves or rebuilds the Key-to-Index map only when the ID sequence changes.
+  /// Retrieves or rebuilds the Key-to-Index map.
+  ///
+  /// Three tiers: identical list instance (scroll passes) → no work at all; a
+  /// pure REORDER (same id set, new positions — every collision push) → the
+  /// same Map instance and the same keys are reused, only the values are
+  /// rewritten; a structural change (add/remove) → one fresh Map, still with
+  /// cached keys.
   Map<Key, int> _getOrUpdateKeyToIndex(List<LayoutItem> currentLayout) {
-    final last = _lastLayout;
     final cached = _cachedKeyToIndex;
+    if (cached != null && identical(_lastLayout, currentLayout)) return cached;
 
-    if (cached != null && last != null) {
-      if (identical(last, currentLayout)) return cached;
+    final n = currentLayout.length;
 
-      if (last.length == currentLayout.length) {
-        var sameOrder = true;
-        for (var i = 0; i < currentLayout.length; i++) {
-          final a = last[i].id;
-          final b = currentLayout[i].id;
-          if (!identical(a, b) && a != b) {
-            sameOrder = false;
-            break;
-          }
-        }
-        if (sameOrder) {
-          _lastLayout = currentLayout;
-          return cached;
-        }
+    if (cached != null && cached.length == n) {
+      // Writing n entries into a map that already holds n keys can only grow it
+      // if an id was added — a sound detector for a structural change, and it
+      // costs nothing extra on the common path.
+      for (var i = 0; i < n; i++) {
+        cached[_keyFor(currentLayout[i].id)] = i;
+      }
+      if (cached.length == n) {
+        _lastLayout = currentLayout;
+        return cached;
       }
     }
 
+    _pruneKeyCache(currentLayout);
     _lastLayout = currentLayout;
-    return _cachedKeyToIndex = {
-      for (var i = 0; i < currentLayout.length; i++)
-        ValueKey('${currentLayout[i].id}${widget.itemGlobalKeySuffix}'): i,
-    };
+    final next = <Key, int>{};
+    for (var i = 0; i < n; i++) {
+      next[_keyFor(currentLayout[i].id)] = i;
+    }
+    return _cachedKeyToIndex = next;
+  }
+
+  /// Drops key-cache entries for ids that left the layout. Only runs on
+  /// structural changes, and only once the cache has drifted well past the live
+  /// item count — amortized O(N), bounded memory.
+  void _pruneKeyCache(List<LayoutItem> currentLayout) {
+    if (_keyCache.length <= currentLayout.length * 2) return;
+    final live = <String>{for (final i in currentLayout) i.id};
+    _keyCache.removeWhere((id, _) => !live.contains(id));
   }
 
   @override
@@ -274,6 +338,11 @@ class _SliverDashboardState extends State<SliverDashboard> with TickerProviderSt
     super.didUpdateWidget(oldWidget);
     if (widget.controller != oldWidget.controller) {
       _controller = widget.controller ?? DashboardControllerProvider.of(context);
+    }
+    if (widget.itemGlobalKeySuffix != oldWidget.itemGlobalKeySuffix) {
+      _keyCache.clear();
+      _cachedKeyToIndex = null;
+      _lastLayout = null;
     }
   }
 
@@ -375,7 +444,7 @@ class _SliverDashboardState extends State<SliverDashboard> with TickerProviderSt
               // passing it to the standard card itemBuilder.
               if (item.isSectionBarrier) {
                 return KeyedSubtree(
-                  key: ValueKey('${item.id}${widget.itemGlobalKeySuffix}'),
+                  key: _keyFor(item.id),
                   child: DashboardItem(
                     item: item,
                     isEditing: isEditing,
@@ -396,7 +465,7 @@ class _SliverDashboardState extends State<SliverDashboard> with TickerProviderSt
               // The item itself handles its visibility (Opacity 0.0) if it is the active item,
               // to preserve its FocusNode for keyboard accessibility.
               return KeyedSubtree(
-                key: ValueKey('${item.id}${widget.itemGlobalKeySuffix}'),
+                key: _keyFor(item.id),
                 child: DashboardItem(
                   item: item,
                   isEditing: isEditing,
@@ -597,10 +666,10 @@ class RenderSliverDashboard extends RenderSliverMultiBoxAdaptor {
     // layout actually changed; identical instances mean identical geometry.
     if (identical(_items, value)) return;
     _items = value;
-    // Reason: reflow transitions must only be seeded by genuine layout
+    // reflow transitions must only be seeded by genuine layout
     // mutations. Scroll-driven relayouts reuse the same list instance and
     // therefore never pay the offset-comparison cost.
-    _reflowSeedPass = _animateReflow;
+    _itemsChangedSincePass = true;
     markNeedsLayout();
   }
 
@@ -728,8 +797,13 @@ class RenderSliverDashboard extends RenderSliverMultiBoxAdaptor {
   /// small object per tile for the whole gesture.
   final Map<String, _ReflowTransition> _transitions = <String, _ReflowTransition>{};
 
-  /// True for exactly one layout pass after the [items] instance changed.
-  bool _reflowSeedPass = false;
+  /// True when the [items] instance changed since the last layout pass.
+  ///
+  /// This deliberately does NOT capture `_animateReflow`: doing so would make
+  /// the seeding depend on the order in which `updateRenderObject` assigns the
+  /// properties, so a false→true toggle of `animateReflow` would lose its first seed
+  /// pass. `_animateReflow` is read where it is actually needed, in `performLayout`.
+  bool _itemsChangedSincePass = false;
 
   // Slot metrics of the previous pass: a metric change (viewport resize,
   // breakpoint, slot-count) moves every tile at once — that reflow snaps.
@@ -841,10 +915,9 @@ class RenderSliverDashboard extends RenderSliverMultiBoxAdaptor {
   /// transition when this pass is an animatable layout mutation and the
   /// tile's paint offset actually moved.
   ///
-  /// Reason — placement in the hot path: this replaces the previous inline
-  /// double assignment. Cost when animations are disabled or on scroll
-  /// passes: one bool check. No allocation either way (transitions mutate in
-  /// place).
+  /// Reason — placement in the hot path: cost when animations are disabled or
+  /// on scroll passes is one bool check. Zero allocation either way
+  /// (transitions mutate in place, the offset is two plain doubles).
   void _applyChildGeometry(
     SliverDashboardParentData pd,
     int index,
@@ -853,20 +926,18 @@ class RenderSliverDashboard extends RenderSliverMultiBoxAdaptor {
     double layoutOffset, {
     required bool animatePass,
   }) {
-    if (animatePass && pd.hasPaintOffset) {
-      final old = pd.paintOffset;
-      if (old.dx != x || old.dy != y) {
-        final item = _items[index];
-        // The drag placeholder snaps: animating it would make the drop
-        // preview lag behind the pointer.
-        if (item.id != '__placeholder__') {
-          _seedTransition(item.id, old.dx, old.dy, x, y);
-        }
+    if (animatePass && pd.hasPaintOffset && (pd.paintOffsetX != x || pd.paintOffsetY != y)) {
+      final item = _items[index];
+      // The drag placeholder snaps: animating it would make the drop
+      // preview lag behind the pointer.
+      if (item.id != '__placeholder__') {
+        _seedTransition(item.id, pd.paintOffsetX, pd.paintOffsetY, x, y);
       }
     }
     pd
       ..layoutOffset = layoutOffset
-      ..paintOffset = Offset(x, y)
+      ..paintOffsetX = x
+      ..paintOffsetY = y
       ..hasPaintOffset = true;
   }
 
@@ -890,7 +961,23 @@ class RenderSliverDashboard extends RenderSliverMultiBoxAdaptor {
     final constraints = this.constraints;
     final childManager = this.childManager;
 
-    // 1. Handle empty state
+    // 1. Slot Metrics — computed first (documented order: Metrics → GC →
+    // Initial → Trailing → Leading) and, unlike before, BEFORE the empty-layout
+    // early return, so the metrics backchannel is published in every case.
+    final crossAxisExtent = constraints.crossAxisExtent;
+    final isVertical = _scrollDirection == Axis.vertical;
+    final double slotWidth;
+    final double slotHeight;
+
+    if (isVertical) {
+      slotWidth = (crossAxisExtent - (_slotCount - 1) * _crossAxisSpacing) / _slotCount;
+      slotHeight = slotWidth / _slotAspectRatio;
+    } else {
+      slotHeight = (crossAxisExtent - (_slotCount - 1) * _mainAxisSpacing) / _slotCount;
+      slotWidth = slotHeight * _slotAspectRatio;
+    }
+
+    // 2. Handle empty state
     if (_items.isEmpty) {
       childManager
         ..didStartLayout()
@@ -904,6 +991,18 @@ class RenderSliverDashboard extends RenderSliverMultiBoxAdaptor {
         maxPaintExtent: emptyExtent,
       );
 
+      // Reason: publishing here too. Returning early left the backchannel
+      // holding the metrics of the previous NON-empty layout, so the minimap
+      // kept drawing a viewport indicator over a grid with no content, and
+      // DashboardGrid's fallback resolved a stale content extent. A silent
+      // state transition — forbidden by AGENTS §1 (Single-Holder Audit).
+      onLayoutMetrics?.call(
+        constraints.precedingScrollExtent,
+        emptyExtent,
+        slotWidth,
+        slotHeight,
+      );
+
       if (stopwatch != null) {
         stopwatch.stop();
         onPerformLayout?.call(stopwatch.elapsed);
@@ -914,21 +1013,6 @@ class RenderSliverDashboard extends RenderSliverMultiBoxAdaptor {
     childManager
       ..didStartLayout()
       ..setDidUnderflow(false);
-
-    // 2. Calculate Slot Metrics
-    final crossAxisExtent = constraints.crossAxisExtent;
-    final double slotWidth;
-    final double slotHeight;
-
-    final isVertical = _scrollDirection == Axis.vertical;
-
-    if (isVertical) {
-      slotWidth = (crossAxisExtent - (_slotCount - 1) * _crossAxisSpacing) / _slotCount;
-      slotHeight = slotWidth / _slotAspectRatio;
-    } else {
-      slotHeight = (crossAxisExtent - (_slotCount - 1) * _mainAxisSpacing) / _slotCount;
-      slotWidth = slotHeight * _slotAspectRatio;
-    }
 
     // 2bis. Reflow-animation gating.
     // A pass may seed slide transitions only when (a) the feature is on,
@@ -941,11 +1025,11 @@ class RenderSliverDashboard extends RenderSliverMultiBoxAdaptor {
     final metricsChanged = slotWidth != _reflowLastSlotW ||
         slotHeight != _reflowLastSlotH ||
         _slotCount != _reflowLastSlotCount;
-    final animatePass = _animateReflow && _reflowSeedPass && !metricsChanged;
+    final animatePass = _animateReflow && _itemsChangedSincePass && !metricsChanged;
     _reflowLastSlotW = slotWidth;
     _reflowLastSlotH = slotHeight;
     _reflowLastSlotCount = _slotCount;
-    _reflowSeedPass = false;
+    _itemsChangedSincePass = false;
     if (metricsChanged && _transitions.isNotEmpty) {
       _transitions.clear();
     }
@@ -1106,21 +1190,19 @@ class RenderSliverDashboard extends RenderSliverMultiBoxAdaptor {
       // 1. Layout current child
       final index = indexOf(child);
       final base = index * 4;
-      final childParentData = child.parentData;
-      if (childParentData is SliverDashboardParentData) {
-        _applyChildGeometry(
-          childParentData,
-          index,
-          geom[base],
-          geom[base + 1],
-          isVertical ? geom[base + 1] : geom[base],
-          animatePass: animatePass,
-        );
-      }
-      child.layout(
-        BoxConstraints.tightFor(width: geom[base + 2], height: geom[base + 3]),
-        parentUsesSize: true,
+
+      final childParentData = child.parentData! as SliverDashboardParentData;
+
+      _applyChildGeometry(
+        childParentData,
+        index,
+        geom[base],
+        geom[base + 1],
+        isVertical ? geom[base + 1] : geom[base],
+        animatePass: animatePass,
       );
+
+      child.layout(childParentData.tightFor(geom[base + 2], geom[base + 3]), parentUsesSize: true);
 
       // 2. Check for Gap after this child
       // If this is the last child, we check up to maxVisibleIndex.
@@ -1228,8 +1310,8 @@ class RenderSliverDashboard extends RenderSliverMultiBoxAdaptor {
       final childParentData = child.parentData;
       if (childParentData is! SliverDashboardParentData) break;
 
-      var paintX = childParentData.paintOffset.dx;
-      var paintY = childParentData.paintOffset.dy;
+      var paintX = childParentData.paintOffsetX;
+      var paintY = childParentData.paintOffsetY;
 
       if (animating) {
         final index = childParentData.index;
@@ -1304,8 +1386,8 @@ class RenderSliverDashboard extends RenderSliverMultiBoxAdaptor {
   double childCrossAxisPosition(RenderBox child) {
     final childParentData = child.parentData! as SliverDashboardParentData;
     return _scrollDirection == Axis.vertical
-        ? childParentData.paintOffset.dx
-        : childParentData.paintOffset.dy;
+        ? childParentData.paintOffsetX
+        : childParentData.paintOffsetY;
   }
 
   @override
