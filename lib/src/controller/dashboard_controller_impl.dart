@@ -28,6 +28,20 @@ typedef ScrollRequest = ({
 @visibleForTesting
 bool debugBypassUpdateItemIdAssert = false;
 
+/// One transactional snapshot of the dashboard's spatial state.
+///
+/// The column count travels with the items on purpose. A snapshot recorded
+/// under 12 columns is not replayable verbatim on a 4-column grid, and
+/// restoring one without that information would silently push items out of
+/// the grid. [DashboardControllerImpl._restoreSnapshot] branches on it.
+typedef LayoutSnapshot = ({List<LayoutItem> items, int slotCount});
+
+/// The default number of states kept on the layout history stack.
+///
+/// The current state counts as one entry, so this allows 29 consecutive
+/// undos.
+const int kDefaultMaxHistoryLength = 30;
+
 /// The concrete implementation of [DashboardController].
 /// Manages the state and interactions of the dashboard.
 ///
@@ -42,9 +56,26 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     int initialSlotCount = 8,
     this.onInteractionStart,
     this.onLayoutChanged,
+    this.onUndo,
+    this.onRedo,
+    this.onWillUndo,
+    this.onWillRedo,
+    int maxHistoryLength = kDefaultMaxHistoryLength,
   }) {
+    if (maxHistoryLength < 0) {
+      throw ArgumentError.value(
+        maxHistoryLength,
+        'maxHistoryLength',
+        'must be >= 0 (0 disables the layout history entirely)',
+      );
+    }
+    _maxHistoryLength = maxHistoryLength;
     layout.value = initialLayout;
     slotCount.value = initialSlotCount;
+    // The history must be seeded AFTER the two beacons above, because
+    // a snapshot carries the column count it was recorded under. With
+    // `maxHistoryLength: 0` nothing is created at all.
+    if (_historyEnabled) _rebuildHistory([_snapshotNow()]);
   }
 
   @override
@@ -52,6 +83,18 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
 
   @override
   final DashboardLayoutChangeListener? onLayoutChanged;
+
+  @override
+  final DashboardHistoryRestoreListener? onUndo;
+
+  @override
+  final DashboardHistoryRestoreListener? onRedo;
+
+  @override
+  final DashboardHistoryVeto? onWillUndo;
+
+  @override
+  final DashboardHistoryVeto? onWillRedo;
 
   @override
   DashboardGuidance? guidance;
@@ -130,6 +173,354 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
 
   @override
   late final allowAutoShrink = B.writable<bool>(false);
+
+  // --- LAYOUT HISTORY (UNDO / REDO) ---
+
+  /// The transactional history stack, or null when the history is disabled.
+  ///
+  /// Recreated (never mutated in place) by [_rebuildHistory], because
+  /// `UndoRedoBeacon.historyLimit` is `final`.
+  ///
+  /// INVARIANT: non-null exactly when [_historyEnabled] is true.
+  UndoRedoBeacon<LayoutSnapshot>? _layoutHistory;
+
+  int _maxHistoryLength = kDefaultMaxHistoryLength;
+
+  /// Whether any history is kept at all.
+  bool get _historyEnabled => _maxHistoryLength > 0;
+
+  /// Mirror of `UndoRedoBeacon`'s private cursor and stack length.
+  ///
+  /// The beacon exposes `canUndo` / `canRedo` (plain, NON-reactive
+  /// getters) and `history`, but not its index — so the entry an undo *would*
+  /// restore cannot be read, and [onWillUndo] could not be handed a candidate
+  /// layout without this mirror. Every mutation below reproduces the beacon's
+  /// own bookkeeping step for step; [_syncHistoryFlags] asserts the two agree
+  /// on every transition, so a divergence (e.g. after a `state_beacon`
+  /// upgrade) fails a test instead of silently mis-restoring.
+  ///
+  /// Both are 0 while the history is disabled.
+  int _historyIndex = 0;
+  int _historyLength = 0;
+
+  /// True while [undo] / [redo] is writing to [layout]; suppresses recording.
+  bool _isRestoringHistory = false;
+
+  /// True while an async veto hook is awaited; makes undo/redo non-reentrant.
+  bool _historyOperationInFlight = false;
+
+  late final _canUndoState = B.writable<bool>(false);
+  late final _canRedoState = B.writable<bool>(false);
+
+  @override
+  ReadableBeacon<bool> get canUndo => _canUndoState;
+
+  @override
+  ReadableBeacon<bool> get canRedo => _canRedoState;
+
+  @override
+  int get maxHistoryLength => _maxHistoryLength;
+
+  /// Number of entries currently on the stack (current state included).
+  /// 0 when the history is disabled.
+  @visibleForTesting
+  int get debugHistoryLength => _historyLength;
+
+  /// Position of the cursor on the stack, 0-based.
+  @visibleForTesting
+  int get debugHistoryIndex => _historyIndex;
+
+  UndoRedoBeacon<LayoutSnapshot> _createHistoryBeacon(LayoutSnapshot seed) {
+    return Beacon.undoRedo<LayoutSnapshot>(
+      seed,
+      historyLimit: _maxHistoryLength,
+      name: 'DashboardLayoutHistory',
+    );
+  }
+
+  /// An immutable snapshot of the live state.
+  ///
+  /// [updateItem] patches
+  /// `_crossGridExitSnapshot` **in place**, and `finishCrossGridExit` can hand
+  /// that very list back to [layout]. Storing the live instance would let a
+  /// later mutation rewrite recorded history.
+  LayoutSnapshot _snapshotNow() => (
+        items: List<LayoutItem>.unmodifiable(layout.peek()),
+        slotCount: slotCount.peek(),
+      );
+
+  static bool _layoutsEqual(List<LayoutItem> a, List<LayoutItem> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
+
+  /// Records the live state as a new history entry.
+  ///
+  /// INVARIANT — transactional boundaries only. This is called exclusively at
+  /// the end of a completed operation (`onDragEnd`, `onResizeEnd`, `addItems`,
+  /// `removeItems`, `importLayout`, `optimizeLayout`, and
+  /// `updateItem(recompact: true)` outside a gesture). It must NEVER be called
+  /// from `onDragUpdate` / `onResizeUpdate`: at 60 Hz a two-second drag would
+  /// push 120 full layout copies, blowing the stack away and allocating
+  /// 120 x N `LayoutItem` references on the hot path.
+  ///
+  /// A transaction whose result is content-equal to the cursor entry records
+  /// nothing. This is what keeps the very common "press, jiggle, drop where it
+  /// started" gesture — and any compaction that turns out to be a no-op — from
+  /// filling the stack with entries that undo to themselves.
+  void _recordHistory() {
+    // Zero-cost opt-out, deliberately the very first statement: with
+    // `maxHistoryLength: 0` a transaction costs one integer comparison — no
+    // `_layoutsEqual` scan over N items, no list copy, and no `LayoutItem`
+    // (nor its `extra` map) retained past its own removal.
+    if (_maxHistoryLength == 0) return;
+    if (_isRestoringHistory) return;
+
+    final history = _layoutHistory!;
+    final current = history.peek();
+    final liveItems = layout.peek();
+    final liveSlots = slotCount.peek();
+    if (current.slotCount == liveSlots && _layoutsEqual(current.items, liveItems)) {
+      return;
+    }
+
+    history.value = (
+      items: List<LayoutItem>.unmodifiable(liveItems),
+      slotCount: liveSlots,
+    );
+
+    // Mirror `UndoRedoBeacon._addValueToHistory` + `_trimHistoryIfNeeded`.
+    _historyIndex++;
+    if (_historyIndex < _historyLength) {
+      // A new transaction after an undo truncates the redo branch.
+      _historyLength = _historyIndex;
+    }
+    _historyLength++;
+    if (_historyLength > _maxHistoryLength) {
+      _historyLength = _maxHistoryLength;
+      _historyIndex = _maxHistoryLength - 1;
+    }
+
+    _syncHistoryFlags();
+  }
+
+  /// Publishes the non-reactive beacon getters onto our own beacons.
+  void _syncHistoryFlags() {
+    final history = _layoutHistory!;
+    assert(
+      history.history.length == _historyLength &&
+          history.canUndo == (_historyIndex > 0) &&
+          history.canRedo == (_historyIndex < _historyLength - 1),
+      'Layout history bookkeeping desynchronised from UndoRedoBeacon '
+      '(mirror: index=$_historyIndex length=$_historyLength, '
+      'beacon: length=${history.history.length} '
+      'canUndo=${history.canUndo} canRedo=${history.canRedo}).',
+    );
+    _canUndoState.value = history.canUndo;
+    _canRedoState.value = history.canRedo;
+  }
+
+  /// Replaces the history beacon with one seeded from [entries].
+  ///
+  /// [entries] is the full retained stack, oldest first; its last element is
+  /// the current state and becomes the cursor. Used by [clearHistory] and
+  /// [setMaxHistoryLength] — `historyLimit` is `final` on `UndoRedoBeacon`, so
+  /// there is no in-place path.
+  void _rebuildHistory(List<LayoutSnapshot> entries) {
+    assert(entries.isNotEmpty, 'History must retain at least the current state.');
+    _layoutHistory?.dispose();
+    final history = _layoutHistory = _createHistoryBeacon(entries.first);
+    for (var i = 1; i < entries.length; i++) {
+      history.value = entries[i];
+    }
+    _historyLength = entries.length;
+    _historyIndex = entries.length - 1;
+    _syncHistoryFlags();
+  }
+
+  @override
+  void clearHistory() {
+    if (!_historyEnabled) return;
+    _rebuildHistory([_snapshotNow()]);
+  }
+
+  @override
+  void setMaxHistoryLength(int length) {
+    // A plain `assert` would leave the release-mode clamp permanently
+    // unexecutable by any test.
+    // Throwing makes both outcomes observable and the misuse loud.
+    if (length < 0) {
+      throw ArgumentError.value(
+        length,
+        'length',
+        'maxHistoryLength must be >= 0 (0 disables the layout history)',
+      );
+    }
+    if (length == _maxHistoryLength) return;
+
+    final wasEnabled = _historyEnabled;
+    _maxHistoryLength = length;
+
+    if (length == 0) {
+      // Disabling frees the stack and everything it retained. The flags are
+      // published explicitly: an app watching them must see the transition,
+      // not silently keep a `canUndo: true` button that no longer works.
+      _layoutHistory?.dispose();
+      _layoutHistory = null;
+      _historyIndex = 0;
+      _historyLength = 0;
+      _canUndoState.value = false;
+      _canRedoState.value = false;
+      return;
+    }
+
+    if (!wasEnabled) {
+      // Re-enabling starts a fresh stack seeded with the live layout. The
+      // states that occurred while disabled were never recorded and cannot be
+      // invented — this is a documented consequence, not an omission.
+      _rebuildHistory([_snapshotNow()]);
+      return;
+    }
+
+    // Keep the cursor entry plus as many predecessors as the new cap allows.
+    // The redo branch is dropped: replaying it would need to re-seed a cursor
+    // in the middle of the stack, which the beacon's API cannot express.
+    final stack = _layoutHistory!.history;
+    final end = _historyIndex + 1;
+    final start = end - length < 0 ? 0 : end - length;
+    _rebuildHistory(stack.sublist(start, end));
+  }
+
+  @override
+  Future<bool> undo() => _travelHistory(isUndo: true);
+
+  @override
+  Future<bool> redo() => _travelHistory(isUndo: false);
+
+  /// Shared undo/redo implementation. See [undo] for the contract.
+  Future<bool> _travelHistory({required bool isUndo}) async {
+    // An undo mid-gesture would fight `originalLayoutOnStart` — the
+    // next `onDragUpdate` rebuilds `layout` from that snapshot and would erase
+    // the restored state one frame later. Gestures are transactions; you can
+    // only undo a committed one.
+    final history = _layoutHistory;
+    if (history == null) return false;
+    if (_historyOperationInFlight) return false;
+    if (_isDraggingState.peek() || isResizing.peek()) return false;
+    if (isUndo ? !history.canUndo : !history.canRedo) return false;
+
+    final targetIndex = isUndo ? _historyIndex - 1 : _historyIndex + 1;
+    final candidate = history.history[targetIndex];
+
+    final veto = isUndo ? onWillUndo : onWillRedo;
+    if (veto != null) {
+      final cursorAtEntry = _historyIndex;
+      _historyOperationInFlight = true;
+      final bool approved;
+      try {
+        approved = await veto(candidate.items);
+      } finally {
+        _historyOperationInFlight = false;
+      }
+      if (!approved) return false;
+
+      // Awaiting yields control, so re-validate everything the decision was
+      // based on rather than trusting it. Four things can have moved:
+      //  1. a gesture may have started;
+      //  2. the stack instance may have been swapped or dropped
+      //     (`clearHistory`, `setMaxHistoryLength`, including a disable);
+      //  3. the cursor may have moved (a transaction was recorded);
+      //  4. AT CAPACITY, the stack contents may have shifted under an
+      //     UNCHANGED cursor — a trim drops the oldest entry and pins the
+      //     index at `_maxHistoryLength - 1`, so `targetIndex` silently points
+      //     at a different snapshot. Comparing the entry itself is the only
+      //     check that catches this one.
+      if (_isDraggingState.peek() || isResizing.peek()) return false;
+      final live = _layoutHistory;
+      if (live == null || !identical(live, history)) return false;
+      if (_historyIndex != cursorAtEntry) return false;
+      if (live.history[targetIndex] != candidate) return false;
+    }
+
+    _isRestoringHistory = true;
+    try {
+      if (isUndo) {
+        history.undo();
+        _historyIndex--;
+      } else {
+        history.redo();
+        _historyIndex++;
+      }
+      layout.value = _restoreSnapshot(history.peek());
+    } finally {
+      _isRestoringHistory = false;
+    }
+
+    _syncHistoryFlags();
+    _pruneSelection();
+
+    onLayoutChanged?.call(layout.value, slotCount.value);
+    (isUndo ? onUndo : onRedo)?.call(layout.value, slotCount.value);
+    return true;
+  }
+
+  /// Projects [snapshot] onto the live grid.
+  List<LayoutItem> _restoreSnapshot(LayoutSnapshot snapshot) {
+    final cols = slotCount.peek();
+    final items = List<LayoutItem>.from(snapshot.items);
+    if (snapshot.slotCount == cols) {
+      // Exact restoration — deliberately NOT recompacted. An undo must be the
+      // exact inverse of the transaction it reverts; running the compactor
+      // here would make undo -> redo -> undo drift away from the recorded
+      // states.
+      return items;
+    }
+    // `setSlotCount` archives the live layout under the count it is
+    // leaving and REPLAYS that archive when the grid returns to a count it has
+    // already visited. The entry for `snapshot.slotCount` was frozen before
+    // this restoration, so without the write-through below the reverted
+    // arrangement silently comes back the next time the window is resized to
+    // that width — the undo appears to undo itself. Symmetric for redo.
+    // The write is unconditional: a snapshot can only carry a count the grid
+    // was actually at, and leaving a count always archives it, so the entry
+    // exists in every flow reachable through `setSlotCount`. Creating one for
+    // a count reached by writing `slotCount` directly is the correct outcome
+    // too, which is why there is no `containsKey` guard to leave dead.
+    _layoutsBySlotCount[snapshot.slotCount] = List<LayoutItem>.from(snapshot.items);
+
+    // A breakpoint change happened since the snapshot was taken. Replaying it
+    // verbatim would leave items outside the grid, so it is re-projected.
+    return _compactor.resolveCollisions(
+      engine.correctBounds(items, cols),
+      cols,
+    );
+  }
+
+  /// Drops selection ids that the restored layout no longer contains.
+  ///
+  /// Undoing an `addItem` deletes the item that is very likely still
+  /// selected. A dangling id keeps `activeItemId` pointing at nothing, and the
+  /// next `onDragStart` / `moveActiveItemBy` throws on `firstWhere`.
+  void _pruneSelection() {
+    final selected = selectedItemIds.peek();
+    if (selected.isEmpty) return;
+    final liveIds = <String>{for (final i in layout.peek()) i.id};
+    if (selected.every(liveIds.contains)) return;
+    selectedItemIds.value = {
+      for (final id in selected)
+        if (liveIds.contains(id)) id,
+    };
+  }
+
+  /// Test-only hook to verify that [_syncHistoryFlags] throws when corrupted.
+  @visibleForTesting
+  void debugForceDesyncHistoryIndex(int index) {
+    _historyIndex = index;
+    _syncHistoryFlags();
+  }
 
   // --- INTERNAL STATE (Hidden from Interface) ---
 
@@ -333,6 +724,7 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
       slotCount.value,
     );
 
+    _recordHistory();
     onLayoutChanged?.call(layout.value, slotCount.value);
   }
 
@@ -365,6 +757,7 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     );
 
     layout.value = newLayout;
+    _recordHistory();
     onLayoutChanged?.call(layout.value, slotCount.value);
 
     clearSelection();
@@ -472,6 +865,16 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
         if (patched.id != itemId) patched = patched.copyWith(id: itemId);
         exitSnapshot[idx] = patched;
       }
+    }
+
+    // Geometry changes are transactions; metadata-only ones (recompact: false)
+    // are not. The distinction is load-bearing: the same-grid
+    // `subGridDynamic` conversion flips `hasNestedGrid` through
+    // `updateItem(recompact: false)` **mid-drag**, and recording there would
+    // push a snapshot inside a live gesture. The gesture guard covers the
+    // symmetric app-side case (`recompact: true` while a drag is in flight).
+    if (recompact && !_isDraggingState.peek() && !isResizing.peek()) {
+      _recordHistory();
     }
 
     onLayoutChanged?.call(layout.value, slotCount.value);
@@ -587,6 +990,7 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
       allowOverlap: false, // Ensure imported layout is clean
     );
 
+    _recordHistory();
     onLayoutChanged?.call(layout.value, slotCount.value);
   }
 
@@ -594,6 +998,9 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
   void dispose() {
     _scrollToItemController.close().ignore();
     hoveredNestTargetId.dispose();
+    // Not created through `B`, because [_rebuildHistory] swaps the instance
+    // and the group would accumulate detached entries.
+    _layoutHistory?.dispose();
     super.dispose();
   }
 
@@ -1184,6 +1591,7 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     }
 
     layout.value = finalLayout;
+    _recordHistory();
     onLayoutChanged?.call(layout.value, slotCount.value);
 
     _isDraggingState.value = false;
@@ -1406,6 +1814,7 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     );
 
     layout.value = finalLayout;
+    _recordHistory();
 
     onLayoutChanged?.call(layout.value, slotCount.value);
 
@@ -1499,6 +1908,7 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     final optimized = engine.optimizeLayout(currentLayout, cols);
 
     layout.value = optimized;
+    _recordHistory();
     onLayoutChanged?.call(layout.value, slotCount.value);
   }
 

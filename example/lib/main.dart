@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 
@@ -146,6 +147,7 @@ class _DashboardPageState extends State<DashboardPage> {
   final jsonController = TextEditingController();
 
   final showGenerateButton = ValueNotifier<bool>(false);
+  final confirmHistory = ValueNotifier<bool>(false);
   final isEditing = ValueNotifier(false);
   final showMinimap = ValueNotifier(true);
   final useSliverDemo = ValueNotifier(false);
@@ -206,6 +208,10 @@ class _DashboardPageState extends State<DashboardPage> {
       onLayoutChanged: (items, bkSlotCount) {
         _syncJsonField();
       },
+      onUndo: (items, _) => _showHistoryToast('Undo — ${items.length} items'),
+      onRedo: (items, _) => _showHistoryToast('Redo — ${items.length} items'),
+      onWillUndo: (candidate) => _confirmHistoryOperation('Undo', candidate),
+      onWillRedo: (candidate) => _confirmHistoryOperation('Redo', candidate),
       initialLayout: [
         // Section 1 Barrier
         const LayoutItem(
@@ -289,6 +295,48 @@ class _DashboardPageState extends State<DashboardPage> {
     );
 
     blockSectionCollision.addListener(_updatePolicy);
+  }
+
+  void _showHistoryToast(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(content: Text(message), duration: const Duration(seconds: 1)),
+      );
+  }
+
+  /// The `onWillUndo` / `onWillRedo` veto hook.
+  ///
+  /// Returning `false` cancels the operation entirely: the layout, the history
+  /// cursor and the `canUndo` / `canRedo` beacons are all left untouched.
+  Future<bool> _confirmHistoryOperation(
+    String action,
+    List<LayoutItem> candidate,
+  ) async {
+    if (!confirmHistory.value) return true;
+    if (!mounted) return false;
+    final approved = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('$action layout change?'),
+        content: Text(
+          'The layout will be restored to a state with '
+          '${candidate.length} items.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text(action),
+          ),
+        ],
+      ),
+    );
+    return approved ?? false;
   }
 
   void _updatePolicy() {
@@ -472,6 +520,7 @@ class _DashboardPageState extends State<DashboardPage> {
   void dispose() {
     blockSectionCollision.removeListener(_updatePolicy);
     showGenerateButton.dispose();
+    confirmHistory.dispose();
     isEditing.dispose();
     showMinimap.dispose();
     useSliverDemo.dispose();
@@ -524,6 +573,48 @@ class _DashboardPageState extends State<DashboardPage> {
         title: const Text('Sliver Dashboard Playground'),
         elevation: 2,
         actions: [
+          Builder(
+            builder: (context) {
+              return IconButton(
+                icon: const Icon(Icons.undo),
+                tooltip: 'Undo layout change',
+                onPressed: controller.canUndo.watch(context)
+                    ? () => unawaited(controller.undo())
+                    : null,
+              );
+            },
+          ),
+          Builder(
+            builder: (context) {
+              return IconButton(
+                icon: const Icon(Icons.redo),
+                tooltip: 'Redo layout change',
+                onPressed: controller.canRedo.watch(context)
+                    ? () => unawaited(controller.redo())
+                    : null,
+              );
+            },
+          ),
+          ValueListenableBuilder<bool>(
+            valueListenable: confirmHistory,
+            builder: (context, confirm, _) {
+              return IconButton(
+                icon: Icon(confirm ? Icons.gpp_good : Icons.gpp_maybe_outlined),
+                tooltip: confirm
+                    ? 'Undo/redo confirmation ON (onWillUndo veto)'
+                    : 'Undo/redo confirmation OFF',
+                onPressed: () => confirmHistory.value = !confirm,
+              );
+            },
+          ),
+          IconButton(
+            icon: const Icon(Icons.history_toggle_off),
+            tooltip: 'Clear history',
+            onPressed: () {
+              controller.clearHistory();
+              _showHistoryToast('History cleared');
+            },
+          ),
           if (!isDesktop)
             Builder(
               builder: (context) {
