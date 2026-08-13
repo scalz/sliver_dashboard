@@ -161,33 +161,41 @@ class _HandlePainter extends CustomPainter {
 
     switch (handle) {
       case ResizeHandle.topLeft:
-        path.moveTo(size.width, 0);
-        path.lineTo(0, 0);
-        path.lineTo(0, size.height);
+        path
+          ..moveTo(size.width, 0)
+          ..lineTo(0, 0)
+          ..lineTo(0, size.height);
       case ResizeHandle.topRight:
-        path.moveTo(0, 0);
-        path.lineTo(size.width, 0);
-        path.lineTo(size.width, size.height);
+        path
+          ..moveTo(0, 0)
+          ..lineTo(size.width, 0)
+          ..lineTo(size.width, size.height);
       case ResizeHandle.bottomLeft:
-        path.moveTo(0, 0);
-        path.lineTo(0, size.height);
-        path.lineTo(size.width, size.height);
+        path
+          ..moveTo(0, 0)
+          ..lineTo(0, size.height)
+          ..lineTo(size.width, size.height);
       case ResizeHandle.bottomRight:
-        path.moveTo(size.width, 0);
-        path.lineTo(size.width, size.height);
-        path.lineTo(0, size.height);
+        path
+          ..moveTo(size.width, 0)
+          ..lineTo(size.width, size.height)
+          ..lineTo(0, size.height);
       case ResizeHandle.top:
-        path.moveTo(0, 0);
-        path.lineTo(size.width, 0);
+        path
+          ..moveTo(0, 0)
+          ..lineTo(size.width, 0);
       case ResizeHandle.bottom:
-        path.moveTo(0, size.height);
-        path.lineTo(size.width, size.height);
+        path
+          ..moveTo(0, size.height)
+          ..lineTo(size.width, size.height);
       case ResizeHandle.left:
-        path.moveTo(0, 0);
-        path.lineTo(0, size.height);
+        path
+          ..moveTo(0, 0)
+          ..lineTo(0, size.height);
       case ResizeHandle.right:
-        path.moveTo(size.width, 0);
-        path.lineTo(size.width, size.height);
+        path
+          ..moveTo(size.width, 0)
+          ..lineTo(size.width, size.height);
     }
 
     canvas.drawPath(path, paint);

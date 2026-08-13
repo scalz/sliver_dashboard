@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sliver_dashboard/sliver_dashboard.dart';
@@ -1192,12 +1190,10 @@ void main() {
           localScrollController.position.maxScrollExtent,
         );
 
-        unawaited(
-          localScrollController.animateTo(
-            targetOffset,
-            duration: const Duration(milliseconds: 100),
-            curve: Curves.linear,
-          ),
+        localScrollController.animateTo(
+          targetOffset,
+          duration: const Duration(milliseconds: 100),
+          curve: Curves.linear,
         );
 
         await tester.pump();
@@ -1234,12 +1230,10 @@ void main() {
       layoutCount = 0;
       totalMicroseconds = 0;
 
-      unawaited(
-        perfScrollController.animateTo(
-          2000,
-          duration: const Duration(seconds: 1),
-          curve: Curves.linear,
-        ),
+      perfScrollController.animateTo(
+        2000,
+        duration: const Duration(seconds: 1),
+        curve: Curves.linear,
       );
 
       for (var i = 0; i < 60; i++) {
