@@ -1,3 +1,40 @@
+## 2.5.0
+
+### Added
+
+- **Native Undo / Redo layout history (`DashboardController`).** The controller
+  now keeps a transactional history of the spatial layout, backed by
+  `state_beacon`'s `UndoRedoBeacon`.
+  - New reactive beacons: `canUndo`, `canRedo` — bind a button's enabled state
+    directly with `controller.canUndo.watch(context)`.
+  - New methods: `undo()`, `redo()` (both `Future<bool>`), `clearHistory()`,
+    `setMaxHistoryLength(int)` (default 30, throws `ArgumentError` when
+    negative), and the `maxHistoryLength` getter.
+  - New constructor parameter `maxHistoryLength`. **Pass `0` to opt out
+    entirely**: no history beacon is created, no snapshot is copied and no
+    removed item is retained, so applications that do not want undo/redo pay
+    nothing. Can also be flipped at runtime with `setMaxHistoryLength(0)`.
+  - New constructor callbacks: `onUndo`, `onRedo`
+    (`DashboardHistoryRestoreListener`) and the veto hooks `onWillUndo`,
+    `onWillRedo` (`DashboardHistoryVeto`, may be asynchronous).
+  - `undo()` / `redo()` emit `onLayoutChanged` before their own callback, so
+    existing auto-save mechanisms keep working unchanged.
+  - One entry is recorded per **completed** operation only — a 100-frame drag
+    pushes exactly one snapshot. Snapshots keep complete `LayoutItem`
+    instances, `extra` metadata included, and carry the column count they were
+    taken under.
+
+### Notes
+
+- `setSlotCount` (responsive breakpoints), metadata-only
+  `updateItem(recompact: false)` and cross-grid drops are deliberately not
+  history boundaries. See the README table for the full list.
+- `undo()` / `redo()` return `false` while a drag or resize gesture is in
+  flight: gestures are atomic transactions.
+- `DashboardController` is an abstract interface and gained 11 members. Code
+  that `implements DashboardController` by hand must be updated; `mocktail`
+  mocks are unaffected.
+
 ## 2.4.0
 
 **No API breaking changes.**

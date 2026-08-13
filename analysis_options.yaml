@@ -5,6 +5,14 @@ analyzer:
     avoid_redundant_argument_values: ignore
     use_setters_to_change_properties: ignore
     specify_nonobvious_property_types: ignore
+  exclude:
+    - build/**
+    - android/**
+    - ios/**
+    - web/**
+    - windows/**
+    - macos/**
+    - linux/**
 
 formatter:
   page_width: 100

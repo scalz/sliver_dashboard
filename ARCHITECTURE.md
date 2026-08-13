@@ -10,12 +10,12 @@ The architecture is built on a foundation of modern, idiomatic Flutter principle
 2.  **Reactive State Management:** State is centralized in a controller and exposed as reactive streams (`Beacons`). The UI listens to these streams and rebuilds automatically.
 3.  **Separation of Concerns:** The codebase is cleanly divided into three distinct layers: State, Logic, and View.
 4.  **Performance First:**
-  *   **Virtualization:** The core view is built on Flutter's `Sliver` protocol to render only visible items.
-  *   **Aggressive Caching:** Individual item widgets are cached and protected from unnecessary rebuilds using a "Firewall" widget strategy.
-  *   **Paint Isolation:** Use of `RepaintBoundary` ensures that layout changes (moving an item) do not trigger expensive repaints of the item's content.
-  *   **Allocation Discipline:** Per-frame hot paths (drag updates, `performLayout`, minimap paints) must be allocation-free or use reusable scratch buffers. New allocations in these paths are treated as regressions.
+*   **Virtualization:** The core view is built on Flutter's `Sliver` protocol to render only visible items.
+*   **Aggressive Caching:** Individual item widgets are cached and protected from unnecessary rebuilds using a "Firewall" widget strategy.
+*   **Paint Isolation:** Use of `RepaintBoundary` ensures that layout changes (moving an item) do not trigger expensive repaints of the item's content.
+*   **Allocation Discipline:** Per-frame hot paths (drag updates, `performLayout`, minimap paints) must be allocation-free or use reusable scratch buffers. New allocations in these paths are treated as regressions.
 5.  **Immutability:** State objects, particularly the `LayoutItem` model, are immutable.
-  *   **`LayoutItem.extra`**: shallow-equality map (`mapEquals` + `Object.hashAllUnordered` in signature/hash); mutating the map in place is invisible to change detection by design.
+*   **`LayoutItem.extra`**: shallow-equality map (`mapEquals` + `Object.hashAllUnordered` in signature/hash); mutating the map in place is invisible to change detection by design.
 6.  **Accessibility (A11y):** The dashboard is designed to be fully usable via keyboard and screen readers, treating accessibility as a first-class citizen, not an afterthought.
 7.  **One Rule Per Transform:** any coordinate conversion, projection or resolution that appears at more than one call site must be stated once as an invariant and reused. Duplicated derivations drift silently — see the Content-Origin Convention in §6, which two of five sites had drifted away from by exactly one padding.
 
@@ -25,44 +25,44 @@ The package is divided into three main layers, each with a distinct responsibili
 
 ```mermaid
 graph TD
-    subgraph View Layer
-        A[Dashboard Widget] --> B[DashboardOverlay];
-        B --> C(CustomScrollView);
-        B -- "Gestures & Feedback" --> F[Feedback Stack];
-        B -- "Background" --> BG[DashboardGrid];
-        C -- "Focus Scope" --> D(SliverDashboard);
-        D --> E(RenderSliverDashboard);
-        E --> I["DashboardItem (Interaction Shell)"];
-        I --> K["FocusableActionDetector"];
-        K --> L["User Content (Cached & RepaintBoundary)"];
-        A -.-> MM[DashboardMinimap];
-    end
+  subgraph View Layer
+    A[Dashboard Widget] --> B[DashboardOverlay];
+    B --> C(CustomScrollView);
+    B -- "Gestures & Feedback" --> F[Feedback Stack];
+    B -- "Background" --> BG[DashboardGrid];
+    C -- "Focus Scope" --> D(SliverDashboard);
+    D --> E(RenderSliverDashboard);
+    E --> I["DashboardItem (Interaction Shell)"];
+    I --> K["FocusableActionDetector"];
+    K --> L["User Content (Cached & RepaintBoundary)"];
+    A -.-> MM[DashboardMinimap];
+  end
 
-    subgraph State Layer
-        M[DashboardController - Interface] --> N[DashboardControllerImpl]
-        N --> O["Beacons (State)"];
-    end
+  subgraph State Layer
+    M[DashboardController - Interface] --> N[DashboardControllerImpl]
+    N --> O["Beacons (State)"];
+  end
 
-    subgraph Logic Layer
-        P[LayoutEngine];
-    end
+  subgraph Logic Layer
+    P[LayoutEngine];
+  end
 
-    B -- "User Gestures (Drag/Resize)" --> M;
-    K -- "Keyboard Actions (Intents)" --> M;
-    N -- Updates State --> O;
-    O -- Notifies --> B;
-    O -- Notifies --> D;
-    N -- Calls Pure Functions --> P;
-    P -- Returns New Layout --> N;
-    E -. "layout metrics backchannel" .-> N;
+  B -- "User Gestures (Drag/Resize)" --> M;
+  K -- "Keyboard Actions (Intents)" --> M;
+  N -- Updates State --> O;
+  O -- Notifies --> B;
+  O -- Notifies --> D;
+  N -- Calls Pure Functions --> P;
+  P -- Returns New Layout --> N;
+  E -. "layout metrics backchannel" .-> N;
 
-    style A fill:#cde4ff,color:#000000
-    style B fill:#dae8fc,color:#000000
-    style D fill:#d5e8d4,color:#000000
-    style M fill:#fff2cc,color:#000000
-    style P fill:#ffe6cc,color:#000000
-    
-    linkStyle default stroke:#555555,stroke-width:2px;
+  style A fill:#cde4ff,color:#000000
+  style B fill:#dae8fc,color:#000000
+  style D fill:#d5e8d4,color:#000000
+  style M fill:#fff2cc,color:#000000
+  style P fill:#ffe6cc,color:#000000
+
+  linkStyle default stroke:#555555,stroke-width:2px;
 ```
 
 ### 1. The State Layer (DashboardController)
@@ -84,6 +84,15 @@ graph TD
     1. Reads the current state.
     2. Calls the pure `LayoutEngine`.
     3. Updates the beacons with the result.
+  - **Layout History (Undo/Redo):** a `UndoRedoBeacon<LayoutSnapshot>` where `LayoutSnapshot` is `({List<LayoutItem> items, int slotCount})`. Two reactive mirrors (`canUndo`, `canRedo`) are published as beacons, and `undo()` / `redo()` emit `onLayoutChanged` before their own `onUndo` / `onRedo`, so auto-save keeps working untouched.
+    - **INVARIANT — transactional boundaries only.** `_recordHistory()` is called at seven sites and seven only: `onDragEnd`, `onResizeEnd`, `addItems`, `removeItems`, `importLayout`, `optimizeLayout`, and `updateItem(recompact: true)` outside a gesture. It must NEVER be reachable from `onDragUpdate` / `onResizeUpdate`: at 60 Hz a two-second drag would push 120 full layout copies and allocate 120 x N `LayoutItem` references on the hot path. The gate is a test, not a comment — a 100-frame drag asserting a stack delta of exactly 1.
+    - **Content dedupe.** A transaction whose result is content-equal to the cursor entry records nothing, which is what keeps "press, jiggle, drop where it started" (and any no-op compaction) out of the stack.
+    - **Snapshots are immutable copies.** `updateItem` patches `_crossGridExitSnapshot` **in place** and `finishCrossGridExit(canceled)` hands that list back to `layout`; storing a live instance would let a later mutation rewrite recorded history.
+    - **The column count travels with the items.** `setSlotCount` is deliberately not a boundary (responsive breakpoints are not user edits). Restoration is therefore two-branched: byte-for-byte and **uncompacted** when the counts match — an undo must be the exact inverse of what it reverts, or undo/redo cycles drift — and re-projected through `correctBounds` + `resolveCollisions` when they do not. A cross-breakpoint restoration additionally **writes through to `_layoutsBySlotCount`**: that archive is what `setSlotCount` replays when the grid returns to a count it has already visited, and it was frozen before the restoration. Without the write-through the reverted arrangement comes back on the next window resize — the undo undoes itself. Pinned by a regression test (drag at 8 columns, shrink to 6, undo, return to 8).
+    - **Known coupling (documented, asserted).** `UndoRedoBeacon` exposes `canUndo` / `canRedo` as plain NON-reactive getters and `history` as a plain list; its cursor index is private and `historyLimit` is `final`. The controller therefore mirrors the cursor (`_historyIndex` / `_historyLength`), reproducing the beacon's own bookkeeping step for step, and rebuilds the beacon for `clearHistory` / `setMaxHistoryLength`. `_syncHistoryFlags` asserts the mirror and the beacon agree on **every** transition, so a `state_beacon` upgrade that changes the internals fails a test instead of silently mis-restoring.
+    - **Reentrancy.** `onWillUndo` / `onWillRedo` may be async, so `undo()` / `redo()` are non-reentrant (`_historyOperationInFlight`) and re-validate the gesture state, the cursor position and the stack identity **after** the await. Restoration prunes selection ids the restored layout no longer contains — a dangling id makes the next `onDragStart` throw on `firstWhere`.
+    - **Zero-cost opt-out (`maxHistoryLength: 0`).** `_recordHistory()` returns on its first statement, before the `_layoutsEqual` scan and before any copy; `_layoutHistory` is never instantiated. The invariant is `_layoutHistory != null` **exactly when** `_maxHistoryLength > 0`, which is why every read is guarded by that predicate rather than by a null test — a null test would leave an unreachable else branch. Both runtime transitions are explicit: disabling disposes the beacon, nulls it, zeroes the mirror and **publishes** `canUndo`/`canRedo` as false (an app watching them must see the transition, not keep a dead button); re-enabling seeds a fresh stack from the live layout, since nothing was recorded while it was off.
+    - **Scope.** Cross-grid drops (`onDropExternalItem`, `finishCrossGridExit`) are NOT recorded: history is per controller, and undoing one side of a two-grid move would duplicate the item.
   - **`maxRows`**: enforced at the four user-driven placement choke points (drag clamp, interactive resize clamp on the anchored axis, setItemSize, bounded placeNewItems search with below-cap fallback). Push cascades are not truncated: rejecting a cascade would require speculative simulation per pointer event.
 
 ### 2. The Logic Layer (LayoutEngine)
@@ -201,29 +210,29 @@ The package implements a comprehensive A11y strategy based on Flutter's `Actions
 The biggest challenge in a grid layout is preventing the reconstruction of child widgets when the parent layout changes (e.g., resizing the window or dragging an item). `sliver_dashboard` solves this using a **Smart Caching** strategy:
 
 1.  **Content Isolation (The Firewall):**
-  - The expensive part (the user's widget provided via `itemBuilder`) is cached in a local state `_cachedWidget`.
-  - **Smart Invalidation:** In `didUpdateWidget`, the system compares the `contentSignature` of the new item vs. the old item.
-    - **Rule:** `contentSignature` is a hash of properties that affect *content* (width, height, id, static status, `hasNestedGrid`, and the `extra` business-metadata map — shallow-hashed) and **crucially ignores** position changes (`x`, `y`).
-  - If the signature matches, the cached widget instance is returned. Flutter detects `oldWidget == newWidget` and stops the rebuild propagation immediately.
-  - **Breakpoint hoisting**: `DashboardItem.didUpdateWidget` resolves old-vs-new breakpoints itself on the breakpoint-only path and keeps the outer cache when unchanged; `DashboardBreakpointBuilder`'s inner guard remains as defense in depth.
-  - **Edit-mode toggles are deliberately NOT an invalidation cause**. The edit chrome (handles, borders, gestures, a11y) lives OUTSIDE the cache and adapts on its own, so toggling is nearly free even with heavy tile subtrees. Content that depends on the edit state must read it reactively (`controller.isEditing.watch(context)` inside the tile — state_beacon is re-exported by the barrel for this). Contract is pinned by a test.
+- The expensive part (the user's widget provided via `itemBuilder`) is cached in a local state `_cachedWidget`.
+- **Smart Invalidation:** In `didUpdateWidget`, the system compares the `contentSignature` of the new item vs. the old item.
+  - **Rule:** `contentSignature` is a hash of properties that affect *content* (width, height, id, static status, `hasNestedGrid`, and the `extra` business-metadata map — shallow-hashed) and **crucially ignores** position changes (`x`, `y`).
+- If the signature matches, the cached widget instance is returned. Flutter detects `oldWidget == newWidget` and stops the rebuild propagation immediately.
+- **Breakpoint hoisting**: `DashboardItem.didUpdateWidget` resolves old-vs-new breakpoints itself on the breakpoint-only path and keeps the outer cache when unchanged; `DashboardBreakpointBuilder`'s inner guard remains as defense in depth.
+- **Edit-mode toggles are deliberately NOT an invalidation cause**. The edit chrome (handles, borders, gestures, a11y) lives OUTSIDE the cache and adapts on its own, so toggling is nearly free even with heavy tile subtrees. Content that depends on the edit state must read it reactively (`controller.isEditing.watch(context)` inside the tile — state_beacon is re-exported by the barrel for this). Contract is pinned by a test.
 
 2.  **Lazy Loading:**
-  - **Rule:** The cache is initialized lazily in the `build()` method (not `initState`). This ensures that `InheritedWidgets` (like `Theme` or `Provider`) are accessible during the first build, preventing runtime errors.
+- **Rule:** The cache is initialized lazily in the `build()` method (not `initState`). This ensures that `InheritedWidgets` (like `Theme` or `Provider`) are accessible during the first build, preventing runtime errors.
 
 3.  **Shell Reconstruction:**
-  - The "Interaction Shell" (border, focus detector, semantics) is rebuilt frequently (e.g., when gaining focus or being grabbed).
-  - Because the heavy user content is cached and wrapped in `RepaintBoundary`, rebuilding the shell is extremely cheap (sub-millisecond).
+- The "Interaction Shell" (border, focus detector, semantics) is rebuilt frequently (e.g., when gaining focus or being grabbed).
+- Because the heavy user content is cached and wrapped in `RepaintBoundary`, rebuilding the shell is extremely cheap (sub-millisecond).
 
 4.  **RepaintBoundary:**
-  - When an item moves, the cached widget tree includes a `RepaintBoundary` wrapping the user's content. The GPU simply translates the existing texture without repainting the pixels of the child widget.
+- When an item moves, the cached widget tree includes a `RepaintBoundary` wrapping the user's content. The GPU simply translates the existing texture without repainting the pixels of the child widget.
 
 5.  **Measured Hot-Path Budgets (N=1000, 8 columns, 2×2 items):**
-  - Drag cell-crossing: ≤ ~20,000 collision checks total (indexed verification), vs 499,500 all-pairs checks pre-audit. Top-of-grid drags additionally traverse up to ~250 cascade queue steps (bottom: 1) — this asymmetry is inherent to push-based grids and is bounded, not eliminated.
-  - Drop compaction (default compactor): O(N·k) skyline; regression threshold in CI: < 50 ms at N=1000 on the test runner.
-  - `performLayout`: one `SliverGeometry` per pass (protocol-mandated) and **zero** per-child allocations; the scratch buffer grows amortized. An earlier version of this document claimed "zero heap allocations", which is unsatisfiable — `SliverGeometry` is immutable and required once per pass. An impossible budget guarantees nothing and hides real regressions.
-  - Mutation passes additionally pay the geometric view: O(N log N) plus **one** N-element list. The copy cannot be a reused scratch buffer, because the render object's `items` setter relies on instance identity to detect real changes.
-  - Minimap during drags: 2 `drawPath` calls for items; viewport indicator repaints only on scroll.
+- Drag cell-crossing: ≤ ~20,000 collision checks total (indexed verification), vs 499,500 all-pairs checks pre-audit. Top-of-grid drags additionally traverse up to ~250 cascade queue steps (bottom: 1) — this asymmetry is inherent to push-based grids and is bounded, not eliminated.
+- Drop compaction (default compactor): O(N·k) skyline; regression threshold in CI: < 50 ms at N=1000 on the test runner.
+- `performLayout`: one `SliverGeometry` per pass (protocol-mandated) and **zero** per-child allocations; the scratch buffer grows amortized. An earlier version of this document claimed "zero heap allocations", which is unsatisfiable — `SliverGeometry` is immutable and required once per pass. An impossible budget guarantees nothing and hides real regressions.
+- Mutation passes additionally pay the geometric view: O(N log N) plus **one** N-element list. The copy cannot be a reused scratch buffer, because the render object's `items` setter relies on instance identity to detect real changes.
+- Minimap during drags: 2 `drawPath` calls for items; viewport indicator repaints only on scroll.
 
 
 ### Performance Budgets & CI Runhead Safety Ceilings

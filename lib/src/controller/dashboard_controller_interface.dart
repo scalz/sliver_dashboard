@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:sliver_dashboard/src/controller/dashboard_controller_impl.dart';
 import 'package:sliver_dashboard/src/engine/layout_engine.dart' as engine;
@@ -19,6 +21,32 @@ typedef DashboardItemInteractionCallback = void Function(LayoutItem item);
 /// [slotCount]: The number of columns associated with this layout (useful for responsive persistence).
 typedef DashboardLayoutChangeListener = void Function(List<LayoutItem> items, int slotCount);
 
+/// A callback fired *after* an undo or a redo restored a layout.
+///
+/// [restoredLayout]: the layout that is now live.
+/// [slotCount]: the column count that layout is expressed in.
+///
+/// This fires in addition to [DashboardLayoutChangeListener], never instead of
+/// it, so an existing auto-save keeps working untouched.
+typedef DashboardHistoryRestoreListener = void Function(
+  List<LayoutItem> restoredLayout,
+  int slotCount,
+);
+
+/// A veto hook consulted *before* an undo or a redo is applied.
+///
+/// [candidateLayout] is the layout that would become live. Returning `false`
+/// (or a future completing with `false`) cancels the operation: the layout,
+/// the history cursor and the `canUndo` / `canRedo` beacons are all left
+/// untouched, and `undo()` / `redo()` return `false`.
+///
+/// The hook may be asynchronous (e.g. to show a confirmation dialog). The
+/// controller re-validates the history cursor after awaiting it and aborts if
+/// anything moved in the meantime.
+typedef DashboardHistoryVeto = FutureOr<bool> Function(
+  List<LayoutItem> candidateLayout,
+);
+
 /// The public contract for the Dashboard Controller.
 ///
 /// This interface exposes only the methods and properties intended for public use,
@@ -33,11 +61,22 @@ abstract class DashboardController {
   ///
   /// - [initialLayout]: The starting layout for the dashboard.
   /// - [initialSlotCount]: The number of columns in the grid.
+  /// - [onUndo] / [onRedo]: fired after a successful [undo] / [redo].
+  /// - [onWillUndo] / [onWillRedo]: business-logic veto hooks, consulted
+  ///   before the layout is touched.
+  /// - [maxHistoryLength]: size of the undo/redo stack (default 30). Pass `0`
+  ///   to switch the history off entirely — see [maxHistoryLength] for what
+  ///   that guarantees. Negative values throw an [ArgumentError].
   factory DashboardController({
     List<LayoutItem> initialLayout,
     int initialSlotCount,
     DashboardItemInteractionCallback? onInteractionStart,
     DashboardLayoutChangeListener? onLayoutChanged,
+    DashboardHistoryRestoreListener? onUndo,
+    DashboardHistoryRestoreListener? onRedo,
+    DashboardHistoryVeto? onWillUndo,
+    DashboardHistoryVeto? onWillRedo,
+    int maxHistoryLength,
   }) = DashboardControllerImpl;
 
   // --- PUBLIC STATE (Beacons) ---
@@ -98,6 +137,18 @@ abstract class DashboardController {
 
   /// Whether moving items can dynamically shrink their neighbors to avoid pushes.
   WritableBeacon<bool> get allowAutoShrink;
+
+  /// Whether a previous layout state is available on the history stack.
+  ///
+  /// Reactive: bind an "Undo" button's `enabled` state straight to it with
+  /// `controller.canUndo.watch(context)`.
+  ReadableBeacon<bool> get canUndo;
+
+  /// Whether a layout state undone earlier can be re-applied.
+  ///
+  /// The redo branch is dropped as soon as a new transaction is recorded,
+  /// which is the standard linear-history behaviour.
+  ReadableBeacon<bool> get canRedo;
 
   // --- PUBLIC PROPERTIES ---
 
@@ -280,6 +331,79 @@ abstract class DashboardController {
     Duration duration = const Duration(milliseconds: 300),
     Curve curve = Curves.easeInOut,
   });
+
+  // --- HISTORY (UNDO / REDO) ---
+
+  /// Fired after a successful [undo]. See [DashboardHistoryRestoreListener].
+  DashboardHistoryRestoreListener? get onUndo;
+
+  /// Fired after a successful [redo]. See [DashboardHistoryRestoreListener].
+  DashboardHistoryRestoreListener? get onRedo;
+
+  /// Consulted before an [undo] is applied. See [DashboardHistoryVeto].
+  DashboardHistoryVeto? get onWillUndo;
+
+  /// Consulted before a [redo] is applied. See [DashboardHistoryVeto].
+  DashboardHistoryVeto? get onWillRedo;
+
+  /// The maximum number of states kept on the history stack.
+  ///
+  /// The current state counts as one entry, so a length of `n` allows `n - 1`
+  /// consecutive undos. Defaults to 30.
+  ///
+  /// **`0` disables the history entirely** and is the supported opt-out for
+  /// applications that do not want undo/redo. It is a hard guarantee, not a
+  /// hint: no history beacon is created, no layout snapshot is copied, and no
+  /// removed [LayoutItem] (nor its `extra` map) is retained past its own
+  /// removal. A completed transaction then costs one integer comparison.
+  /// [canUndo] and [canRedo] stay `false`, and [undo] / [redo] return `false`.
+  ///
+  /// Note that `1` is *not* the same thing: the stack exists, holds the
+  /// current state and pays the per-transaction copy, it simply has nothing to
+  /// undo to.
+  int get maxHistoryLength;
+
+  /// Restores the previous layout state.
+  ///
+  /// Returns `true` when a state was restored, `false` when the operation was
+  /// a no-op. It is a no-op when there is nothing to undo, when a drag or
+  /// resize gesture is in flight, when another undo/redo is already awaiting
+  /// its veto hook, or when [onWillUndo] returned `false`.
+  ///
+  /// On success, `onLayoutChanged` fires first (so auto-save keeps working),
+  /// then [onUndo].
+  ///
+  /// The returned future completes synchronously-ish when no veto hook is
+  /// registered; it is a `Future` only because [onWillUndo] may be async.
+  Future<bool> undo();
+
+  /// Re-applies a layout state that was undone.
+  ///
+  /// Mirrors [undo] exactly, with [onWillRedo] and [onRedo].
+  Future<bool> redo();
+
+  /// Empties the history stack, keeping the current layout as its only entry.
+  ///
+  /// The layout itself is **not** modified: this only resets [canUndo] and
+  /// [canRedo] to `false`. Call it after loading a fresh dashboard so the user
+  /// cannot undo their way back into the previous document.
+  ///
+  /// A no-op when the history is disabled ([maxHistoryLength] is 0).
+  void clearHistory();
+
+  /// Sets the maximum number of states kept on the history stack.
+  ///
+  /// Shrinking drops the oldest entries; the redo branch is dropped in both
+  /// directions (the stack is rebuilt linearly from the retained past).
+  /// Calling it with the current value is a no-op.
+  ///
+  /// Passing `0` switches the history off and releases everything it retained.
+  /// Switching it back on starts a **fresh** stack seeded with the live
+  /// layout: the states that occurred while it was off were never recorded and
+  /// cannot be recovered.
+  ///
+  /// Throws an [ArgumentError] when [length] is negative.
+  void setMaxHistoryLength(int length);
 
   /// Disposes all the beacons to prevent memory leaks.
   void dispose();

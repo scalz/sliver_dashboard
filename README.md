@@ -47,6 +47,7 @@ Ideal for analytics platforms, IoT control panels, project management tools, no-
 - **Accessibility:** Full keyboard navigation support (Tab, Arrows, Space, Enter, customizable keys) and Screen Reader announcements (TalkBack/VoiceOver).
 - **Mini-Map:** A customizable widget to visualize the entire dashboard layout and current viewport, perfect for large grids. Supports **overlay markers** (status dots/badges per item) and **multiple viewport indicators** for multi-sliver scroll views.
 - **Multi-Selection:** Select and move multiple items at once using `Shift` + Click (customizable keys).
+- **Undo / Redo:** A native, transactional layout history with reactive `canUndo` / `canRedo` beacons and business-logic veto hooks (`onWillUndo` / `onWillRedo`). One entry per completed operation — a 100-frame drag records exactly one snapshot.
 - **Utilities**: Import/Export, find free cells, get last row, Auto Layout & Bulk Add.
 
 ## Try the Demo
@@ -71,6 +72,7 @@ The package is WebAssembly (WASM) compatible. Building your production applicati
   - [Empty slot interactions & business metadata](#empty-slot-interactions--business-metadata)
   - [Programmatic Scrolling](#programmatic-scrolling)
   - [Import / Export (Persistence)](#import--export-persistence)
+  - [Undo / Redo (Layout History)](#undo--redo-layout-history)
 - [Drag & Drop](#drag--drop)
   - [Dragging From Outside](#dragging-from-outside)
   - [Drag to Delete (Trash Bin)](#drag-to-delete-trash-bin)
@@ -273,6 +275,93 @@ await myDatabase.save('dashboard_layout', layoutData);
 final List<dynamic> loadedData = await myDatabase.get('dashboard_layout');
 controller.importLayout(loadedData);
 ```
+
+### Undo / Redo (Layout History)
+
+The controller keeps a transactional history of the spatial layout. One entry is
+recorded per **completed** operation — never per frame, so a two-second drag
+costs exactly one snapshot, not 120.
+
+```dart
+// Reactive: bind the buttons straight to the beacons.
+IconButton(
+  icon: const Icon(Icons.undo),
+  onPressed: controller.canUndo.watch(context)
+      ? () => unawaited(controller.undo())
+      : null,
+);
+
+await controller.undo(); // true when a state was restored
+await controller.redo();
+
+controller.clearHistory();          // keeps the layout, resets the stack
+controller.setMaxHistoryLength(50); // default: 30 (throws when negative)
+```
+
+#### Opting out entirely
+
+Pass `maxHistoryLength: 0` if you do not want undo/redo. This is a hard
+guarantee, not a hint: no history beacon is created, no layout snapshot is
+copied, and no removed item — nor its `extra` map — is retained past its own
+removal. A completed transaction costs one integer comparison.
+
+```dart
+final controller = DashboardController(maxHistoryLength: 0);
+```
+
+`canUndo` and `canRedo` stay `false`, `undo()` / `redo()` return `false`, and
+`clearHistory()` is a no-op. Everything else, `onLayoutChanged` included,
+behaves exactly as before.
+
+Note that `1` is not the same thing: the stack exists, holds the current state
+and pays the per-transaction copy, it simply has nothing to undo to. The switch
+can be flipped at runtime with `setMaxHistoryLength(0)`; turning it back on
+starts a fresh stack, since the states that occurred while it was off were
+never recorded.
+
+#### Business-logic hooks
+
+```dart
+final controller = DashboardController(
+  // Veto: return false to cancel. May be async (dialog, network check).
+  // The layout, the cursor and the beacons are left untouched on refusal.
+  onWillUndo: (candidateLayout) async => askUser(candidateLayout),
+  onWillRedo: (candidateLayout) => true,
+
+  // Fired after a successful operation, *in addition to* onLayoutChanged.
+  onUndo: (restoredLayout, slotCount) => analytics.log('undo'),
+  onRedo: (restoredLayout, slotCount) => analytics.log('redo'),
+);
+```
+
+`undo()` and `redo()` always emit `onLayoutChanged` first, so an existing
+auto-save keeps working with no change.
+
+#### What is recorded — and what is not
+
+| Recorded (one entry each) | Not recorded |
+|---|---|
+| drag end, resize end | drag/resize **frames** |
+| `addItem` / `addItems` | `setSlotCount` (responsive breakpoints) |
+| `removeItem` / `removeItems` | `updateItem(recompact: false)` (metadata only) |
+| `importLayout` | cross-grid drops between two dashboards |
+| `optimizeLayout` | keyboard nudges (`moveActiveItemBy`) |
+| `updateItem(recompact: true)` | any operation whose result is unchanged |
+
+Three consequences worth knowing:
+
+* **Gestures are atomic.** `undo()` returns `false` while a drag or resize is in
+  flight — you can only undo a committed transaction.
+* **Breakpoints are not history.** A snapshot stores the column count it was
+  taken under. If the grid changed breakpoint since, the restored layout is
+  re-projected onto the current column count instead of being replayed
+  verbatim; otherwise it is restored byte-for-byte with no recompaction.
+  Undoing across a breakpoint also rewrites the layout the responsive cache
+  keeps for the breakpoint the action was performed in, so resizing the window
+  back does not resurrect the state you just reverted.
+* **History is per grid.** With `NestedDashboard`, each controller owns its own
+  stack. Moves *between* grids are deliberately not recorded: undoing one side
+  alone would duplicate the item.
 
 ## Drag & Drop
 
@@ -636,8 +725,8 @@ controller.setCompactionType(CompactType.vertical);
 > gap-filling layouts.
 >
 > * **For automatic gap filling:** Use `CompactType.vertical` or `CompactType.horizontal` compaction for self-healing layouts.
-> * **For on-demand cleanup in free mode:** Call **`controller.optimizeLayout()`** to defragment the grid and compact empty gaps on demand, 
-> or use **`controller.availableFreeAreas`** / **`controller.firstFreeArea`** to inspect open slots programmatically.
+> * **For on-demand cleanup in free mode:** Call **`controller.optimizeLayout()`** to defragment the grid and compact empty gaps on demand,
+    > or use **`controller.availableFreeAreas`** / **`controller.firstFreeArea`** to inspect open slots programmatically.
 
 ### Auto Layout bulk add
 
