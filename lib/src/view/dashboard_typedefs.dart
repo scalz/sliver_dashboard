@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:sliver_dashboard/src/controller/dashboard_controller_interface.dart';
 import 'package:sliver_dashboard/src/models/layout_item.dart';
 
 /// A static builder function for dashboard items (optimized; skips rebuilds on resize).
@@ -35,6 +36,30 @@ typedef DashboardBreakpointResolver = dynamic Function(
 
 /// A builder for the widget that is dragged from an external source.
 typedef DraggableFeedbackBuilder = Widget Function(BuildContext context);
+
+/// Signature for the callback that produces the duplicate of [source] when a
+/// drag starts with the clone modifier held (`Alt` / `Option` by default, see
+/// `DashboardShortcuts.cloneKeys`).
+///
+/// [source] is the tile under the pointer, exactly as it exists on [grid] at
+/// pointer-down. [grid] is the controller the clone will be inserted into —
+/// the same grid as [source] — and is what lets a single scope-wide handler
+/// serve several grids.
+///
+/// The application owns the identity of the duplicate: return a [LayoutItem]
+/// carrying a **new id that is unique across the whole grid tree** (the
+/// cross-grid moves and the tree codec assume tree-wide unique ids), plus
+/// whatever business metadata the duplicate needs — typically
+/// `source.copyWith(id: newId, extra: {...})`. Returning `null` cancels the
+/// duplication: the gesture degrades to a plain move of [source].
+///
+/// The returned item's `x` / `y` are **ignored**: the clone is always
+/// inserted at [source]'s own coordinates so it materializes exactly under
+/// the cursor. Its size and constraints are honoured.
+typedef DashboardCloneRequestCallback = LayoutItem? Function(
+  LayoutItem source,
+  DashboardController grid,
+);
 
 /// A callback for onDrop which provides T data and the LayoutItem
 typedef DashboardDropCallback<T> = FutureOr<String?> Function(T data, LayoutItem item);

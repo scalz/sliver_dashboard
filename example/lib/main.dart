@@ -157,6 +157,7 @@ class _DashboardPageState extends State<DashboardPage> {
   final autoShrink = ValueNotifier(false);
   final maxRows = ValueNotifier<int?>(null);
   final enableSlotTapToAdd = ValueNotifier<bool>(false);
+  final enableAltDragClone = ValueNotifier<bool>(true);
 
   // null = Use Responsive Breakpoints. Non-null = Override with custom fixed slot count.
   final customSlotCount = ValueNotifier<int?>(null);
@@ -292,6 +293,14 @@ class _DashboardPageState extends State<DashboardPage> {
       grab: DashboardShortcuts.defaultShortcuts.grab,
       drop: DashboardShortcuts.defaultShortcuts.drop,
       cancel: DashboardShortcuts.defaultShortcuts.cancel,
+      cloneKeys: [
+        LogicalKeyboardKey.controlLeft,
+        LogicalKeyboardKey.controlRight,
+      ],
+      multiSelectKeys: [
+        LogicalKeyboardKey.shiftLeft,
+        LogicalKeyboardKey.shiftRight,
+      ],
     );
 
     blockSectionCollision.addListener(_updatePolicy);
@@ -530,6 +539,7 @@ class _DashboardPageState extends State<DashboardPage> {
     autoShrink.dispose();
     maxRows.dispose();
     enableSlotTapToAdd.dispose();
+    enableAltDragClone.dispose();
     customSlotCount.dispose();
     compactionType.dispose();
     resizeBehavior.dispose();
@@ -558,6 +568,7 @@ class _DashboardPageState extends State<DashboardPage> {
       autoShrink: autoShrink,
       maxRows: maxRows,
       enableSlotTapToAdd: enableSlotTapToAdd,
+      enableAltDragClone: enableAltDragClone,
       customSlotCount: customSlotCount,
       compactionType: compactionType,
       resizeBehavior: resizeBehavior,
@@ -668,9 +679,31 @@ class _DashboardPageState extends State<DashboardPage> {
     );
   }
 
+  /// Business hook for `Alt` / `Option` + drag duplication.
+  ///
+  /// The package never invents an id: it hands us the source tile and the
+  /// grid it lives on, and we decide what a duplicate means. Returning null
+  /// refuses the duplication — the gesture then degrades to a plain move.
+  LayoutItem? _handleCloneRequested(
+    LayoutItem source,
+    DashboardController grid,
+  ) {
+    // Section barriers are structure, not content: never duplicate them.
+    if (source.isSectionBarrier) return null;
+
+    _cloneCounter++;
+    return source.copyWith(
+      id: '${source.id}_copy_$_cloneCounter',
+      extra: {...?source.extra, 'clonedFrom': source.id},
+    );
+  }
+
+  int _cloneCounter = 0;
+
   Widget _buildCard(BuildContext context, LayoutItem item) {
     final theme = Theme.of(context);
-    final colors = getColorsForItem(item.id, theme.colorScheme);
+    final colorId = (item.extra?['clonedFrom'] as String?) ?? item.id;
+    final colors = getColorsForItem(colorId, theme.colorScheme);
 
     return _DashboardCard(
       key: ValueKey(item.id),
@@ -689,9 +722,10 @@ class _DashboardPageState extends State<DashboardPage> {
     return ValueListenableBuilder<int?>(
       valueListenable: customSlotCount,
       builder: (context, overrideSlots, _) {
-        return ValueListenableBuilder<bool>(
-          valueListenable: enableSlotTapToAdd,
-          builder: (context, slotTapEnabled, _) {
+        return ValueListenableBuilder2(
+          enableSlotTapToAdd,
+          enableAltDragClone,
+          builder: (context, slotTapEnabled, cloneEnabled, _) {
             return ValueListenableBuilder3(
               useDragHandlesOnly,
               showMinimap,
@@ -710,6 +744,12 @@ class _DashboardPageState extends State<DashboardPage> {
                       padding: const EdgeInsets.all(8.0),
                       onSlotTap: slotTapEnabled ? _handleSlotTap : null,
                       onSlotLongPress: _handleSlotLongPress,
+                      // Hold Alt / Option and drag a tile: the copy follows the
+                      // cursor, the original stays put. Registering the callback
+                      // is what turns the feature on.
+                      onCloneRequested: cloneEnabled
+                          ? _handleCloneRequested
+                          : null,
                       dragStartGesture: handlesOnly
                           ? DragStartGesture.none
                           : DragStartGesture.longPress,
@@ -763,9 +803,10 @@ class _DashboardPageState extends State<DashboardPage> {
 
   Widget _buildSliverDemoView() {
     final theme = Theme.of(context);
-    return ValueListenableBuilder<bool>(
-      valueListenable: enableSlotTapToAdd,
-      builder: (context, slotTapEnabled, _) {
+    return ValueListenableBuilder2(
+      enableSlotTapToAdd,
+      enableAltDragClone,
+      builder: (context, slotTapEnabled, cloneEnabled, _) {
         return ValueListenableBuilder3(
           useDragHandlesOnly,
           showMinimap,
@@ -783,6 +824,9 @@ class _DashboardPageState extends State<DashboardPage> {
                       : DragStartGesture.longPress,
                   onSlotTap: slotTapEnabled ? _handleSlotTap : null,
                   onSlotLongPress: _handleSlotLongPress,
+                  // Same feature, wired on the raw overlay instead of the
+                  // high-level Dashboard widget.
+                  onCloneRequested: cloneEnabled ? _handleCloneRequested : null,
                   gridStyle: GridStyle(
                     fillColor: theme.colorScheme.onSurface.withValues(
                       alpha: 0.03,
@@ -1055,6 +1099,7 @@ class _ConfigPanel extends StatelessWidget {
     required this.autoShrink,
     required this.maxRows,
     required this.enableSlotTapToAdd,
+    required this.enableAltDragClone,
     required this.customSlotCount,
     required this.compactionType,
     required this.resizeBehavior,
@@ -1075,6 +1120,7 @@ class _ConfigPanel extends StatelessWidget {
   final ValueNotifier<bool> animateReflow;
   final ValueNotifier<bool> autoShrink;
   final ValueNotifier<bool> enableSlotTapToAdd;
+  final ValueNotifier<bool> enableAltDragClone;
   final ValueNotifier<int?> maxRows;
   final ValueNotifier<int?> customSlotCount;
   final ValueNotifier<CompactType> compactionType;
@@ -1111,6 +1157,10 @@ class _ConfigPanel extends StatelessWidget {
           _SwitchTile(
             title: 'Tap empty slot to add item (onSlotTap)',
             notifier: enableSlotTapToAdd,
+          ),
+          _SwitchTile(
+            title: 'Alt / Option + drag duplicates a tile (onCloneRequested)',
+            notifier: enableAltDragClone,
           ),
           _SwitchTile(
             title: 'Use Custom Drag Handles only',

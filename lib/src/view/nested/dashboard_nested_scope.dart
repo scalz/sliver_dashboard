@@ -6,6 +6,7 @@ import 'package:sliver_dashboard/src/controller/dashboard_controller_interface.d
 import 'package:sliver_dashboard/src/controller/layout_metrics.dart';
 import 'package:sliver_dashboard/src/controller/utility.dart';
 import 'package:sliver_dashboard/src/models/layout_item.dart';
+import 'package:sliver_dashboard/src/view/dashboard_typedefs.dart';
 
 /// Signature for the callback fired when an item has been moved from one
 /// grid to another (cross-grid drag & drop, or [DashboardNestedCoordinator.moveItemToGrid]).
@@ -229,6 +230,7 @@ class DashboardNestedCoordinator {
     this.onNestedGridRequested,
     this.onNestedGridRequestAbandoned,
     this.onItemDroppedOnHost,
+    this.onCloneRequested,
     this.subGridDynamic = false,
     this.subGridDynamicSameGrid = false,
     this.nestHoverDelay = const Duration(milliseconds: 600),
@@ -277,6 +279,27 @@ class DashboardNestedCoordinator {
   /// An overlay-level `onItemDroppedOnHost` takes precedence over this one,
   /// which serves as the scope-wide default.
   DashboardItemDroppedOnHostCallback? onItemDroppedOnHost;
+
+  /// Scope-wide default for Alt+drag tile duplication: produces the duplicate
+  /// of a tile whose drag started with the clone modifier held (`Alt` /
+  /// `Option` by default, see `DashboardShortcuts.cloneKeys`).
+  ///
+  /// Cloning is a purely IN-GRID operation — the duplicate is inserted on its
+  /// source's own cell, in the same grid, before the drag session opens — so
+  /// this is not a cross-grid mechanism. It lives on the coordinator for one
+  /// reason: a tree of nested grids can register a single handler here
+  /// instead of threading a callback through every `NestedDashboard`, and
+  /// branch on the `grid` argument to decide what a duplicate means in that
+  /// particular grid.
+  ///
+  /// A `DashboardOverlay.onCloneRequested` (or `Dashboard.onCloneRequested`)
+  /// takes precedence over this one, per grid. While both are null the
+  /// modifier is ignored entirely and the feature costs one null check per
+  /// pointer-down.
+  ///
+  /// The returned item must carry an id unique across the WHOLE grid tree,
+  /// like every other id the nested layer handles.
+  DashboardCloneRequestCallback? onCloneRequested;
 
   // The last fired-but-unresolved nested-grid request. Set when the request
   // fires (both the cross-grid and the same-grid arming paths), resolved at
@@ -1417,6 +1440,7 @@ class DashboardNestedScope extends StatefulWidget {
     this.onNestedGridRequested,
     this.onNestedGridRequestAbandoned,
     this.onItemDroppedOnHost,
+    this.onCloneRequested,
     this.subGridDynamic = false,
     this.subGridDynamicSameGrid = false,
     this.nestHoverDelay = const Duration(milliseconds: 600),
@@ -1449,6 +1473,12 @@ class DashboardNestedScope extends StatefulWidget {
   /// drop-target tile (closed nested host, or `isDropTarget` item).
   /// See [DashboardNestedCoordinator.onItemDroppedOnHost].
   final DashboardItemDroppedOnHostCallback? onItemDroppedOnHost;
+
+  /// Scope-wide default producing the duplicate of a tile dragged with the
+  /// clone modifier held. A per-grid `Dashboard.onCloneRequested` /
+  /// `DashboardOverlay.onCloneRequested` overrides it.
+  /// See [DashboardNestedCoordinator.onCloneRequested].
+  final DashboardCloneRequestCallback? onCloneRequested;
 
   /// Enables `subGridDynamic` behavior: holding a dragged item
   /// over a plain item arms a request to convert it into a nested grid.
@@ -1514,6 +1544,7 @@ class _DashboardNestedScopeState extends State<DashboardNestedScope> {
       ..onNestedGridRequested = widget.onNestedGridRequested
       ..onNestedGridRequestAbandoned = widget.onNestedGridRequestAbandoned
       ..onItemDroppedOnHost = widget.onItemDroppedOnHost
+      ..onCloneRequested = widget.onCloneRequested
       ..subGridDynamic = widget.subGridDynamic
       ..subGridDynamicSameGrid = widget.subGridDynamicSameGrid
       ..nestHoverDelay = widget.nestHoverDelay

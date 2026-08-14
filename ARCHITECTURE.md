@@ -133,6 +133,7 @@ The view layer has been refactored to support native Sliver composition. It is c
     - **Documented consequence:** when the child grid is **not** editing, its `_onPointerDown` returns before claiming the pointer and the walk reaches the host — so the parent drags the panel. Intentional (iOS-folder feel) and pinned by a test, but it is a by-product of an early return rather than an explicit decision, and it is the most frequent integration surprise. Applications must propagate their edit state to the child controller.
   - **Pointer Claim & Target Exclusions:** on pointer-down, the deepest overlay that actually starts an operation claims the pointer at the coordinator; ancestor overlays check `isPointerClaimedByOther` first and skip (Flutter dispatches pointer events deepest-first, so the claim is always set before ancestors run).
     - **Do not pre-claim on raw pointer-down.** On mobile the competing `LongPressGestureRecognizer`s already resolve in the gesture arena (the innermost arms its deadline first and closes the arena on acceptance), so there is nothing to fix; and a claim taken at pointer-down leaks — the mobile-tap branch of `onPointerUp` bypasses `_onPointerUp`, hence `releasePointer`, locking ancestors out permanently after a plain tap.
+    - **The armed-clone exception.** An Alt+drag arms a duplication at pointer-down WITHOUT starting an operation (see §6, Alt+Drag Duplication). It still claims the pointer — an ancestor would otherwise drag the host tile out from under the armed gesture — which reopens exactly the leak above for one path: the mobile-tap branch. `_handleMobileTap` therefore releases an armed-but-unresolved clone explicitly. This is the ONE place where a claim exists without a live operation, and it must stay paired with that release.
   - **Sliver Resolution:** `_findRenderSliver` caches the resolved render object while it stays attached, using a **local** search sentinel and, when a `sliverKey` is supplied, a walk strictly scoped to that key's subtree with **no unscoped fallback** — see §6 (Sliver Resolution) for why both properties are load-bearing.
   - **Placeholder Refactor:** `_updatePlaceholderPosition` (the `DragTarget` external-drop path) now delegates to `_gridPointAtGlobal` + `_showPlaceholderAt(w:, h:)`, shared with cross-grid drags so both flows use the exact same geometry and clamping.
 - **Slot gestures**: `_handleSlotGesture` reuses the drag pipeline's
@@ -772,6 +773,85 @@ single-axis move).
   speculative `sizeToContent` growth stay pushed after the revert — pushes
   are permanent by that mode's contract (no push provenance is kept). This
   is documented on `CompactType.none`, not a nested defect.
+
+### Alt+Drag Duplication (`onCloneRequested`)
+
+Holding the clone modifier (`DashboardShortcuts.cloneKeys`, default
+`Alt`/`Option`) when a drag starts pulls a **copy** out of the tile and
+leaves the original behind. Entirely a **view-layer** feature: the overlay
+reads the modifier, asks the application for the duplicate and inserts it
+through the public `addItem`. No engine change, no controller change.
+
+- **Opt-in gate (INVARIANT):** with no callback registered (overlay param,
+  else scope default) the modifier is ignored and the whole feature costs
+  one null check per pointer-down. There is no default clone — only the
+  application can mint an id and a business payload.
+- **Two-phase resolution (INVARIANT):** the modifier is read at
+  pointer-down, but **nothing is created there**. `_onPointerDown` fires on
+  the raw button press, with no movement threshold, so inserting at that
+  point would make a plain Alt+CLICK duplicate a tile and push a history
+  entry. The overlay only ARMS (`_pendingCloneSource`); the duplicate
+  materializes in `_onPointerMove`, on the first movement past
+  `_dragMoveTolerance`. This also means `onDragStart` runs exactly once,
+  already on the clone — the drag pivot is never swapped mid-gesture (see
+  §1, Active Pivot Is Immutable Mid-Gesture).
+- **Gesture-kind ordering (INVARIANT):** `calculateResizeHandle` is
+  evaluated BEFORE the selection logic in `_onPointerDown`, because the
+  modifier must only arm a **body** drag. Reading it later — where it used
+  to live — would let Alt + drag-from-an-edge duplicate the tile and then
+  resize the duplicate. Do not move it back down.
+- **Modifier precedence:** `multiSelectKeys` wins over `cloneKeys`. Both
+  sets are configurable and applications legitimately overlap them (the
+  README documents `Alt` as a multi-select key); a selection gesture must
+  never be silently turned into a duplication. An overlap asserts in debug.
+- **Trust boundary:** the returned item is untrusted. Its id is checked
+  against the live layout (duplicate ⇒ assert in debug,
+  `debugBypassCloneIdAssert` for coverage, plain move in release — two
+  identical `ValueKey`s would crash the sliver and break tree-wide id
+  uniqueness); its `x`/`y` are discarded and replaced by the source's,
+  because the grab offset, the feedback origin and the sliver origin were
+  all captured against the SOURCE's render box; and the inserted item is
+  **read back from `layout.value`**, since `addItem` runs auto-placement,
+  bound correction and a compaction pass.
+- **The insertion frame must not exist (INVARIANT):** the duplicate is
+  inserted on a cell its source still occupies, and the compactors break
+  that tie **alphabetically by id** (`FastVerticalCompactor`'s comparator;
+  `_resolveCollisionsDefault`, used by `NoCompactor`, has no id tie-break at
+  all and therefore relies on `List.sort` stability). Which of the two gets
+  snapped one row down is consequently a function of the id the application
+  minted. That is harmless *only* because the insertion, `onDragStart` and
+  the first `_performUpdate` all run inside the same pointer event, so the
+  raw insertion layout is never painted: the drag update repositions the
+  clone from the pointer, absolutely, and the source is the one that ends up
+  pushed regardless of ids. The web pointer throttle is explicitly bypassed
+  for that one event (`justCloned`) — deferring it would paint the
+  intermediate layout for a full throttle window, with a flash whose
+  direction varies with the clone's id. Do not move the insertion out of the
+  pointer event, and do not re-throttle it.
+- **`moved` is reset on insertion:** it is the engine's transient
+  "displaced by a cascade" marker and drives the displaced highlight. A
+  source still carrying it would make the brand-new clone render as if
+  something had pushed it.
+- **Grab-offset re-clamp:** a clone smaller than its source would leave the
+  pointer outside it, holding the feedback — and the resolved drop cell —
+  off-cursor for the whole gesture. `_clampGrabOffsetTo` re-clamps to the
+  clone's pixel extent, and only when the dimensions actually differ.
+- **Policy guard:** a `DashboardPolicy` refusing `canDrag(source)` refuses
+  the clone too. `onDragStart` bails out before opening a session, which
+  would strand a freshly inserted duplicate on the grid with no gesture to
+  carry it away, so no clone is minted in that case.
+- **Selection:** the arming path deliberately skips the whole
+  multi-selection block, so an Alt+click that never becomes a drag leaves
+  the selection untouched. On resolution, `onDragStart(clone.id)` resets the
+  selection to `{clone.id}` on its own (the id is never already selected) —
+  which is what keeps the pivot inside the selection without this code
+  touching the selection at all. A duplication is therefore always a
+  single-item drag.
+- **History (documented cost, not a defect):** the gesture records **two**
+  entries — `addItem` is one of the seven transactional boundaries, then
+  the drop. Collapsing them would need an insertion path that skips
+  `_recordHistory`, i.e. an eighth boundary in the controller; it was
+  rejected as a worse trade than two undo steps.
 
 ### Drop Targets — Closed Hosts & `isDropTarget`
 

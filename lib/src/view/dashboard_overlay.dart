@@ -39,6 +39,12 @@ bool debugOverrideIsWeb = false;
 @visibleForTesting
 Duration Function()? debugThrottleClock;
 
+/// Internal flag to allow bypassing the clone-id assertion during unit
+/// tests, so the defensive release-mode path (reject the duplicate id and
+/// fall back to a plain move) is reachable and covered.
+@visibleForTesting
+bool debugBypassCloneIdAssert = false;
+
 /// The gesture used to trigger a drag operation on mobile platforms.
 enum DragStartGesture {
   /// Dragging is initiated by holding/long-pressing an item.
@@ -135,6 +141,7 @@ class DashboardOverlay<T extends Object> extends StatefulWidget {
     this.dragStartGesture = DragStartGesture.longPress,
     this.crossGridDragOut = true,
     this.acceptCrossGridItems = true,
+    this.onCloneRequested,
     super.key,
   }) : assert(
           (itemBuilder != null ? 1 : 0) +
@@ -300,6 +307,31 @@ class DashboardOverlay<T extends Object> extends StatefulWidget {
   /// The gesture used to trigger a drag operation on mobile platforms
   final DragStartGesture dragStartGesture;
 
+  /// Produces the duplicate of a tile dragged with the clone modifier held
+  /// (`Alt` / `Option` by default, see `DashboardShortcuts.cloneKeys`).
+  ///
+  /// **The feature is off until this callback is registered**: with no
+  /// callback the modifier is ignored entirely and an Alt+drag is a plain
+  /// move. There is no "default clone" — only the application can mint an id
+  /// and decide what duplicating one of its widgets means.
+  ///
+  /// Sequence: the modifier is read once, at pointer-down, on the tile under
+  /// the cursor. Nothing happens yet — a plain Alt+CLICK never duplicates
+  /// anything. On the first pointer movement past the drag threshold the
+  /// callback runs, the returned item is inserted at the source's own
+  /// coordinates, and the drag session starts **on the clone**, leaving the
+  /// source where it was. Returning `null` cancels the duplication and the
+  /// gesture degrades to a plain move of the source.
+  ///
+  /// Ignored for resize gestures (the modifier only affects a body drag),
+  /// for static items and section barriers (never draggable), and while a
+  /// multi-selection modifier is also held.
+  ///
+  /// Falls back to `DashboardNestedScope.onCloneRequested` when null, so a
+  /// tree of nested grids can register one handler and branch on the `grid`
+  /// argument. Costs one null check per pointer-down while both are null.
+  final DashboardCloneRequestCallback? onCloneRequested;
+
   @override
   State<DashboardOverlay<T>> createState() => _DashboardOverlayState<T>();
 }
@@ -349,6 +381,36 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
   /// Overlay-level callback, falling back to the scope-wide one.
   DashboardItemDroppedOnHostCallback? get _dropOnHostCallback =>
       widget.onItemDroppedOnHost ?? _nestedCoordinator?.onItemDroppedOnHost;
+
+  /// Overlay-level clone callback, falling back to the scope-wide one.
+  ///
+  /// Null when the feature is not configured, which is the single check that
+  /// keeps Alt+drag free for every existing setup.
+  DashboardCloneRequestCallback? get _cloneCallback =>
+      widget.onCloneRequested ?? _nestedCoordinator?.onCloneRequested;
+
+  /// Source tile of a PENDING Alt+drag clone: the clone modifier was held at
+  /// pointer-down over this tile, but the pointer has not yet travelled far
+  /// enough for the gesture to be a drag, so nothing has been inserted and no
+  /// drag session exists yet.
+  ///
+  /// The duplication cannot happen at pointer-down. `_onPointerDown`
+  /// fires on the raw button press (no threshold), so inserting there would
+  /// make a plain Alt+CLICK silently duplicate a tile and push a history
+  /// entry. Deferring to the first real move also means the clone is created
+  /// exactly once, before `onDragStart`, so the drag pivot is the clone from
+  /// the very first frame and is never swapped mid-gesture (see the
+  /// "Active Pivot Is Immutable Mid-Gesture" invariant).
+  ///
+  /// Resolved by [_resolvePendingClone] on the first qualifying move, and
+  /// dropped by [_resetOperationState] / [_handleMobileTap] otherwise.
+  LayoutItem? _pendingCloneSource;
+
+  /// Movement, in logical pixels, past which a pointer-down is treated as a
+  /// drag rather than a click. Shared by the deferred-clone resolution and
+  /// the deferred multi-selection clear so the two agree on what a "click"
+  /// is.
+  static const double _dragMoveTolerance = 2;
 
   /// The drop-target tile under [globalPosition], or null.
   ///
@@ -813,6 +875,15 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
 
   /// Handles simple tap on Mobile to toggle selection.
   void _handleMobileTap(Offset globalPosition) {
+    // This branch deliberately bypasses _onPointerUp, so an armed clone that
+    // never became a drag has to be released HERE — including the pointer
+    // claim taken at pointer-down. Leaking that claim would lock every
+    // ancestor grid out of dragging, permanently, after a single tap.
+    if (_pendingCloneSource != null) {
+      _pendingCloneSource = null;
+      _nestedCoordinator?.releasePointer(this);
+    }
+
     if (!widget.controller.isEditing.value) return;
 
     final hit = _hitTest(globalPosition);
@@ -1060,6 +1131,9 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
     // first in the dispatch order): do not steal the drag.
     if (_nestedCoordinator?.isPointerClaimedByOther(this) ?? false) return;
 
+    // A new press always supersedes a clone armed by a previous one.
+    _pendingCloneSource = null;
+
     final hit = _hitTest(position);
     final foundItem = hit.item;
     final itemRenderBox = hit.itemRenderBox;
@@ -1069,35 +1143,76 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
       // Prevent dragging static items, unless the item is an interactive section barrier
       if (foundItem.isStatic && !foundItem.isSectionBarrier) return;
 
-      // MULTI-SELECTION LOGIC
       final shortcuts = widget.controller.shortcuts ?? DashboardShortcuts.defaultShortcuts;
       final pressedKeys = HardwareKeyboard.instance.logicalKeysPressed;
       final isMultiSelect = shortcuts.multiSelectKeys.any(pressedKeys.contains);
       final isAlreadySelected = widget.controller.selectedItemIds.peek().contains(foundItem.id);
       _shouldClearSelectionOnUp = false;
 
-      if (isMultiSelect) {
-        // Case 1: Shift pressed -> Toggle immediately
-        widget.controller.toggleSelection(foundItem.id, multi: true);
+      // GESTURE KIND
+      // Resolved BEFORE the selection logic, because the clone modifier must
+      // only ever arm a body drag. Reading the handle here (it used to be
+      // computed further down) is what keeps Alt + drag-from-an-edge a plain
+      // resize instead of duplicating the tile and resizing the duplicate.
+      final itemLocalPosition = itemRenderBox.globalToLocal(position);
 
-        // If we just unselected item, don't start drag
-        if (!widget.controller.selectedItemIds.peek().contains(foundItem.id)) {
-          return;
-        }
-      } else {
-        // Case 2: No Shift
-        if (isAlreadySelected) {
-          // Case 2a: Already selected -> Perhaps a Group Drag.
-          // Do NOT change selection now.
-          // Cleanup others if this is a simple clic (PointerUp).
-          _shouldClearSelectionOnUp = true;
+      final handle = calculateResizeHandle(
+        localPosition: itemLocalPosition,
+        size: itemRenderBox.size,
+        handleSide: widget.resizeHandleSide,
+        isResizable: foundItem.isResizable ?? true,
+      );
+
+      // ALT + DRAG CLONING (arming only)
+      // The duplicate is NOT created here: `_onPointerDown` fires on the raw
+      // button press, so inserting now would make a plain Alt+click duplicate
+      // a tile. The request is armed and resolved on the first real move (see
+      // [_pendingCloneSource] and [_resolvePendingClone]).
+      final cloneCallback = _cloneCallback;
+      assert(
+        cloneCallback == null || !shortcuts.cloneKeys.any(shortcuts.multiSelectKeys.contains),
+        'DashboardShortcuts: cloneKeys and multiSelectKeys must be disjoint. '
+        'Both are read from the same pointer-down event, so a shared key '
+        'would toggle the selection AND request a clone (multiSelectKeys '
+        'wins at runtime).',
+      );
+      // A multi-selection modifier wins over the clone modifier. The
+      // two key sets are configurable and an application may legitimately
+      // overlap them (the README documents Alt as a multi-select key); a
+      // selection gesture must never be silently turned into a duplication.
+      final wantsClone = cloneCallback != null &&
+          handle == null &&
+          !isMultiSelect &&
+          shortcuts.cloneKeys.any(pressedKeys.contains);
+
+      // MULTI-SELECTION LOGIC
+      // Skipped entirely while arming a clone: the source's selection state
+      // must be left untouched (an Alt+click that never becomes a drag is a
+      // no-op), and `onDragStart` on the clone owns the selection from there.
+      if (!wantsClone) {
+        if (isMultiSelect) {
+          // Case 1: Shift pressed -> Toggle immediately
+          widget.controller.toggleSelection(foundItem.id, multi: true);
+
+          // If we just unselected item, don't start drag
+          if (!widget.controller.selectedItemIds.peek().contains(foundItem.id)) {
+            return;
+          }
         } else {
-          // Case 2b: Not selected -> Single selection immediately (replace others).
-          widget.controller.toggleSelection(foundItem.id, multi: false);
+          // Case 2: No Shift
+          if (isAlreadySelected) {
+            // Case 2a: Already selected -> Perhaps a Group Drag.
+            // Do NOT change selection now.
+            // Cleanup others if this is a simple clic (PointerUp).
+            _shouldClearSelectionOnUp = true;
+          } else {
+            // Case 2b: Not selected -> Single selection immediately (replace others).
+            widget.controller.toggleSelection(foundItem.id, multi: false);
+          }
         }
-      }
 
-      widget.controller.onInteractionStart?.call(foundItem);
+        widget.controller.onInteractionStart?.call(foundItem);
+      }
 
       _activeSliverMetrics = _getMetricsFromSliver(renderSliver);
 
@@ -1108,8 +1223,6 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
       final renderObject = context.findRenderObject();
       if (renderObject is! RenderBox) return;
       final overlayBox = renderObject;
-
-      final itemLocalPosition = itemRenderBox.globalToLocal(position);
 
       final itemVisualPos = itemRenderBox.localToGlobal(Offset.zero, ancestor: overlayBox);
 
@@ -1128,20 +1241,27 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
 
       _dragGrabOffset = itemLocalPosition;
 
-      final handle = calculateResizeHandle(
-        localPosition: itemLocalPosition,
-        size: itemRenderBox.size,
-        handleSide: widget.resizeHandleSide,
-        isResizable: foundItem.isResizable ?? true,
-      );
-
-      _activeItemId = foundItem.id;
-      _activeItemInitialLayout = foundItem;
       _operationStartPosition = position;
       _activeResizeHandle = handle;
 
       // Claim the pointer so ancestor overlays skip it (see _onPointerDown).
+      // Taken even while merely arming a clone: ancestors test the claim in
+      // THEIR pointer-down, which runs after ours (deepest-first dispatch),
+      // so deferring it would let the parent grid drag the host tile out from
+      // under an armed gesture. The matching release happens in
+      // _resetOperationState — and, for the mobile-tap branch that bypasses
+      // _onPointerUp, in _handleMobileTap.
       _nestedCoordinator?.claimPointer(this);
+
+      if (wantsClone) {
+        // Armed, not started: `_activeItemId` deliberately stays null so no
+        // drag machinery runs until the pointer proves this is a drag.
+        _pendingCloneSource = foundItem;
+        return;
+      }
+
+      _activeItemId = foundItem.id;
+      _activeItemInitialLayout = foundItem;
 
       if (handle != null) {
         widget.onItemResizeStart?.call(foundItem);
@@ -1153,7 +1273,122 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
     }
   }
 
+  /// Materializes the clone armed at pointer-down and opens the drag session.
+  ///
+  /// Runs at most once per gesture, on the first move that qualifies as a
+  /// drag. The session always starts — on the clone when the application
+  /// produced one, on [source] itself otherwise, so a refused duplication
+  /// degrades to a plain move instead of swallowing the gesture.
+  void _resolvePendingClone(LayoutItem source) {
+    final callback = _cloneCallback;
+    // A policy that refuses to drag the source refuses the clone too, and
+    // `onDragStart` bails out before opening any session — which would strand
+    // the freshly inserted duplicate on the grid with no gesture to carry it
+    // away. Never mint one in that case.
+    final policy = widget.controller.policy;
+    final dragRefused = policy != null && !policy.canDrag(source);
+    // The callback can disappear between the press and the first move (a
+    // rebuild with `onCloneRequested: null`): treat it exactly like a refusal.
+    final clone = dragRefused ? null : callback?.call(source, widget.controller);
+    final inserted = clone == null ? null : _insertClone(source: source, clone: clone);
+    final effective = inserted ?? source;
+
+    _activeItemId = effective.id;
+    _activeItemInitialLayout = effective;
+
+    // Deferred from _onPointerDown: these fire once the gesture is real, and
+    // with the item that is actually being dragged — the clone, never the
+    // source it was minted from.
+    widget.controller.onInteractionStart?.call(effective);
+    widget.onItemDragStart?.call(effective);
+    // onDragStart resets the selection to {effective.id} whenever
+    // that id is not already selected, which is always true for a fresh
+    // clone. That is what keeps the pivot inside the selection (the cluster
+    // invariant) without this method touching the selection itself.
+    widget.controller.internal.onDragStart(effective.id);
+  }
+
+  /// Inserts [clone] on [source]'s own cell and returns it as the controller
+  /// actually placed it, or null when the request must be rejected.
+  LayoutItem? _insertClone({required LayoutItem source, required LayoutItem clone}) {
+    final controller = widget.controller;
+
+    // A clone is a NEW item. Reusing an existing id would put two identical
+    // ValueKeys in the sliver (a hard crash on the next layout) and break the
+    // tree-wide id uniqueness that cross-grid moves and the tree codec rely
+    // on. This is an application contract violation: loud in debug, degraded
+    // to a plain move in release rather than corrupting the layout.
+    final duplicateId =
+        clone.id == source.id || controller.layout.value.any((i) => i.id == clone.id);
+    assert(
+      !duplicateId || debugBypassCloneIdAssert,
+      'onCloneRequested returned the id "${clone.id}", which already exists '
+      'in this grid. A clone must carry a NEW id, unique across the whole '
+      'grid tree.',
+    );
+    if (duplicateId) return null;
+
+// `moved` is reset too: it is the engine's transient "displaced by a
+    // cascade" marker. An application has no legitimate reason to hand us
+    // one on a brand-new item, so it is normalized at the trust boundary
+    // like x/y. NOT COVERED BY VALUE, and cannot be: every compactor except
+    // NoCompactor resets it anyway, and under NoCompactor `moveElement`
+    // sets it back to true inside the same pointer event. No public API can
+    // sample the interval.
+    controller.addItem(clone.copyWith(x: source.x, y: source.y, moved: false));
+
+    // Read the item BACK from the layout instead of trusting the instance we
+    // were handed: addItem runs auto-placement, bound correction and a
+    // compaction pass, so the geometry that landed on the grid is the
+    // controller's, not the application's.
+    final inserted = controller.layout.value.firstWhereOrNull((i) => i.id == clone.id);
+    if (inserted == null) return null;
+
+    _clampGrabOffsetTo(inserted, source);
+    return inserted;
+  }
+
+  /// Re-clamps the grab offset when the clone is smaller than the tile it was
+  /// captured on.
+  ///
+  /// [_dragGrabOffset] is measured inside the SOURCE's render box. A clone
+  /// with different dimensions can be narrower or shorter than that offset,
+  /// which would hold the feedback — and therefore the resolved drop cell —
+  /// off the pointer for the entire gesture.
+  void _clampGrabOffsetTo(LayoutItem inserted, LayoutItem source) {
+    if (inserted.w == source.w && inserted.h == source.h) return;
+    final metrics = _activeSliverMetrics;
+    final grab = _dragGrabOffset;
+    if (metrics == null || grab == null) return;
+
+    final isVertical = metrics.scrollDirection == Axis.vertical;
+    final spacingX = isVertical ? metrics.crossAxisSpacing : metrics.mainAxisSpacing;
+    final spacingY = isVertical ? metrics.mainAxisSpacing : metrics.crossAxisSpacing;
+    final double cloneWidth = max(0, inserted.w * metrics.slotWidth + (inserted.w - 1) * spacingX);
+    final double cloneHeight =
+        max(0, inserted.h * metrics.slotHeight + (inserted.h - 1) * spacingY);
+
+    _dragGrabOffset = Offset(
+      grab.dx.clamp(0.0, cloneWidth),
+      grab.dy.clamp(0.0, cloneHeight),
+    );
+  }
+
   void _onPointerMove(Offset position) {
+    // Deferred Alt+drag clone. Nothing was inserted at pointer-down, so a
+    // plain Alt+click left the grid untouched; the duplicate materializes
+    // here, on the first movement that qualifies as a drag, and the session
+    // opens directly on it. Placed before the web throttle so the clone is
+    // never delayed by a throttled frame.
+    var justCloned = false;
+    final pendingClone = _pendingCloneSource;
+    if (pendingClone != null) {
+      if ((position - _operationStartPosition).distance <= _dragMoveTolerance) return;
+      _pendingCloneSource = null;
+      _resolvePendingClone(pendingClone);
+      justCloned = true;
+    }
+
     if (_activeItemId == null) return;
 
     // Stopwatch Throttling.
@@ -1161,10 +1396,24 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
     // Using a Stopwatch avoids allocating garbage (DateTime.now() objects) while remaining
     // completely independent of Flutter's frame rendering cycles, avoiding visual lockups
     // when sub-slot moves are bypassed.
+    // The event that just inserted a clone is NEVER throttled. The
+    // insertion and the first `_performUpdate` must land in the same pointer
+    // event, because between them the layout holds the raw insertion result:
+    // the source and the clone both claim one cell, and `FastVerticalCompactor`
+    // breaks that tie ALPHABETICALLY BY ID (see its sort comparator), so which
+    // of the two gets snapped one row down depends on the id the application
+    // minted. Returning here would let that intermediate layout be painted for
+    // one throttle window — a visible flash whose direction varies with the
+    // clone's id. Running the update in the same event makes the tie purely
+    // internal: the clone lands under the cursor and the source is pushed,
+    // whatever the ids sort like.
     if (kIsWeb || debugOverrideIsWeb) {
       // Gate model: now - lastFlush, with an injectable [debugThrottleClock].
+      // `justCloned` skips the DEFERRAL, not the bookkeeping: the flush stamp
+      // is still recorded below so the throttle cadence stays anchored to the
+      // real clock instead of drifting by one window after every clone.
       final now = _throttleNow;
-      if (now - _lastThrottleFlush < const Duration(milliseconds: 16)) {
+      if (!justCloned && now - _lastThrottleFlush < const Duration(milliseconds: 16)) {
         // Keep the freshest position and flush it after the throttle window,
         // otherwise the item settles one event behind the cursor when the
         // burst ends exactly inside the window.
@@ -1184,7 +1433,7 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
     }
 
     // If it starts tp move, this is not a "clic", so we won't unselect group at the end.
-    if ((position - _operationStartPosition).distance > 2.0) {
+    if ((position - _operationStartPosition).distance > _dragMoveTolerance) {
       // Tolerance threshold
       _shouldClearSelectionOnUp = false;
     }
@@ -1538,6 +1787,7 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
   void _resetOperationState() {
     if (!mounted) return;
     _activeItemId = null;
+    _pendingCloneSource = null;
     _frozenOverChildHostId = null;
     if (_dropTargetHostId != null) {
       widget.controller.internal.setNestTargetHover(null);

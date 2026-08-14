@@ -47,6 +47,7 @@ Ideal for analytics platforms, IoT control panels, project management tools, no-
 - **Accessibility:** Full keyboard navigation support (Tab, Arrows, Space, Enter, customizable keys) and Screen Reader announcements (TalkBack/VoiceOver).
 - **Mini-Map:** A customizable widget to visualize the entire dashboard layout and current viewport, perfect for large grids. Supports **overlay markers** (status dots/badges per item) and **multiple viewport indicators** for multi-sliver scroll views.
 - **Multi-Selection:** Select and move multiple items at once using `Shift` + Click (customizable keys).
+- **Duplicate on Drag:** Hold `Alt` / `Option` (customizable) when you start dragging a tile to drag a *copy* of it out, leaving the original in place. The application mints the id and the business payload through `onCloneRequested`.
 - **Undo / Redo:** A native, transactional layout history with reactive `canUndo` / `canRedo` beacons and business-logic veto hooks (`onWillUndo` / `onWillRedo`). One entry per completed operation — a 100-frame drag records exactly one snapshot.
 - **Utilities**: Import/Export, find free cells, get last row, Auto Layout & Bulk Add.
 
@@ -80,6 +81,7 @@ The package is WebAssembly (WASM) compatible. Building your production applicati
   - [Custom Drag Feedback](#custom-drag-feedback)
   - [Haptic Feedback](#haptic-feedback)
   - [Multi Selection and Cluster Drag](#multi-selection-and-cluster-drag)
+  - [Duplicate on Drag (Alt / Option)](#duplicate-on-drag-alt--option)
   - [Adaptive Neighbor Shrinking (Auto-Shrink on Drag)](#adaptive-neighbor-shrinking-auto-shrink-on-drag)
 - [Layout & Structure](#layout--structure)
   - [Segmented Grids & Section Barriers](#segmented-grids--section-barriers)
@@ -614,6 +616,80 @@ controller.shortcuts = DashboardShortcuts(
   multiSelectKeys: [LogicalKeyboardKey.altLeft],
 );
 ```
+
+> **Note:** `Alt` is also the default modifier for [Duplicate on Drag](#duplicate-on-drag-alt--option).
+> If you move multi-selection onto `Alt`, move `cloneKeys` elsewhere in the same
+> `DashboardShortcuts` — the two sets must stay disjoint.
+
+### Duplicate on Drag (Alt / Option)
+
+Holding `Alt` (`Option` on macOS) when a drag starts duplicates the tile: the copy
+follows the cursor while the original stays behind.
+
+**The feature is off until you register `onCloneRequested`.** There is no default
+clone: only your application can mint an id and decide what duplicating one of
+your widgets means.
+
+> Tip: Store your tile configuration inside LayoutItem.extra when cloning so your itemBuilder can render the duplicate immediately without requiring external state lookups.
+
+```dart
+var counter = 0;
+
+Dashboard<String>(
+  controller: controller,
+  itemBuilder: _buildCard,
+  onCloneRequested: (source, grid) {
+    // Return null to refuse the duplication: the gesture then degrades to a
+    // plain move of the source.
+    if (source.extra?['unique'] == true) return null;
+
+    return source.copyWith(
+      id: 'copy_${counter++}',
+      extra: {...?source.extra, 'clonedFrom': source.id},
+    );
+  },
+)
+```
+
+**What the package guarantees:**
+
+| Rule | Behaviour |
+|---|---|
+| No callback registered | The modifier is ignored; Alt+drag is a plain move. Costs one null check per pointer-down. |
+| Alt + **click** (no movement) | Nothing happens at all — no insertion, no history entry, no selection change. The copy is created on the first real movement. |
+| Callback returns `null` | Duplication cancelled; the gesture continues as a plain move of the source. |
+| Returned id already exists | Rejected (assertion in debug, plain move in release). A clone must carry an id **unique across the whole grid tree**. |
+| Returned `x` / `y` | Ignored. The copy is always inserted on the source's own cell so it appears under the cursor. Size and constraints are honoured. |
+| Resize handles | The modifier never applies: Alt + drag from an edge is a plain resize. |
+| Static items / section barriers | Never cloned (they are not draggable either). |
+| Multi-selection modifier also held | Selection wins; no duplication. |
+| Selection after the copy is created | Reduced to the clone alone — a duplication is always a single-item drag. |
+| Undo | The gesture records **two** entries: the insertion, then the drop. `undo()` once puts the copy back where it appeared; twice removes it. |
+
+**Changing the modifier** — `cloneKeys` follows the same pattern as `multiSelectKeys`
+and must stay disjoint from it (both are read from the same pointer-down;
+`multiSelectKeys` wins, and an overlap trips an assertion in debug):
+
+```dart
+controller.shortcuts = const DashboardShortcuts(
+  cloneKeys: [LogicalKeyboardKey.controlLeft, LogicalKeyboardKey.controlRight],
+);
+```
+
+**Nested grids** — a `NestedDashboard` takes its own `onCloneRequested`, or you can
+register one handler for the whole tree on the scope and branch on the `grid`
+argument:
+
+```dart
+DashboardNestedScope(
+  onCloneRequested: (source, grid) => identical(grid, readOnlyPanel)
+      ? null
+      : source.copyWith(id: newId()),
+  child: ...,
+)
+```
+
+A per-grid callback always takes precedence over the scope-wide one.
 
 ### Adaptive Neighbor Shrinking (Auto-Shrink on Drag)
 

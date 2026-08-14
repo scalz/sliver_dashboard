@@ -145,6 +145,18 @@ void main() {
         final result = compactor.compact(layout, cols, allowOverlap: true);
         expect(result.first, equals(layout.first));
       });
+
+      test('NoCompactor.resolveCollisions resets moved flag to false for all items', () {
+        const compactor = NoCompactor();
+        final itemsWithMoved = [
+          const LayoutItem(id: 'a', x: 0, y: 0, w: 1, h: 1, moved: true),
+          const LayoutItem(id: 'b', x: 0, y: 1, w: 1, h: 1, moved: true),
+        ];
+
+        final resolved = compactor.resolveCollisions(itemsWithMoved, 4);
+
+        expect(resolved.every((item) => !item.moved), isTrue);
+      });
     });
 
     group('FastVerticalCompactor', () {
