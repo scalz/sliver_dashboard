@@ -216,6 +216,7 @@ The biggest challenge in a grid layout is preventing the reconstruction of child
 - If the signature matches, the cached widget instance is returned. Flutter detects `oldWidget == newWidget` and stops the rebuild propagation immediately.
 - **Breakpoint hoisting**: `DashboardItem.didUpdateWidget` resolves old-vs-new breakpoints itself on the breakpoint-only path and keeps the outer cache when unchanged; `DashboardBreakpointBuilder`'s inner guard remains as defense in depth.
 - **Edit-mode toggles are deliberately NOT an invalidation cause**. The edit chrome (handles, borders, gestures, a11y) lives OUTSIDE the cache and adapts on its own, so toggling is nearly free even with heavy tile subtrees. Content that depends on the edit state must read it reactively (`controller.isEditing.watch(context)` inside the tile — state_beacon is re-exported by the barrel for this). Contract is pinned by a test.
+- **Displaced Item Highlighting**: When an active drag pushes neighboring items, `item.moved == true` triggers `displacedDecoration` / `displacedColor` on the outer shell without invalidating the cached user content subtree (`_cachedWidget`).
 
 2.  **Lazy Loading:**
 - **Rule:** The cache is initialized lazily in the `build()` method (not `initState`). This ensures that `InheritedWidgets` (like `Theme` or `Provider`) are accessible during the first build, preventing runtime errors.

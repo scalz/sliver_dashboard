@@ -1611,4 +1611,110 @@ void main() {
       expect(find.byType(DashboardMinimap), findsOneWidget);
     });
   });
+
+  test('MinimapStyle equality and hashCode handle displacedItemColor', () {
+    const style1 = MinimapStyle(
+      displacedItemColor: Colors.purple,
+    );
+    const style2 = MinimapStyle(
+      displacedItemColor: Colors.purple,
+    );
+    const style3 = MinimapStyle(
+      displacedItemColor: Colors.green,
+    );
+
+    expect(style1, equals(style2));
+    expect(style1.hashCode, equals(style2.hashCode));
+    expect(style1, isNot(equals(style3)));
+  });
+
+  test('MinimapStyle operator == reaches displacedItemColor when preceding fields match', () {
+    const base = MinimapStyle(
+      backgroundColor: Colors.white,
+    );
+
+    final styleA = MinimapStyle(
+      backgroundColor: base.backgroundColor,
+      displacedItemColor: Colors.purple,
+    );
+    final styleB = MinimapStyle(
+      backgroundColor: base.backgroundColor,
+      displacedItemColor: Colors.purple,
+    );
+    final styleC = MinimapStyle(
+      backgroundColor: base.backgroundColor,
+      displacedItemColor: Colors.yellow,
+    );
+
+    expect(styleA == styleB, isTrue, reason: 'Evaluates displacedItemColor equality');
+    expect(styleA == styleC, isFalse, reason: 'Evaluates displacedItemColor inequality');
+  });
+
+  testWidgets('DashboardMinimap renders displacedItemColor during drag', (tester) async {
+    final controller = DashboardController(
+      initialSlotCount: 4,
+      initialLayout: const [
+        LayoutItem(id: 'item_a', x: 0, y: 0, w: 2, h: 2),
+        LayoutItem(id: 'item_b', x: 0, y: 2, w: 2, h: 2),
+      ],
+    );
+    addTearDown(controller.dispose);
+    controller.setEditMode(true);
+
+    final scrollController = ScrollController();
+    addTearDown(scrollController.dispose);
+
+    const minimapDisplacedColor = Colors.purple;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 400,
+            height: 800,
+            child: Stack(
+              children: [
+                Dashboard<String>(
+                  controller: controller,
+                  scrollController: scrollController,
+                  dragStartGesture: DragStartGesture.tap,
+                  itemBuilder: (context, item) => Text(
+                    item.id,
+                    key: ValueKey('text_${item.id}'),
+                  ),
+                ),
+                Positioned(
+                  right: 16,
+                  bottom: 16,
+                  child: DashboardMinimap(
+                    controller: controller,
+                    scrollController: scrollController,
+                    width: 120,
+                    style: const MinimapStyle(
+                      displacedItemColor: minimapDisplacedColor,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final itemAFinder = find.byKey(const ValueKey('text_item_a'));
+    final gesture = await tester.startGesture(tester.getCenter(itemAFinder));
+    await tester.pump();
+
+    await gesture.moveBy(const Offset(0, 250));
+    await tester.pump();
+
+    expect(controller.layout.value.firstWhere((i) => i.id == 'item_b').moved, isTrue);
+
+    await gesture.up();
+    await tester.pumpAndSettle();
+
+    expect(controller.layout.value.firstWhere((i) => i.id == 'item_b').moved, isFalse);
+  });
 }

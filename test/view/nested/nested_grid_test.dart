@@ -563,4 +563,43 @@ void main() {
       expect(coordinator.maxNestingDepth, 3);
     });
   });
+
+  testWidgets('NestedDashboard respects explicit non-empty itemGlobalKeySuffix', (tester) async {
+    final parent = DashboardController(
+      initialSlotCount: 4,
+      initialLayout: const [LayoutItem(id: 'host1', x: 0, y: 0, w: 2, h: 2)],
+    );
+    addTearDown(parent.dispose);
+
+    final child = DashboardController(
+      initialSlotCount: 4,
+      initialLayout: const [LayoutItem(id: 'child1', x: 0, y: 0, w: 2, h: 2)],
+    );
+    addTearDown(child.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: DashboardNestedScope(
+            child: DashboardControllerProvider(
+              controller: parent,
+              child: SizedBox(
+                width: 400,
+                height: 300,
+                child: NestedDashboard(
+                  controller: child,
+                  parentItemId: 'host1',
+                  itemGlobalKeySuffix: '-custom-suffix',
+                  itemBuilder: (context, item) => Text(item.id),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('child1'), findsOneWidget);
+  });
 }

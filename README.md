@@ -829,6 +829,7 @@ Dashboard(
   itemStyle: DashboardItemStyle(
     focusColor: Colors.indigoAccent, // Border color when focused/selected
     activeColor: Colors.deepOrange,   // Border color when actively dragged
+    displacedColor: Colors.amber,    // Border color when displaced by drag push cascade
     borderRadius: BorderRadius.circular(12), // Match your card's border radius
     // Or provide a fully custom BoxDecoration:
     // focusDecoration: BoxDecoration(
@@ -919,6 +920,7 @@ Stack(
             width: isVertical ? 120 : null,
             style: const MinimapStyle(
               itemColor: Colors.grey,
+              displacedItemColor: Colors.amber, // Highlight displaced items during drag
               viewportColor: Color(0x332196F3),
             ),
           ),

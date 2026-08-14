@@ -138,4 +138,45 @@ void main() {
       variant: TargetPlatformVariant.only(TargetPlatform.linux),
     );
   });
+
+  group('TrashPosition & TrashLayout Equality Tests', () {
+    test('TrashPosition copyWith, == and hashCode', () {
+      const pos1 = TrashPosition(left: 10, top: 20, right: 30, bottom: 40);
+      final pos2 = pos1.copyWith(left: 10, top: 20, right: 30, bottom: 40);
+      final pos3 = pos1.copyWith(bottom: 50);
+
+      expect(pos1, equals(pos2));
+      expect(pos1.hashCode, equals(pos2.hashCode));
+      expect(pos1, isNot(equals(pos3)));
+
+      expect(pos1 == const TrashPosition(left: 99, top: 20, right: 30, bottom: 40), isFalse);
+      expect(pos1 == const TrashPosition(left: 10, top: 99, right: 30, bottom: 40), isFalse);
+      expect(pos1 == const TrashPosition(left: 10, top: 20, right: 99, bottom: 40), isFalse);
+      expect(pos1 == const TrashPosition(left: 10, top: 20, right: 30, bottom: 99), isFalse);
+    });
+
+    test('TrashLayout == and hashCode', () {
+      const posA = TrashPosition(left: 10, top: 20);
+      const posB = TrashPosition(left: 30, bottom: 40);
+
+      const layout1 = TrashLayout(visible: posA, hidden: posB);
+      const layout2 = TrashLayout(visible: posA, hidden: posB);
+      const layout3 = TrashLayout(visible: posA, hidden: TrashPosition(left: 30, bottom: 99));
+
+      expect(layout1, equals(layout2));
+      expect(layout1.hashCode, equals(layout2.hashCode));
+      expect(layout1, isNot(equals(layout3)));
+
+      expect(
+        layout1 == const TrashLayout(visible: TrashPosition(left: 99), hidden: posB),
+        isFalse,
+      );
+      expect(
+        layout1 == const TrashLayout(visible: posA, hidden: TrashPosition(left: 99)),
+        isFalse,
+      );
+
+      expect(TrashLayout.bottomCenter, equals(TrashLayout.bottomCenter));
+    });
+  });
 }
