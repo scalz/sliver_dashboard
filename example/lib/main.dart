@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:sliver_dashboard/sliver_dashboard.dart';
@@ -150,6 +149,7 @@ class _DashboardPageState extends State<DashboardPage> {
   final confirmHistory = ValueNotifier<bool>(false);
   final isEditing = ValueNotifier(false);
   final showMinimap = ValueNotifier(true);
+  final enableImpactPreview = ValueNotifier<bool>(true);
   final useSliverDemo = ValueNotifier(false);
   final useDragHandlesOnly = ValueNotifier(false);
   final blockSectionCollision = ValueNotifier(true);
@@ -532,6 +532,7 @@ class _DashboardPageState extends State<DashboardPage> {
     confirmHistory.dispose();
     isEditing.dispose();
     showMinimap.dispose();
+    enableImpactPreview.dispose();
     useSliverDemo.dispose();
     useDragHandlesOnly.dispose();
     blockSectionCollision.dispose();
@@ -561,6 +562,7 @@ class _DashboardPageState extends State<DashboardPage> {
       jsonController: jsonController,
       isEditing: isEditing,
       showMinimap: showMinimap,
+      enableImpactPreview: enableImpactPreview,
       useSliverDemo: useSliverDemo,
       useDragHandlesOnly: useDragHandlesOnly,
       blockSectionCollision: blockSectionCollision,
@@ -643,11 +645,10 @@ class _DashboardPageState extends State<DashboardPage> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Expanded(
-            child: ValueListenableBuilder2<bool, int?>(
-              useSliverDemo,
-              customSlotCount,
-              builder: (context, sliverMode, _, _) {
-                return sliverMode
+            child: ListenableBuilder(
+              listenable: Listenable.merge([useSliverDemo, customSlotCount]),
+              builder: (context, _) {
+                return useSliverDemo.value
                     ? _buildSliverDemoView()
                     : _buildStandardDemoView();
               },
@@ -719,83 +720,80 @@ class _DashboardPageState extends State<DashboardPage> {
 
   Widget _buildStandardDemoView() {
     final theme = Theme.of(context);
-    return ValueListenableBuilder<int?>(
-      valueListenable: customSlotCount,
-      builder: (context, overrideSlots, _) {
-        return ValueListenableBuilder2(
-          enableSlotTapToAdd,
-          enableAltDragClone,
-          builder: (context, slotTapEnabled, cloneEnabled, _) {
-            return ValueListenableBuilder3(
-              useDragHandlesOnly,
-              showMinimap,
-              animateReflow,
-              builder: (context, handlesOnly, minimap, reflow, _) {
-                return Stack(
-                  children: [
-                    Dashboard<String>(
-                      controller: controller,
-                      scrollController: standardScrollController,
-                      scrollDirection: controller.scrollDirection.value,
-                      animateReflow: reflow,
-                      slotAspectRatio: 1.0,
-                      mainAxisSpacing: 8.0,
-                      crossAxisSpacing: 8.0,
-                      padding: const EdgeInsets.all(8.0),
-                      onSlotTap: slotTapEnabled ? _handleSlotTap : null,
-                      onSlotLongPress: _handleSlotLongPress,
-                      // Hold Alt / Option and drag a tile: the copy follows the
-                      // cursor, the original stays put. Registering the callback
-                      // is what turns the feature on.
-                      onCloneRequested: cloneEnabled
-                          ? _handleCloneRequested
-                          : null,
-                      dragStartGesture: handlesOnly
-                          ? DragStartGesture.none
-                          : DragStartGesture.longPress,
-                      // Use responsive breakpoints when overrideSlots is null,
-                      // otherwise null disables responsive breakpoints to respect manual slotCount
-                      breakpoints: overrideSlots != null
-                          ? null
-                          : {0: 4, 600: 6, 900: 8},
-                      itemBuilder: _buildCard,
-                      onWillDelete: _confirmDeletion,
-                      gridStyle: GridStyle(
-                        fillColor: theme.colorScheme.onSurface.withValues(
-                          alpha: 0.03,
+    return ListenableBuilder(
+      listenable: Listenable.merge([
+        customSlotCount,
+        enableSlotTapToAdd,
+        enableAltDragClone,
+        enableImpactPreview,
+        useDragHandlesOnly,
+        showMinimap,
+        animateReflow,
+      ]),
+      builder: (context, _) {
+        final overrideSlots = customSlotCount.value;
+        final slotTapEnabled = enableSlotTapToAdd.value;
+        final cloneEnabled = enableAltDragClone.value;
+        final impactPreviewEnabled = enableImpactPreview.value;
+        final handlesOnly = useDragHandlesOnly.value;
+        final minimap = showMinimap.value;
+        final reflow = animateReflow.value;
+
+        return Stack(
+          children: [
+            Dashboard<String>(
+              controller: controller,
+              scrollController: standardScrollController,
+              scrollDirection: controller.scrollDirection.value,
+              animateReflow: reflow,
+              slotAspectRatio: 1.0,
+              mainAxisSpacing: 8.0,
+              crossAxisSpacing: 8.0,
+              padding: const EdgeInsets.all(8.0),
+              onSlotTap: slotTapEnabled ? _handleSlotTap : null,
+              onSlotLongPress: _handleSlotLongPress,
+              // Hold Alt / Option and drag a tile: the copy follows the
+              // cursor, the original stays put. Registering the callback
+              // is what turns the feature on.
+              onCloneRequested: cloneEnabled ? _handleCloneRequested : null,
+              dragStartGesture: handlesOnly
+                  ? DragStartGesture.none
+                  : DragStartGesture.longPress,
+              // Use responsive breakpoints when overrideSlots is null,
+              // otherwise null disables responsive breakpoints to respect manual slotCount
+              breakpoints: overrideSlots != null
+                  ? null
+                  : {0: 4, 600: 6, 900: 8},
+              itemBuilder: _buildCard,
+              onWillDelete: _confirmDeletion,
+              gridStyle: GridStyle(
+                fillColor: theme.colorScheme.onSurface.withValues(alpha: 0.03),
+                handleColor: theme.colorScheme.primary,
+                lineColor: theme.colorScheme.onSurface.withValues(alpha: 0.08),
+                lineWidth: 1,
+              ),
+              itemStyle: DashboardItemStyle(
+                focusColor: theme.colorScheme.primary,
+                activeColor: theme.colorScheme.secondary,
+                borderRadius: BorderRadius.circular(12),
+                displacedDecoration: impactPreviewEnabled
+                    ? BoxDecoration(
+                        border: Border.all(
+                          color: theme.colorScheme.tertiary,
+                          width: 2,
                         ),
-                        handleColor: theme.colorScheme.primary,
-                        lineColor: theme.colorScheme.onSurface.withValues(
-                          alpha: 0.08,
-                        ),
-                        lineWidth: 1,
-                      ),
-                      itemStyle: DashboardItemStyle(
-                        focusColor: theme.colorScheme.primary,
-                        activeColor: theme.colorScheme.secondary,
                         borderRadius: BorderRadius.circular(12),
-                        displacedColor: Colors.green,
-                      ),
-                      trashLayout: const TrashLayout(
-                        visible: TrashPosition(
-                          bottom: 20,
-                          left: 100,
-                          right: 100,
-                        ),
-                        hidden: TrashPosition(
-                          bottom: -100,
-                          left: 100,
-                          right: 100,
-                        ),
-                      ),
-                      trashBuilder: _buildTrashBin,
-                    ),
-                    if (minimap) _buildMinimapOverlay(),
-                  ],
-                );
-              },
-            );
-          },
+                      )
+                    : null,
+              ),
+              trashLayout: const TrashLayout(
+                visible: TrashPosition(bottom: 20, left: 100, right: 100),
+                hidden: TrashPosition(bottom: -100, left: 100, right: 100),
+              ),
+              trashBuilder: _buildTrashBin,
+            ),
+            if (minimap) _buildMinimapOverlay(),
+          ],
         );
       },
     );
@@ -803,106 +801,117 @@ class _DashboardPageState extends State<DashboardPage> {
 
   Widget _buildSliverDemoView() {
     final theme = Theme.of(context);
-    return ValueListenableBuilder2(
-      enableSlotTapToAdd,
-      enableAltDragClone,
-      builder: (context, slotTapEnabled, cloneEnabled, _) {
-        return ValueListenableBuilder3(
-          useDragHandlesOnly,
-          showMinimap,
-          animateReflow,
-          builder: (context, handlesOnly, minimap, reflow, _) {
-            final overrideSlots = customSlotCount.value;
+    return ListenableBuilder(
+      listenable: Listenable.merge([
+        enableSlotTapToAdd,
+        enableAltDragClone,
+        enableImpactPreview,
+        useDragHandlesOnly,
+        enableImpactPreview,
+        animateReflow,
+      ]),
+      builder: (context, _) {
+        final slotTapEnabled = enableSlotTapToAdd.value;
+        final cloneEnabled = enableAltDragClone.value;
+        final handlesOnly = useDragHandlesOnly.value;
+        final minimap = showMinimap.value;
+        final reflow = animateReflow.value;
+        final impactPreviewEnabled = enableImpactPreview.value;
+        final overrideSlots = customSlotCount.value;
 
-            return Stack(
-              children: [
-                DashboardOverlay<String>(
-                  controller: controller,
-                  scrollController: sliverScrollController,
-                  dragStartGesture: handlesOnly
-                      ? DragStartGesture.none
-                      : DragStartGesture.longPress,
-                  onSlotTap: slotTapEnabled ? _handleSlotTap : null,
-                  onSlotLongPress: _handleSlotLongPress,
-                  // Same feature, wired on the raw overlay instead of the
-                  // high-level Dashboard widget.
-                  onCloneRequested: cloneEnabled ? _handleCloneRequested : null,
-                  gridStyle: GridStyle(
-                    fillColor: theme.colorScheme.onSurface.withValues(
-                      alpha: 0.03,
+        return Stack(
+          children: [
+            DashboardOverlay<String>(
+              controller: controller,
+              scrollController: sliverScrollController,
+              dragStartGesture: handlesOnly
+                  ? DragStartGesture.none
+                  : DragStartGesture.longPress,
+              onSlotTap: slotTapEnabled ? _handleSlotTap : null,
+              onSlotLongPress: _handleSlotLongPress,
+              // Same feature, wired on the raw overlay instead of the
+              // high-level Dashboard widget.
+              onCloneRequested: cloneEnabled ? _handleCloneRequested : null,
+              gridStyle: GridStyle(
+                fillColor: theme.colorScheme.onSurface.withValues(alpha: 0.03),
+                handleColor: theme.colorScheme.primary,
+                lineColor: theme.colorScheme.onSurface.withValues(alpha: 0.08),
+                lineWidth: 1,
+              ),
+              itemStyle: DashboardItemStyle(
+                focusColor: theme.colorScheme.primary,
+                activeColor: theme.colorScheme.secondary,
+                borderRadius: BorderRadius.circular(12),
+                displacedDecoration: impactPreviewEnabled
+                    ? BoxDecoration(
+                        border: Border.all(
+                          color: theme.colorScheme.tertiary,
+                          width: 2,
+                        ),
+                        borderRadius: BorderRadius.circular(12),
+                      )
+                    : null,
+              ),
+              padding: const EdgeInsets.all(8.0),
+              fillViewport: true,
+              itemBuilder: _buildCard,
+              onWillDelete: _confirmDeletion,
+              trashLayout: const TrashLayout(
+                visible: TrashPosition(bottom: 20, left: 100, right: 100),
+                hidden: TrashPosition(bottom: -100, left: 100, right: 100),
+              ),
+              trashBuilder: _buildTrashBin,
+              child: CustomScrollView(
+                controller: sliverScrollController,
+                slivers: [
+                  SliverAppBar(
+                    automaticallyImplyLeading: false,
+                    pinned: true,
+                    expandedHeight: 120,
+                    backgroundColor: theme.colorScheme.surfaceContainerHighest,
+                    flexibleSpace: FlexibleSpaceBar(
+                      title: Text(
+                        'Sliver direct composition',
+                        style: TextStyle(color: theme.colorScheme.onSurface),
+                      ),
+                      centerTitle: false,
                     ),
-                    handleColor: theme.colorScheme.primary,
-                    lineColor: theme.colorScheme.onSurface.withValues(
-                      alpha: 0.08,
+                  ),
+                  SliverPadding(
+                    padding: const EdgeInsets.all(8.0),
+                    sliver: SliverDashboard(
+                      animateReflow: reflow,
+                      breakpoints: overrideSlots != null
+                          ? null
+                          : {0: 4, 600: 6, 900: 8},
+                      itemBuilder: _buildCard,
                     ),
-                    lineWidth: 1,
                   ),
-                  padding: const EdgeInsets.all(8.0),
-                  fillViewport: true,
-                  itemBuilder: _buildCard,
-                  onWillDelete: _confirmDeletion,
-                  trashLayout: const TrashLayout(
-                    visible: TrashPosition(bottom: 20, left: 100, right: 100),
-                    hidden: TrashPosition(bottom: -100, left: 100, right: 100),
-                  ),
-                  trashBuilder: _buildTrashBin,
-                  child: CustomScrollView(
-                    controller: sliverScrollController,
-                    slivers: [
-                      SliverAppBar(
-                        automaticallyImplyLeading: false,
-                        pinned: true,
-                        expandedHeight: 120,
-                        backgroundColor:
-                            theme.colorScheme.surfaceContainerHighest,
-                        flexibleSpace: FlexibleSpaceBar(
-                          title: Text(
-                            'Sliver direct composition',
+                  SliverList(
+                    delegate: SliverChildBuilderDelegate(
+                      (context, index) => ListTile(
+                        leading: CircleAvatar(
+                          backgroundColor: theme.colorScheme.primaryContainer,
+                          child: Text(
+                            '$index',
                             style: TextStyle(
-                              color: theme.colorScheme.onSurface,
+                              color: theme.colorScheme.onPrimaryContainer,
                             ),
                           ),
-                          centerTitle: false,
+                        ),
+                        title: Text('Subsequent List Item $index'),
+                        subtitle: const Text(
+                          'Rendered natively alongside the grid sliver',
                         ),
                       ),
-                      SliverPadding(
-                        padding: const EdgeInsets.all(8.0),
-                        sliver: SliverDashboard(
-                          animateReflow: reflow,
-                          breakpoints: overrideSlots != null
-                              ? null
-                              : {0: 4, 600: 6, 900: 8},
-                          itemBuilder: _buildCard,
-                        ),
-                      ),
-                      SliverList(
-                        delegate: SliverChildBuilderDelegate(
-                          (context, index) => ListTile(
-                            leading: CircleAvatar(
-                              backgroundColor:
-                                  theme.colorScheme.primaryContainer,
-                              child: Text(
-                                '$index',
-                                style: TextStyle(
-                                  color: theme.colorScheme.onPrimaryContainer,
-                                ),
-                              ),
-                            ),
-                            title: Text('Subsequent List Item $index'),
-                            subtitle: const Text(
-                              'Rendered natively alongside the grid sliver',
-                            ),
-                          ),
-                          childCount: 15,
-                        ),
-                      ),
-                    ],
+                      childCount: 15,
+                    ),
                   ),
-                ),
-                if (minimap) _buildMinimapOverlay(),
-              ],
-            );
-          },
+                ],
+              ),
+            ),
+            if (minimap) _buildMinimapOverlay(),
+          ],
         );
       },
     );
@@ -956,9 +965,11 @@ class _DashboardPageState extends State<DashboardPage> {
 
   Widget _buildMinimapOverlay() {
     final theme = Theme.of(context);
-    return ValueListenableBuilder<bool>(
-      valueListenable: useSliverDemo,
-      builder: (context, sliverMode, _) {
+    return ListenableBuilder(
+      listenable: Listenable.merge([useSliverDemo, enableImpactPreview]),
+      builder: (context, _) {
+        final sliverMode = useSliverDemo.value;
+        final impactPreviewEnabled = enableImpactPreview.value;
         final activeScrollController = sliverMode
             ? sliverScrollController
             : standardScrollController;
@@ -989,7 +1000,9 @@ class _DashboardPageState extends State<DashboardPage> {
                       .withValues(alpha: 0.8),
                   itemColor: theme.colorScheme.primary,
                   staticItemColor: theme.colorScheme.outline,
-                  displacedItemColor: theme.colorScheme.tertiary,
+                  displacedItemColor: impactPreviewEnabled
+                      ? theme.colorScheme.tertiary
+                      : null,
                   viewportColor: theme.colorScheme.primary.withValues(
                     alpha: 0.2,
                   ),
@@ -1020,78 +1033,13 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 }
 
-/// Utility builder combining two ValueListenables.
-class ValueListenableBuilder2<A, B> extends StatelessWidget {
-  const ValueListenableBuilder2(
-    this.first,
-    this.second, {
-    required this.builder,
-    super.key,
-  });
-
-  final ValueListenable<A> first;
-  final ValueListenable<B> second;
-  final Widget Function(BuildContext context, A a, B b, Widget? child) builder;
-
-  @override
-  Widget build(BuildContext context) {
-    return ValueListenableBuilder<A>(
-      valueListenable: first,
-      builder: (context, a, _) {
-        return ValueListenableBuilder<B>(
-          valueListenable: second,
-          builder: (context, b, _) {
-            return builder(context, a, b, null);
-          },
-        );
-      },
-    );
-  }
-}
-
-/// Utility builder combining three ValueListenables inside standard build context trees.
-class ValueListenableBuilder3<A, B, C> extends StatelessWidget {
-  const ValueListenableBuilder3(
-    this.first,
-    this.second,
-    this.third, {
-    required this.builder,
-    super.key,
-  });
-
-  final ValueListenable<A> first;
-  final ValueListenable<B> second;
-  final ValueListenable<C> third;
-  final Widget Function(BuildContext context, A a, B b, C c, Widget? child)
-  builder;
-
-  @override
-  Widget build(BuildContext context) {
-    return ValueListenableBuilder<A>(
-      valueListenable: first,
-      builder: (context, a, _) {
-        return ValueListenableBuilder<B>(
-          valueListenable: second,
-          builder: (context, b, _) {
-            return ValueListenableBuilder<C>(
-              valueListenable: third,
-              builder: (context, c, _) {
-                return builder(context, a, b, c, null);
-              },
-            );
-          },
-        );
-      },
-    );
-  }
-}
-
 class _ConfigPanel extends StatelessWidget {
   const _ConfigPanel({
     required this.controller,
     required this.jsonController,
     required this.isEditing,
     required this.showMinimap,
+    required this.enableImpactPreview,
     required this.useSliverDemo,
     required this.useDragHandlesOnly,
     required this.blockSectionCollision,
@@ -1114,6 +1062,7 @@ class _ConfigPanel extends StatelessWidget {
   final TextEditingController jsonController;
   final ValueNotifier<bool> isEditing;
   final ValueNotifier<bool> showMinimap;
+  final ValueNotifier<bool> enableImpactPreview;
   final ValueNotifier<bool> useSliverDemo;
   final ValueNotifier<bool> useDragHandlesOnly;
   final ValueNotifier<bool> blockSectionCollision;
@@ -1148,6 +1097,39 @@ class _ConfigPanel extends StatelessWidget {
             ),
           ),
           const Divider(),
+          SizedBox(
+            width: double.infinity,
+            child: Card(
+              elevation: 0,
+              color: theme.colorScheme.surfaceContainerHigh,
+              child: Padding(
+                padding: const EdgeInsets.all(10.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '💡 Keyboard Shortcuts:',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                        color: theme.colorScheme.primary,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '• Shift + Click: Multi-select tiles\n'
+                      '• Ctrl + Drag: Duplicate tile\n'
+                      '• Space / Arrows: A11y keyboard moves',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
           const _SectionTitle('Visual Modes & Structures'),
           _SwitchTile(
             title: 'Edit Mode (Draggable/Resizable)',
@@ -1159,7 +1141,7 @@ class _ConfigPanel extends StatelessWidget {
             notifier: enableSlotTapToAdd,
           ),
           _SwitchTile(
-            title: 'Alt / Option + drag duplicates a tile (onCloneRequested)',
+            title: 'Ctrl + drag duplicates a tile (onCloneRequested)',
             notifier: enableAltDragClone,
           ),
           _SwitchTile(
@@ -1173,6 +1155,10 @@ class _ConfigPanel extends StatelessWidget {
           _SwitchTile(
             title: 'Render Interactive Mini-Map',
             notifier: showMinimap,
+          ),
+          _SwitchTile(
+            title: 'Highlight displaced tiles on drag (Impact Preview)',
+            notifier: enableImpactPreview,
           ),
           const SizedBox(height: 10),
           Text(

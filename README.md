@@ -289,7 +289,7 @@ costs exactly one snapshot, not 120.
 IconButton(
   icon: const Icon(Icons.undo),
   onPressed: controller.canUndo.watch(context)
-      ? () => unawaited(controller.undo())
+      ? () => controller.undo()
       : null,
 );
 
@@ -302,24 +302,18 @@ controller.setMaxHistoryLength(50); // default: 30 (throws when negative)
 
 #### Opting out entirely
 
-Pass `maxHistoryLength: 0` if you do not want undo/redo. This is a hard
-guarantee, not a hint: no history beacon is created, no layout snapshot is
-copied, and no removed item — nor its `extra` map — is retained past its own
-removal. A completed transaction costs one integer comparison.
+Layout history is enabled by default (30 steps, negligible ~15KB memory footprint). 
+Pass `maxHistoryLength: 0` if you wish to disable history tracking entirely for zero memory usage.
 
 ```dart
 final controller = DashboardController(maxHistoryLength: 0);
+controller.setMaxHistoryLength(0);  // Disable history at runtime
+controller.setMaxHistoryLength(30); // Re-enable history (starts a fresh stack)
 ```
 
 `canUndo` and `canRedo` stay `false`, `undo()` / `redo()` return `false`, and
 `clearHistory()` is a no-op. Everything else, `onLayoutChanged` included,
 behaves exactly as before.
-
-Note that `1` is not the same thing: the stack exists, holds the current state
-and pays the per-transaction copy, it simply has nothing to undo to. The switch
-can be flipped at runtime with `setMaxHistoryLength(0)`; turning it back on
-starts a fresh stack, since the states that occurred while it was off were
-never recorded.
 
 #### Business-logic hooks
 

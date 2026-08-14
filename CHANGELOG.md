@@ -1,5 +1,7 @@
 ## 2.5.0
 
+**No API breaking changes.**
+
 ### Added
 
 - **Native Undo / Redo layout history (`DashboardController`).** The controller
