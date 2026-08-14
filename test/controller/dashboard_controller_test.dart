@@ -1,3 +1,5 @@
+import 'dart:ui' show PointerDeviceKind;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
@@ -9,6 +11,8 @@ import 'package:sliver_dashboard/src/models/layout_item.dart';
 import 'package:sliver_dashboard/src/view/dashboard.dart';
 import 'package:sliver_dashboard/src/view/resize_handle.dart';
 import 'package:sliver_dashboard/src/view/sliver_dashboard.dart';
+
+import '../test_helpers.dart' show runOnDesktop;
 
 //
 // ignore_for_file: cascade_invocations
@@ -2578,5 +2582,53 @@ void main() {
     await tester.pump();
     expect(taps.length, 2);
     expect(render.maxRows, isNull);
+  });
+
+  testWidgets('onDragEnd under CompactType.none resets moved flag on all items', (tester) async {
+    await runOnDesktop(() async {
+      final controller = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: const [
+          LayoutItem(id: 'a', x: 0, y: 0, w: 1, h: 1),
+          LayoutItem(id: 'b', x: 0, y: 1, w: 1, h: 1),
+        ],
+      )..setEditMode(true);
+      addTearDown(controller.dispose);
+      controller.setCompactionType(CompactType.none);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Dashboard<String>(
+              controller: controller,
+              itemBuilder: (context, item) => Text(item.id),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final gesture = await tester.startGesture(
+        tester.getCenter(find.text('a')),
+        kind: PointerDeviceKind.mouse,
+      );
+      await tester.pump();
+      await gesture.moveBy(const Offset(0, 100));
+      await tester.pump();
+
+      // During drag, the engine marks moved items as moved: true
+      expect(controller.layout.value.any((i) => i.moved), isTrue);
+
+      // Finish drag
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      // After drop under CompactType.none, all items MUST have moved == false
+      expect(
+        controller.layout.value.every((i) => !i.moved),
+        isTrue,
+        reason: 'onDragEnd under CompactType.none must clear moved flag on all items',
+      );
+    });
   });
 }

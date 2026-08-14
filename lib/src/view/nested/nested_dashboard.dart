@@ -77,6 +77,7 @@ class NestedDashboard extends StatefulWidget {
     this.sectionHeaderBuilder,
     this.crossGridDragOut = true,
     this.acceptCrossGridItems = true,
+    this.onCloneRequested,
     super.key,
   }) : assert(
           (itemBuilder != null ? 1 : 0) +
@@ -204,6 +205,16 @@ class NestedDashboard extends StatefulWidget {
   /// Whether this nested grid accepts items dragged from other grids of the
   /// same [DashboardNestedScope].
   final bool acceptCrossGridItems;
+
+  /// Produces the duplicate of a tile of THIS nested grid dragged with the
+  /// clone modifier held (`Alt` / `Option` by default).
+  ///
+  /// Cloning is an in-grid operation, so it is configured per grid like the
+  /// drag callbacks above. Falls back to
+  /// `DashboardNestedScope.onCloneRequested` when null, which is usually the
+  /// better place for a tree of grids: that handler receives the grid
+  /// controller and can branch on it. See [Dashboard.onCloneRequested].
+  final DashboardCloneRequestCallback? onCloneRequested;
 
   @override
   State<NestedDashboard> createState() => _NestedDashboardState();
@@ -448,6 +459,7 @@ class _NestedDashboardState extends State<NestedDashboard> {
           sectionHeaderBuilder: widget.sectionHeaderBuilder,
           crossGridDragOut: widget.crossGridDragOut,
           acceptCrossGridItems: widget.acceptCrossGridItems,
+          onCloneRequested: widget.onCloneRequested,
         );
       },
     );

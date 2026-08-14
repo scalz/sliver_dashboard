@@ -70,6 +70,7 @@ class Dashboard<T extends Object> extends StatefulWidget {
     this.fillViewport = true,
     this.animateReflow = false,
     this.reflowDuration = const Duration(milliseconds: 150),
+    this.onCloneRequested,
     super.key,
   }) : assert(
           (itemBuilder != null ? 1 : 0) +
@@ -250,6 +251,21 @@ class Dashboard<T extends Object> extends StatefulWidget {
   /// Duration of a single tile slide when [animateReflow] is true.
   final Duration reflowDuration;
 
+  /// Produces the duplicate of a tile dragged with the clone modifier held
+  /// (`Alt` / `Option` by default, see `DashboardShortcuts.cloneKeys`).
+  ///
+  /// **The feature is off until this callback is registered.** With no
+  /// callback the modifier is ignored and an Alt+drag is a plain move: only
+  /// the application can mint an id and decide what duplicating one of its
+  /// widgets means.
+  ///
+  /// A plain Alt+CLICK never duplicates anything — the duplicate is created
+  /// on the first pointer movement, inserted at the source's own coordinates,
+  /// and the drag continues on it while the source stays put. Returning
+  /// `null` cancels the duplication and the gesture degrades to a plain move.
+  /// See [DashboardOverlay.onCloneRequested].
+  final DashboardCloneRequestCallback? onCloneRequested;
+
   @override
   State<Dashboard<T>> createState() => _DashboardState<T>();
 }
@@ -341,6 +357,7 @@ class _DashboardState<T extends Object> extends State<Dashboard<T>> {
       dragStartGesture: widget.dragStartGesture,
       crossGridDragOut: widget.crossGridDragOut,
       acceptCrossGridItems: widget.acceptCrossGridItems,
+      onCloneRequested: widget.onCloneRequested,
 
       // Pass layout params directly to Overlay so it can render the background grid.
       gridStyle: widget.gridStyle,

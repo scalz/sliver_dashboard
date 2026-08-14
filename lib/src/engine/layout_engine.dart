@@ -397,13 +397,18 @@ class NoCompactor extends CompactorDelegate {
     // We just ensure no overlaps if requested.
     if (allowOverlap) return List.from(layout);
 
-    // We use vertical resolution by default for "None" to prevent stacking
-    return _resolveCollisionsDefault(layout, CompactType.vertical);
+    return resolveCollisions(layout, cols);
   }
 
   @override
   List<LayoutItem> resolveCollisions(List<LayoutItem> layout, int cols) {
-    return _resolveCollisionsDefault(layout, CompactType.vertical);
+    // We use vertical resolution by default for "None" to prevent stacking
+    final resolved = _resolveCollisionsDefault(layout, CompactType.vertical);
+
+    return [
+      for (final item in resolved)
+        if (item.moved) item.copyWith(moved: false) else item,
+    ]..sort((a, b) => a.id.compareTo(b.id));
   }
 }
 

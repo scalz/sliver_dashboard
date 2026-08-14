@@ -37,6 +37,10 @@ class DashboardShortcuts {
       LogicalKeyboardKey.metaLeft,
       LogicalKeyboardKey.metaRight,
     ],
+    this.cloneKeys = const [
+      LogicalKeyboardKey.altLeft,
+      LogicalKeyboardKey.altRight,
+    ],
   });
 
   /// Default shortcuts configuration.
@@ -66,4 +70,18 @@ class DashboardShortcuts {
   /// Keys held down during a click to trigger multi-selection.
   /// Defaults to Shift, Control, and Meta (Command) keys.
   final List<LogicalKeyboardKey> multiSelectKeys;
+
+  /// Keys held down when a drag starts to CLONE the tile instead of moving
+  /// it. Defaults to the `Alt` / `Option` keys.
+  ///
+  /// Only consulted when a clone callback is registered (`onCloneRequested`
+  /// on the dashboard or on the enclosing `DashboardNestedScope`); with no
+  /// callback the modifier is ignored and the drag is a plain move.
+  ///
+  /// **Must not overlap [multiSelectKeys].** They are read from the same
+  /// pointer-down event, so a key listed in both would toggle the selection
+  /// AND request a clone. [multiSelectKeys] wins at runtime (a selection
+  /// gesture is never turned into a duplication), and an overlapping
+  /// configuration trips an assertion in debug builds.
+  final List<LogicalKeyboardKey> cloneKeys;
 }

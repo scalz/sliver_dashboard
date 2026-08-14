@@ -25,6 +25,10 @@
     taken under.
 - **Displaced Item Highlighting ("Impact Preview"):** Added `displacedColor` and `displacedDecoration` to `DashboardItemStyle`. Secondary items displaced by push cascades during an active drag interaction now render a visual highlight, clearing automatically upon drop.
 - **Minimap Displaced Item Highlighting**: Added `displacedItemColor` to `MinimapStyle`. Displaced items during an active drag cascade are rendered in a dedicated batched path on the minimap.
+- **Duplicate on Drag (`Alt` / `Option` + drag):** Hold `Alt` / `Option` when dragging a tile to pull a copy out while leaving the original in place.
+  - **New Callback:** Added `onCloneRequested` (`DashboardCloneRequestCallback`) to `Dashboard`, `DashboardOverlay`, `NestedDashboard`, and `DashboardNestedScope`. Return a cloned `LayoutItem` with a new ID, or `null` to degrade to a plain move.
+  - **Configurable Shortcut:** Added `DashboardShortcuts.cloneKeys` (defaults to `altLeft` / `altRight`).
+  - **Opt-In:** Active only when `onCloneRequested` is provided. Alt+click without drag does not trigger duplication or history recording.
 
 ### Notes
 
@@ -36,6 +40,13 @@
 - `DashboardController` is an abstract interface and gained 11 members. Code
   that `implements DashboardController` by hand must be updated; `mocktail`
   mocks are unaffected.
+- An Alt+drag duplication records **two** history entries — the insertion, then
+  the drop — because `addItem` is itself a transactional boundary. Undoing the
+  gesture therefore takes two `undo()` calls: the first returns the copy to the
+  cell it appeared on, the second removes it.
+- Duplication is strictly in-grid: the copy is created in the source's own grid
+  before the drag starts, and can then be dragged across grids like any other
+  tile.
 
 ## 2.4.0
 
