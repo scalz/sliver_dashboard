@@ -36,6 +36,8 @@ class DashboardItemStyle {
     this.borderRadius,
     this.nestTargetColor,
     this.nestTargetDecoration,
+    this.displacedColor,
+    this.displacedDecoration,
   });
 
   /// The decoration to paint behind the child when the item has focus.
@@ -62,6 +64,14 @@ class DashboardItemStyle {
   /// target. Takes precedence over [nestTargetColor].
   final BoxDecoration? nestTargetDecoration;
 
+  /// Convenience color for border highlight when this item is displaced by a push cascade.
+  /// Ignored if [displacedDecoration] is provided.
+  final Color? displacedColor;
+
+  /// Full decoration used when this item is displaced by a push cascade.
+  /// Takes precedence over [displacedColor].
+  final BoxDecoration? displacedDecoration;
+
   /// Default style
   static const DashboardItemStyle defaultStyle = DashboardItemStyle(
     focusColor: Colors.blueAccent,
@@ -77,6 +87,8 @@ class DashboardItemStyle {
     BorderRadius? borderRadius,
     Color? nestTargetColor,
     BoxDecoration? nestTargetDecoration,
+    Color? displacedColor,
+    BoxDecoration? displacedDecoration,
   }) {
     return DashboardItemStyle(
       focusDecoration: focusDecoration ?? this.focusDecoration,
@@ -85,8 +97,36 @@ class DashboardItemStyle {
       borderRadius: borderRadius ?? this.borderRadius,
       nestTargetColor: nestTargetColor ?? this.nestTargetColor,
       nestTargetDecoration: nestTargetDecoration ?? this.nestTargetDecoration,
+      displacedColor: displacedColor ?? this.displacedColor,
+      displacedDecoration: displacedDecoration ?? this.displacedDecoration,
     );
   }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is DashboardItemStyle &&
+        other.focusDecoration == focusDecoration &&
+        other.focusColor == focusColor &&
+        other.activeColor == activeColor &&
+        other.borderRadius == borderRadius &&
+        other.nestTargetColor == nestTargetColor &&
+        other.nestTargetDecoration == nestTargetDecoration &&
+        other.displacedColor == displacedColor &&
+        other.displacedDecoration == displacedDecoration;
+  }
+
+  @override
+  int get hashCode => Object.hash(
+        focusDecoration,
+        focusColor,
+        activeColor,
+        borderRadius,
+        nestTargetColor,
+        nestTargetDecoration,
+        displacedColor,
+        displacedDecoration,
+      );
 }
 
 /// Defines the position of the Trash bin in the Stack.
@@ -126,6 +166,19 @@ class TrashPosition {
       bottom: bottom ?? this.bottom,
     );
   }
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is TrashPosition &&
+          runtimeType == other.runtimeType &&
+          left == other.left &&
+          top == other.top &&
+          right == other.right &&
+          bottom == other.bottom;
+
+  @override
+  int get hashCode => Object.hash(left, top, right, bottom);
 }
 
 /// Defines the layout and animation behavior of the Trash bin.
@@ -167,4 +220,15 @@ class TrashLayout {
     visible: TrashPosition(left: 0, top: 0, bottom: 0),
     hidden: TrashPosition(left: -200, top: 0, bottom: 0),
   );
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is TrashLayout &&
+          runtimeType == other.runtimeType &&
+          visible == other.visible &&
+          hidden == other.hidden;
+
+  @override
+  int get hashCode => Object.hash(visible, hidden);
 }

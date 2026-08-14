@@ -23,6 +23,8 @@
     pushes exactly one snapshot. Snapshots keep complete `LayoutItem`
     instances, `extra` metadata included, and carry the column count they were
     taken under.
+- **Displaced Item Highlighting ("Impact Preview"):** Added `displacedColor` and `displacedDecoration` to `DashboardItemStyle`. Secondary items displaced by push cascades during an active drag interaction now render a visual highlight, clearing automatically upon drop.
+- **Minimap Displaced Item Highlighting**: Added `displacedItemColor` to `MinimapStyle`. Displaced items during an active drag cascade are rendered in a dedicated batched path on the minimap.
 
 ### Notes
 

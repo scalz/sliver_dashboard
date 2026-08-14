@@ -734,6 +734,7 @@ class _DashboardPageState extends State<DashboardPage> {
                         focusColor: theme.colorScheme.primary,
                         activeColor: theme.colorScheme.secondary,
                         borderRadius: BorderRadius.circular(12),
+                        displacedColor: Colors.green,
                       ),
                       trashLayout: const TrashLayout(
                         visible: TrashPosition(
@@ -944,6 +945,7 @@ class _DashboardPageState extends State<DashboardPage> {
                       .withValues(alpha: 0.8),
                   itemColor: theme.colorScheme.primary,
                   staticItemColor: theme.colorScheme.outline,
+                  displacedItemColor: theme.colorScheme.tertiary,
                   viewportColor: theme.colorScheme.primary.withValues(
                     alpha: 0.2,
                   ),

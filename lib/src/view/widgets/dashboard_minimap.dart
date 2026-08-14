@@ -123,6 +123,8 @@ class DashboardMinimap extends StatelessWidget {
     final layout = controller.layout.watch(context);
     final slotCount = controller.slotCount.watch(context);
     final scrollDirection = controller.scrollDirection.watch(context);
+    final isDragging = controller.isDragging.watch(context);
+    final selectedItemIds = controller.selectedItemIds.watch(context);
 
     // Rebuild when scroll controller attaches/detaches to get viewport dimensions
     return AnimatedBuilder(
@@ -140,7 +142,7 @@ class DashboardMinimap extends StatelessWidget {
         maxX = max(maxX, 1);
         maxY = max(maxY, 1);
 
-        // Calculate Unit Sizes & Spacing Ratio ---
+        // Calculate Unit Sizes & Spacing Ratio
         double unitWidth;
         double unitHeight;
 
@@ -300,6 +302,8 @@ class DashboardMinimap extends StatelessWidget {
                         size: Size(drawnWidth, drawnHeight),
                         painter: _MinimapItemsPainter(
                           layout: layout,
+                          isDragging: isDragging,
+                          selectedItemIds: selectedItemIds,
                           style: style,
                           scale: scale,
                           unitWidth: unitWidth,
@@ -419,6 +423,8 @@ class DashboardMinimap extends StatelessWidget {
 class _MinimapItemsPainter extends CustomPainter {
   _MinimapItemsPainter({
     required this.layout,
+    required this.isDragging,
+    required this.selectedItemIds,
     required this.style,
     required this.scale,
     required this.unitWidth,
@@ -429,6 +435,8 @@ class _MinimapItemsPainter extends CustomPainter {
   });
 
   final List<LayoutItem> layout;
+  final bool isDragging;
+  final Set<String> selectedItemIds;
   final MinimapStyle style;
   final double scale;
   final double unitWidth;
@@ -446,6 +454,7 @@ class _MinimapItemsPainter extends CustomPainter {
     // which dominates minimap paint time on the web renderers.
     final dynamicPath = Path();
     final staticPath = Path();
+    final displacedPath = Path();
     final radius = Radius.circular(style.itemBorderRadius);
 
     for (final item in layout) {
@@ -467,17 +476,33 @@ class _MinimapItemsPainter extends CustomPainter {
       }
 
       final rrect = RRect.fromRectAndRadius(Rect.fromLTWH(x, y, w, h), radius);
-      (item.isStatic ? staticPath : dynamicPath).addRRect(rrect);
+
+      final isSelected = selectedItemIds.contains(item.id);
+      final isDisplaced = isDragging && item.moved && !isSelected;
+
+      if (item.isStatic) {
+        staticPath.addRRect(rrect);
+      } else if (isDisplaced && style.displacedItemColor != null) {
+        displacedPath.addRRect(rrect);
+      } else {
+        dynamicPath.addRRect(rrect);
+      }
     }
 
     canvas
       ..drawPath(dynamicPath, Paint()..color = style.itemColor)
       ..drawPath(staticPath, Paint()..color = style.staticItemColor);
+
+    if (style.displacedItemColor != null) {
+      canvas.drawPath(displacedPath, Paint()..color = style.displacedItemColor!);
+    }
   }
 
   @override
   bool shouldRepaint(covariant _MinimapItemsPainter oldDelegate) {
     return !identical(oldDelegate.layout, layout) ||
+        oldDelegate.isDragging != isDragging ||
+        !setEquals(oldDelegate.selectedItemIds, selectedItemIds) ||
         oldDelegate.style != style ||
         oldDelegate.scale != scale ||
         oldDelegate.unitWidth != unitWidth ||
@@ -517,7 +542,7 @@ class _MinimapViewportPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    // Reason: two Paint objects for the whole layer regardless of the number
+    // Two Paint objects for the whole layer regardless of the number
     // of indicators; fill/stroke settings are mutated per indicator.
     final fill = Paint();
     final stroke = Paint()..style = PaintingStyle.stroke;

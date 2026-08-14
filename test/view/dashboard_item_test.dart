@@ -474,4 +474,127 @@ void main() {
       );
     });
   });
+
+  group('DashboardItemStyle Equality & copyWith Tests', () {
+    test('copyWith handles displacedColor and displacedDecoration', () {
+      const original = DashboardItemStyle(
+        focusColor: Colors.blue,
+      );
+
+      final customDecoration = BoxDecoration(
+        border: Border.all(color: Colors.purple, width: 5),
+      );
+
+      final updated = original.copyWith(
+        displacedColor: Colors.amber,
+        displacedDecoration: customDecoration,
+      );
+
+      expect(updated.focusColor, Colors.blue);
+      expect(updated.displacedColor, Colors.amber);
+      expect(updated.displacedDecoration, customDecoration);
+    });
+
+    test('operator == and hashCode respect displaced parameters', () {
+      const style1 = DashboardItemStyle(
+        displacedColor: Colors.amber,
+      );
+      const style2 = DashboardItemStyle(
+        displacedColor: Colors.amber,
+      );
+      const style3 = DashboardItemStyle(
+        displacedColor: Colors.red,
+      );
+
+      expect(style1, equals(style2));
+      expect(style1.hashCode, equals(style2.hashCode));
+      expect(style1, isNot(equals(style3)));
+    });
+
+    test('operator == reaches displacedDecoration when all preceding fields match', () {
+      final deco1 = BoxDecoration(border: Border.all(color: Colors.red));
+      final deco2 = BoxDecoration(border: Border.all(color: Colors.blue));
+
+      const styleBase = DashboardItemStyle(
+        displacedColor: Colors.amber,
+      );
+
+      final styleA = styleBase.copyWith(displacedDecoration: deco1);
+      final styleB = styleBase.copyWith(displacedDecoration: deco1);
+      expect(styleA == styleB, isTrue, reason: 'Evaluates displacedDecoration equality');
+
+      final styleC = styleBase.copyWith(displacedDecoration: deco2);
+      expect(styleA == styleC, isFalse, reason: 'Evaluates displacedDecoration inequality');
+    });
+  });
+
+  group('Displaced Item Highlighting Widget Tests', () {
+    testWidgets(
+      'Displaced item renders displacedDecoration/displacedColor during drag and clears on drop',
+      (tester) async {
+        final controller = DashboardController(
+          initialSlotCount: 4,
+          initialLayout: const [
+            LayoutItem(id: 'item_a', x: 0, y: 0, w: 2, h: 2),
+            LayoutItem(id: 'item_b', x: 0, y: 2, w: 2, h: 2),
+          ],
+        );
+        addTearDown(controller.dispose);
+        controller.setEditMode(true);
+
+        const displacedBorderColor = Colors.amber;
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: SizedBox(
+                width: 400,
+                height: 800,
+                child: Dashboard<String>(
+                  controller: controller,
+                  dragStartGesture: DragStartGesture.tap,
+                  itemStyle: const DashboardItemStyle(
+                    displacedColor: displacedBorderColor,
+                  ),
+                  itemBuilder: (context, item) => Text(
+                    item.id,
+                    key: ValueKey('text_${item.id}'),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        expect(controller.layout.value.firstWhere((i) => i.id == 'item_b').moved, false);
+
+        final itemAFinder = find.byKey(const ValueKey('text_item_a'));
+        final gesture = await tester.startGesture(tester.getCenter(itemAFinder));
+        await tester.pump();
+
+        await gesture.moveBy(const Offset(0, 250));
+        await tester.pump();
+
+        final displacedItemB = controller.layout.value.firstWhere((i) => i.id == 'item_b');
+        expect(displacedItemB.moved, true);
+
+        final containers = tester.widgetList<Container>(find.byType(Container));
+        final hasDisplacedBorder = containers.any((container) {
+          final decoration = container.decoration;
+          if (decoration is BoxDecoration && decoration.border is Border) {
+            final border = decoration.border as Border?;
+            return border?.top.color == displacedBorderColor && border?.top.width == 3;
+          }
+          return false;
+        });
+        expect(hasDisplacedBorder, true);
+
+        await gesture.up();
+        await tester.pumpAndSettle();
+
+        expect(controller.layout.value.firstWhere((i) => i.id == 'item_b').moved, false);
+      },
+    );
+  });
 }

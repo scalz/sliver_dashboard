@@ -351,6 +351,9 @@ class _DashboardItemState extends State<DashboardItem>
     // Active means "Part of the group being dragged"
     final isActive = isDragging && isSelected;
 
+    // Displaced items are secondary cards pushed by a collision cascade during drag.
+    final isDisplaced = isDragging && !isSelected && !widget.isFeedback && widget.item.moved;
+
     // Nested grids (subGridDynamic): highlight this item while it is armed as
     // a dynamic nested-grid host. Watching here only rebuilds the light item
     // shells; the heavy content stays cached behind its RepaintBoundary.
@@ -365,6 +368,17 @@ class _DashboardItemState extends State<DashboardItem>
     final style = widget.itemStyle;
 
     final shortcuts = _shortcutsFor(shortcutsConfig, isActive: isActive);
+
+    final decoration = _resolveDecoration(
+      style: style,
+      isNestHovered: isNestHovered,
+      isDisplaced: isDisplaced,
+      isEditing: widget.isEditing,
+      isFocused: _isFocused,
+      isSelected: isSelected,
+      isActive: isActive,
+      context: context,
+    );
 
     // Build the Interaction Shell
     // This part is rebuilt every time focus changes or active state changes.
@@ -403,29 +417,7 @@ class _DashboardItemState extends State<DashboardItem>
             // Hide if dragged AND not the feedback
             opacity: (isActive && !widget.isFeedback) ? 0.0 : 1.0,
             child: Container(
-              decoration: isNestHovered
-                  ? (style.nestTargetDecoration ??
-                      BoxDecoration(
-                        border: Border.all(
-                          color: style.nestTargetColor ?? style.activeColor ?? Colors.deepOrange,
-                          width: 4,
-                        ),
-                        borderRadius: style.borderRadius,
-                      ))
-                  : widget.isEditing &&
-                          (_isFocused ||
-                              isSelected) // Show border if editMode && (focused OR selected)
-                      ? (style.focusDecoration ??
-                          BoxDecoration(
-                            border: Border.all(
-                              color: isActive
-                                  ? (style.activeColor ?? Colors.deepOrange)
-                                  : (style.focusColor ?? Theme.of(context).primaryColor),
-                              width: (isActive || _isFocused) ? 4 : 3,
-                            ),
-                            borderRadius: style.borderRadius,
-                          ))
-                      : null,
+              decoration: decoration,
               child: DashboardItemWrapper(
                 item: widget.item,
                 child: _cachedWidget!, // Use the cached heavy content
@@ -435,6 +427,54 @@ class _DashboardItemState extends State<DashboardItem>
         ),
       ),
     );
+  }
+
+  BoxDecoration? _resolveDecoration({
+    required DashboardItemStyle style,
+    required bool isNestHovered,
+    required bool isDisplaced,
+    required bool isEditing,
+    required bool isFocused,
+    required bool isSelected,
+    required bool isActive,
+    required BuildContext context,
+  }) {
+    if (isNestHovered) {
+      return style.nestTargetDecoration ??
+          BoxDecoration(
+            border: Border.all(
+              color: style.nestTargetColor ?? style.activeColor ?? Colors.deepOrange,
+              width: 4,
+            ),
+            borderRadius: style.borderRadius,
+          );
+    }
+
+    if (isDisplaced && (style.displacedDecoration != null || style.displacedColor != null)) {
+      return style.displacedDecoration ??
+          BoxDecoration(
+            border: Border.all(
+              color: style.displacedColor!,
+              width: 3,
+            ),
+            borderRadius: style.borderRadius,
+          );
+    }
+
+    if (isEditing && (isFocused || isSelected)) {
+      return style.focusDecoration ??
+          BoxDecoration(
+            border: Border.all(
+              color: isActive
+                  ? (style.activeColor ?? Colors.deepOrange)
+                  : (style.focusColor ?? Theme.of(context).primaryColor),
+              width: (isActive || isFocused) ? 4 : 3,
+            ),
+            borderRadius: style.borderRadius,
+          );
+    }
+
+    return null;
   }
 }
 

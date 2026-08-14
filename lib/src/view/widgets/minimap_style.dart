@@ -8,6 +8,7 @@ class MinimapStyle {
     this.backgroundColor = const Color(0xFFE0E0E0),
     this.itemColor = const Color(0xFF9E9E9E),
     this.staticItemColor = const Color(0xFF616161),
+    this.displacedItemColor,
     this.viewportColor = const Color(0x332196F3),
     this.viewportBorderColor = const Color(0xFF2196F3),
     this.itemBorderRadius = 2.0,
@@ -22,6 +23,10 @@ class MinimapStyle {
 
   /// The color of static items in the minimap.
   final Color staticItemColor;
+
+  /// The color of secondary items displaced by a push cascade during drag.
+  /// If null, uses [itemColor].
+  final Color? displacedItemColor;
 
   /// The fill color of the viewport rectangle (the visible area).
   final Color viewportColor;
@@ -47,6 +52,7 @@ class MinimapStyle {
           backgroundColor == other.backgroundColor &&
           itemColor == other.itemColor &&
           staticItemColor == other.staticItemColor &&
+          displacedItemColor == other.displacedItemColor &&
           viewportColor == other.viewportColor &&
           viewportBorderColor == other.viewportBorderColor &&
           itemBorderRadius == other.itemBorderRadius &&
@@ -57,6 +63,7 @@ class MinimapStyle {
         backgroundColor,
         itemColor,
         staticItemColor,
+        displacedItemColor,
         viewportColor,
         viewportBorderColor,
         itemBorderRadius,
