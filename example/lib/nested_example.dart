@@ -44,6 +44,7 @@ class _NestedExamplePageState extends State<NestedExamplePage> {
   final compactionType = ValueNotifier<CompactType>(CompactType.vertical);
   final subGridDynamic = ValueNotifier<bool>(false);
   final subGridDynamicSameGrid = ValueNotifier<bool>(false);
+  final restrictDrops = ValueNotifier<bool>(false);
 
   /// Slot span at or below which a folder collapses. Exposed in the panel to
   /// show that the breakpoint rule is entirely yours.
@@ -109,6 +110,7 @@ class _NestedExamplePageState extends State<NestedExamplePage> {
     compactionType.dispose();
     subGridDynamic.dispose();
     subGridDynamicSameGrid.dispose();
+    restrictDrops.dispose();
     miniThreshold.dispose();
     super.dispose();
   }
@@ -147,6 +149,66 @@ class _NestedExamplePageState extends State<NestedExamplePage> {
     final t = miniThreshold.value;
     return (item.w <= t || item.h <= t) ? _HostSize.mini : _HostSize.normal;
   }
+
+  /// Per-grid drop rules.
+  ///
+  /// One scope-wide predicate serves the whole tree; branching on
+  /// [targetGrid] is what expresses per-grid policy — there is no per-grid
+  /// override, because the rule is consulted while resolving WHICH grid is
+  /// under the pointer, before any grid owns the interaction.
+  ///
+  /// ### A rule needs TWO enforcement points, not one
+  /// `canAcceptItem` covers drags that enter a **mounted** sub-grid. It
+  /// cannot cover a drop onto a **closed folder tile**, because that runs
+  /// through `onItemDroppedOnHost` before the child grid exists — there is no
+  /// target controller to hand the predicate. In this demo the folders are
+  /// exactly that: host tiles in the root grid. Enforcing the rule only in
+  /// `canAcceptItem` would let every drop onto a folder through, which is the
+  /// most visible interaction here.
+  ///
+  /// So the rule lives in [_isDropAllowed] and is applied from both
+  /// [_canAcceptItem] and [_onItemDroppedOnHost]. That split is the point of
+  /// this example, not an accident of it.
+  ///
+  /// Two rules here, one per direction:
+  ///
+  /// * "projects" only takes tasks. Dropping a note over it does not get
+  ///   stuck: the refusal makes that sub-grid transparent, so the drag falls
+  ///   through to the root grid and the note lands there instead.
+  /// * "archive" is read-only. Nothing enters it, and because [sourceGrid] is
+  ///   part of the contract, nothing leaves it either — a rule the
+  ///   `(item, targetGrid)` pair alone could not express.
+  ///
+  /// Called on every pointer event over a candidate grid, so it stays to a
+  /// couple of identity checks and a prefix test. Anything that walks a
+  /// layout belongs behind a memo of your own, not here.
+  /// The business rule itself, independent of how a drop reaches a grid.
+  ///
+  /// Kept separate from [_canAcceptItem] because it has to be enforced at
+  /// **two** places — see the note on entry points above.
+  bool _isDropAllowed(
+    LayoutItem item,
+    DashboardController targetGrid,
+    DashboardController sourceGrid,
+  ) {
+    if (!restrictDrops.value) return true;
+
+    final archive = folders['archive'];
+    if (identical(sourceGrid, archive)) return false;
+    if (identical(targetGrid, archive)) return false;
+
+    if (identical(targetGrid, folders['projects'])) {
+      return item.id.startsWith('task');
+    }
+    return true;
+  }
+
+  /// Enforcement point 1: dragging INTO a mounted sub-grid.
+  bool _canAcceptItem(
+    LayoutItem item,
+    DashboardController targetGrid,
+    DashboardController sourceGrid,
+  ) => _isDropAllowed(item, targetGrid, sourceGrid);
 
   /// subGridDynamic: a dragged item was held over a plain note long enough
   /// to request turning it into a folder. We create its controller and flag
@@ -217,10 +279,27 @@ class _NestedExamplePageState extends State<NestedExamplePage> {
     final ids = dragged.map((i) => i.id).toSet()..remove(host.id);
     if (ids.isEmpty) return;
 
-    final moved = dragged.where((i) => ids.contains(i.id)).toList();
+    var moved = dragged.where((i) => ids.contains(i.id)).toList();
+
+    // Enforcement point 2. The child grid is not mounted here, so
+    // `canAcceptItem` never ran — this callback is where the same rule has to
+    // be applied for a drop onto a closed folder.
+    final refused = moved.where((i) => !_isDropAllowed(i, folder, sourceGrid));
+    if (refused.isNotEmpty) {
+      moved = moved
+          .where((i) => _isDropAllowed(i, folder, sourceGrid))
+          .toList();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          duration: const Duration(milliseconds: 1600),
+          content: Text('"${host.id}" refused ${refused.length} item(s)'),
+        ),
+      );
+      if (moved.isEmpty) return;
+    }
     // The items are back where the drag started — which may be ANOTHER grid
     // (a nested folder, for instance), hence sourceGrid rather than hostGrid.
-    sourceGrid.removeItems(ids.toList());
+    sourceGrid.removeItems(moved.map((i) => i.id).toList());
     // -1/-1 lets the engine auto-place them inside the folder.
     folder.addItems(moved.map((i) => i.copyWith(x: -1, y: -1)).toList());
 
@@ -245,6 +324,7 @@ class _NestedExamplePageState extends State<NestedExamplePage> {
       compactionType: compactionType,
       subGridDynamic: subGridDynamic,
       subGridDynamicSameGrid: subGridDynamicSameGrid,
+      restrictDrops: restrictDrops,
       miniThreshold: miniThreshold,
       onEditModeChanged: _applyEditMode,
       onCompactTypeChanged: _applyCompactType,
@@ -295,6 +375,7 @@ class _NestedExamplePageState extends State<NestedExamplePage> {
                       miniThreshold,
                       subGridDynamic,
                       subGridDynamicSameGrid,
+                      restrictDrops,
                     ]),
                     builder: (context, _) => DashboardNestedScope(
                       coordinator: coordinator,
@@ -303,6 +384,7 @@ class _NestedExamplePageState extends State<NestedExamplePage> {
                       onNestedGridRequested: _onNestedGridRequested,
                       onNestedGridRequestAbandoned: _onNestedGridAbandoned,
                       onItemDroppedOnHost: _onItemDroppedOnHost,
+                      canAcceptItem: _canAcceptItem,
                       child: Dashboard<String>(
                         // Remount on threshold change: the resolver's verdict
                         // depends on state OUTSIDE the item's dimensions, and
@@ -386,6 +468,7 @@ class _ConfigPanel extends StatelessWidget {
     required this.compactionType,
     required this.subGridDynamic,
     required this.subGridDynamicSameGrid,
+    required this.restrictDrops,
     required this.miniThreshold,
     required this.onEditModeChanged,
     required this.onCompactTypeChanged,
@@ -400,6 +483,7 @@ class _ConfigPanel extends StatelessWidget {
   final ValueNotifier<CompactType> compactionType;
   final ValueNotifier<bool> subGridDynamic;
   final ValueNotifier<bool> subGridDynamicSameGrid;
+  final ValueNotifier<bool> restrictDrops;
   final ValueNotifier<int> miniThreshold;
   final VoidCallback onEditModeChanged;
   final VoidCallback onCompactTypeChanged;
@@ -466,6 +550,12 @@ class _ConfigPanel extends StatelessWidget {
           _SwitchTile(
             title: 'subGridDynamicSameGrid (pause mid-drag over a sibling)',
             notifier: subGridDynamicSameGrid,
+          ),
+          _SwitchTile(
+            title:
+                'canAcceptItem: "projects" takes tasks only, '
+                '"archive" is read-only',
+            notifier: restrictDrops,
           ),
           const SizedBox(height: 8),
           const _SectionTitle('Compaction'),

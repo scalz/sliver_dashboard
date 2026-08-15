@@ -2963,7 +2963,7 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
         // could receive the item; a single-grid scope (e.g. opened purely for
         // subGridDynamicSameGrid) keeps the native drag, which also keeps the
         // trash flow alive.
-        coordinator.hasAnyTargetBesides(this) &&
+        coordinator.hasAnyTargetBesides(this, draggedItem: item) &&
         // The trash zone lives outside the sliver's paint bounds by
         // construction; starting an exit session there would cancel the trash
         // timers and make deletion unreachable (_checkTrash runs after this
@@ -2981,6 +2981,12 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
       probePoint,
       excludeSourceController: widget.controller,
       excludeItemId: itemId,
+      // Second `targetAt` call site: the session-entry probe. It must apply
+      // the same business filter as the in-session one, or a grid that
+      // refuses the item would still capture the handover on entry and only
+      // reject it on the next pointer event.
+      draggedItem: item,
+      sourceController: widget.controller,
     );
 
     // Ancestor handover requires a REAL exit. `targetAt` can resolve an
