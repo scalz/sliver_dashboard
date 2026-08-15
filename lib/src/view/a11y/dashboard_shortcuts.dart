@@ -41,6 +41,10 @@ class DashboardShortcuts {
       LogicalKeyboardKey.altLeft,
       LogicalKeyboardKey.altRight,
     ],
+    this.lassoModifier = const [
+      LogicalKeyboardKey.shiftLeft,
+      LogicalKeyboardKey.shiftRight,
+    ],
   });
 
   /// Default shortcuts configuration.
@@ -84,4 +88,24 @@ class DashboardShortcuts {
   /// gesture is never turned into a duplication), and an overlapping
   /// configuration trips an assertion in debug builds.
   final List<LogicalKeyboardKey> cloneKeys;
+
+  /// Keys that must be held on pointer-down over empty grid space for a
+  /// rubberband ("lasso") selection to be armed. Defaults to the `Shift`
+  /// keys.
+  ///
+  /// **Overlapping [multiSelectKeys] is legal and is the default.** The two
+  /// are read from the same pointer-down but answer different questions —
+  /// [multiSelectKeys] decides whether the lasso *adds to* the current
+  /// selection, this list decides whether it starts at all. To keep both
+  /// gestures reachable, a key that appears in both is treated as the
+  /// trigger only (the lasso replaces the selection) under
+  /// `modifierRequired`; hold a second, non-overlapping [multiSelectKeys]
+  /// key to get an additive lasso in that mode.
+  ///
+  /// Declared as plain [LogicalKeyboardKey]s rather than
+  /// [ShortcutActivator]s because it is evaluated against
+  /// `HardwareKeyboard.instance.logicalKeysPressed` during a pointer event,
+  /// where no `KeyEvent` exists to feed `ShortcutActivator.accepts`. Same
+  /// shape as [multiSelectKeys] and [cloneKeys].
+  final List<LogicalKeyboardKey> lassoModifier;
 }

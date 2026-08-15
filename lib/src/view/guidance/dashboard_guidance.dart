@@ -54,12 +54,18 @@ class DashboardGuidance {
     this.tapToResize = 'Tap and hold to resize',
     this.longPressToMove = 'Drag to move item',
     this.longPressToResize = 'Drag to resize',
+    this.lassoSelect = const InteractionGuidance(
+      SystemMouseCursors.precise,
+      'Drag over empty space to select items',
+    ),
 
     // Accessibility (Screen Readers)
     this.a11yGrab = _defaultA11yGrab,
     this.a11yDrop = _defaultA11yDrop,
     this.a11yMove = _defaultA11yMove,
     this.a11yCancel = 'Interaction cancelled. Item returned to original position.',
+    this.a11yLassoStart = 'Rectangle selection started. Drag to select items.',
+    this.a11yLassoEnd = _defaultA11yLassoEnd,
     this.semanticsHintGrab = 'Press Space to grab',
     this.semanticsHintDrop = 'Press Space to drop, Arrows to move',
   });
@@ -74,6 +80,9 @@ class DashboardGuidance {
   static String _defaultA11yDrop(int x, int y) => 'Item dropped at Row $y, Column $x.';
 
   static String _defaultA11yMove(int x, int y) => 'Row $y, Column $x';
+
+  static String _defaultA11yLassoEnd(int count) =>
+      count == 1 ? '1 item selected' : '$count items selected';
 
   // --- Visual Properties ---
 
@@ -110,6 +119,9 @@ class DashboardGuidance {
   /// Message on long-press for resizing an item (mobile).
   final String longPressToResize;
 
+  /// Cursor and message used for the rubberband ("lasso") selection.
+  final InteractionGuidance lassoSelect;
+
   // --- Accessibility Properties ---
 
   /// Message announced when an item is grabbed via keyboard.
@@ -129,4 +141,11 @@ class DashboardGuidance {
 
   /// Semantic hint when the item is grabbed.
   final String semanticsHintDrop;
+
+  /// Message announced when a rubberband ("lasso") selection starts.
+  final String a11yLassoStart;
+
+  /// Message announced when a rubberband selection is released, with the
+  /// resulting number of selected items.
+  final A11yCountMessageBuilder a11yLassoEnd;
 }

@@ -1,3 +1,64 @@
+**No API breaking changes.**
+
+### Added
+
+- **Rectangle / Lasso selection ("Rubberband"):** on desktop and web, drag over
+  empty grid space to select every tile the rectangle overlaps.
+  - **New `LassoStyle`** (`mode`, `fillColor`, `borderColor`, `borderWidth`)
+    and **new enum** `LassoSelectionMode` (`emptySpace`, `modifierRequired`,
+    `disabled`), with `LassoStyle.byDefault` and `LassoStyle.off`.
+  - **New `DashboardController.lassoStyle`**, settable like `shortcuts` and
+    `guidance`: `controller.lassoStyle = LassoStyle.off;`. The lasso is
+    interaction policy, not grid painting, so it is deliberately NOT part of
+    `GridStyle` — a dashboard that draws no background grid configures it the
+    same way as any other, and each grid of a nested tree carries its own
+    policy with no prop drilling.
+  - **New `DashboardController.lassoModifierHeld`** beacon, symmetric with
+    `swapModifierHeld`: written by `DashboardOverlay` (the only layer that
+    sees key events), read by applications that want a mode indicator. It is
+    what lets the lasso cursor appear on a key press that moved no pointer.
+  - **New `DashboardShortcuts.lassoModifier`** (defaults to `shiftLeft` /
+    `shiftRight`), a `List<LogicalKeyboardKey>` like `multiSelectKeys` and
+    `cloneKeys` — it is evaluated against the pressed-key set during a pointer
+    event, where no `KeyEvent` exists.
+  - **New `DashboardGuidance` fields**: `lassoSelect` (cursor + message,
+    default `SystemMouseCursors.precise`), `a11yLassoStart` and `a11yLassoEnd`
+    (`A11yCountMessageBuilder`). Announcements fire with or without guidance;
+    the cursor and the on-screen label require `guidance != null`.
+  - `LassoSelectionMode.disabled` restores the pre-2.5.0 behaviour of an
+    empty-space drag exactly, for applications that bind it themselves.
+  - Selection is previewed live during the drag, replaces the previous
+    selection by default, and is **additive** while a `multiSelectKeys` key is
+    held. Pure static tiles are never selected; section barriers are, matching
+    a plain click.
+  - Edge auto-scroll and mouse-wheel scrolling are supported: the anchor is
+    stored in grid-content space, so the rectangle stays pinned to the content.
+
+
+### Notes
+
+- The lasso is a pointer-device feature: it is never armed on Android or iOS,
+  where an empty-space drag scrolls the grid.
+- Tiles now carry an explicit `SystemMouseCursors.basic` floor. Every
+  MouseRegion inside a tile defers (`FocusableActionDetector` and
+  `GuidanceInteractor` both build one with no cursor), so the lasso's ancestor
+  region would otherwise have resolved as the cursor for tiles too. Anything
+  deeper — resize handles, application content — still wins.
+- A press on empty space that never moves is still a no-op — the rectangle
+  materializes on the first movement past the drag threshold, exactly like the
+  Alt+drag clone. Clicking the background does not clear the selection.
+- `GridStyle` gained `copyWith`, `==` and `hashCode`. It had none, which meant
+  the background painter's `shouldRepaint` compared it by identity; it now
+  short-circuits on value equality.
+- The guidance bubble was extracted from `GuidanceInteractor` into a shared
+  `GuidanceBubble`, so the lasso label is the same tooltip as the hover and
+  long-press messages rather than a second, subtly different style. No visual
+  change to existing guidance.
+- `lassoModifier` and `multiSelectKeys` overlap by default (both are `Shift`)
+  and that is intentional — unlike `cloneKeys`, no assertion forbids it. Under
+  `modifierRequired`, a key that is both counts as the trigger only, so a
+  replacing lasso stays reachable.
+
 ## 2.5.0
 
 **No API breaking changes.**

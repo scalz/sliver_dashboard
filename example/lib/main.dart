@@ -158,6 +158,10 @@ class _DashboardPageState extends State<DashboardPage> {
   final maxRows = ValueNotifier<int?>(null);
   final enableSlotTapToAdd = ValueNotifier<bool>(false);
   final enableAltDragClone = ValueNotifier<bool>(true);
+  final enableLassoGuidance = ValueNotifier<bool>(true);
+  final lassoMode = ValueNotifier<LassoSelectionMode>(
+    LassoSelectionMode.emptySpace,
+  );
 
   // null = Use Responsive Breakpoints. Non-null = Override with custom fixed slot count.
   final customSlotCount = ValueNotifier<int?>(null);
@@ -571,6 +575,8 @@ class _DashboardPageState extends State<DashboardPage> {
       maxRows: maxRows,
       enableSlotTapToAdd: enableSlotTapToAdd,
       enableAltDragClone: enableAltDragClone,
+      enableLassoGuidance: enableLassoGuidance,
+      lassoMode: lassoMode,
       customSlotCount: customSlotCount,
       compactionType: compactionType,
       resizeBehavior: resizeBehavior,
@@ -701,6 +707,36 @@ class _DashboardPageState extends State<DashboardPage> {
 
   int _cloneCounter = 0;
 
+  /// Grid style shared by both demos.
+  GridStyle _buildGridStyle(ThemeData theme) {
+    return GridStyle(
+      fillColor: theme.colorScheme.onSurface.withValues(alpha: 0.03),
+      handleColor: theme.colorScheme.primary,
+      lineColor: theme.colorScheme.onSurface.withValues(alpha: 0.08),
+      lineWidth: 1,
+    );
+  }
+
+  /// Pushes the rubberband ("lasso") configuration onto the controller.
+  ///
+  /// It lives there — next to `shortcuts` and `guidance` — rather than on
+  /// the widget, because it is interaction policy rather than grid painting.
+  void _syncLassoStyle(ThemeData theme) {
+    controller
+      ..lassoStyle = LassoStyle(
+        mode: lassoMode.value,
+        fillColor: theme.colorScheme.primary.withValues(alpha: 0.18),
+        borderColor: theme.colorScheme.primary,
+        borderWidth: 1.5,
+      )
+      // Guidance drives the lasso cursor (precise, over empty space) and the
+      // label drawn beside the rectangle. Screen-reader announcements fire
+      // either way.
+      ..guidance = enableLassoGuidance.value
+          ? DashboardGuidance.byDefault
+          : null;
+  }
+
   Widget _buildCard(BuildContext context, LayoutItem item) {
     final theme = Theme.of(context);
     final colorId = (item.extra?['clonedFrom'] as String?) ?? item.id;
@@ -729,6 +765,8 @@ class _DashboardPageState extends State<DashboardPage> {
         useDragHandlesOnly,
         showMinimap,
         animateReflow,
+        enableLassoGuidance,
+        lassoMode,
       ]),
       builder: (context, _) {
         final overrideSlots = customSlotCount.value;
@@ -738,6 +776,8 @@ class _DashboardPageState extends State<DashboardPage> {
         final handlesOnly = useDragHandlesOnly.value;
         final minimap = showMinimap.value;
         final reflow = animateReflow.value;
+
+        _syncLassoStyle(theme);
 
         return Stack(
           children: [
@@ -766,12 +806,7 @@ class _DashboardPageState extends State<DashboardPage> {
                   : {0: 4, 600: 6, 900: 8},
               itemBuilder: _buildCard,
               onWillDelete: _confirmDeletion,
-              gridStyle: GridStyle(
-                fillColor: theme.colorScheme.onSurface.withValues(alpha: 0.03),
-                handleColor: theme.colorScheme.primary,
-                lineColor: theme.colorScheme.onSurface.withValues(alpha: 0.08),
-                lineWidth: 1,
-              ),
+              gridStyle: _buildGridStyle(theme),
               itemStyle: DashboardItemStyle(
                 focusColor: theme.colorScheme.primary,
                 activeColor: theme.colorScheme.secondary,
@@ -809,6 +844,8 @@ class _DashboardPageState extends State<DashboardPage> {
         useDragHandlesOnly,
         enableImpactPreview,
         animateReflow,
+        enableLassoGuidance,
+        lassoMode,
       ]),
       builder: (context, _) {
         final slotTapEnabled = enableSlotTapToAdd.value;
@@ -818,6 +855,8 @@ class _DashboardPageState extends State<DashboardPage> {
         final reflow = animateReflow.value;
         final impactPreviewEnabled = enableImpactPreview.value;
         final overrideSlots = customSlotCount.value;
+
+        _syncLassoStyle(theme);
 
         return Stack(
           children: [
@@ -832,12 +871,7 @@ class _DashboardPageState extends State<DashboardPage> {
               // Same feature, wired on the raw overlay instead of the
               // high-level Dashboard widget.
               onCloneRequested: cloneEnabled ? _handleCloneRequested : null,
-              gridStyle: GridStyle(
-                fillColor: theme.colorScheme.onSurface.withValues(alpha: 0.03),
-                handleColor: theme.colorScheme.primary,
-                lineColor: theme.colorScheme.onSurface.withValues(alpha: 0.08),
-                lineWidth: 1,
-              ),
+              gridStyle: _buildGridStyle(theme),
               itemStyle: DashboardItemStyle(
                 focusColor: theme.colorScheme.primary,
                 activeColor: theme.colorScheme.secondary,
@@ -1048,6 +1082,8 @@ class _ConfigPanel extends StatelessWidget {
     required this.maxRows,
     required this.enableSlotTapToAdd,
     required this.enableAltDragClone,
+    required this.enableLassoGuidance,
+    required this.lassoMode,
     required this.customSlotCount,
     required this.compactionType,
     required this.resizeBehavior,
@@ -1070,6 +1106,8 @@ class _ConfigPanel extends StatelessWidget {
   final ValueNotifier<bool> autoShrink;
   final ValueNotifier<bool> enableSlotTapToAdd;
   final ValueNotifier<bool> enableAltDragClone;
+  final ValueNotifier<bool> enableLassoGuidance;
+  final ValueNotifier<LassoSelectionMode> lassoMode;
   final ValueNotifier<int?> maxRows;
   final ValueNotifier<int?> customSlotCount;
   final ValueNotifier<CompactType> compactionType;
@@ -1118,6 +1156,8 @@ class _ConfigPanel extends StatelessWidget {
                     const SizedBox(height: 4),
                     Text(
                       '• Shift + Click: Multi-select tiles\n'
+                      '• Drag on empty space: Lasso selection\n'
+                      '• Shift + Lasso: Add to the current selection\n'
                       '• Ctrl + Drag: Duplicate tile\n'
                       '• Space / Arrows: A11y keyboard moves',
                       style: theme.textTheme.bodySmall?.copyWith(
@@ -1159,6 +1199,47 @@ class _ConfigPanel extends StatelessWidget {
           _SwitchTile(
             title: 'Highlight displaced tiles on drag (Impact Preview)',
             notifier: enableImpactPreview,
+          ),
+          _SwitchTile(
+            title: 'Lasso cursor & tooltip (guidance)',
+            notifier: enableLassoGuidance,
+          ),
+          const SizedBox(height: 10),
+          Text(
+            'Lasso Selection Trigger (desktop / web)',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+              color: theme.colorScheme.primary,
+            ),
+          ),
+          const SizedBox(height: 4),
+          ValueListenableBuilder<LassoSelectionMode>(
+            valueListenable: lassoMode,
+            builder: (context, value, _) {
+              return DropdownButton<LassoSelectionMode>(
+                isExpanded: true,
+                dropdownColor: theme.colorScheme.surfaceContainerHigh,
+                value: value,
+                items: const [
+                  DropdownMenuItem(
+                    value: LassoSelectionMode.emptySpace,
+                    child: Text('EMPTY SPACE DRAG (DEFAULT)'),
+                  ),
+                  DropdownMenuItem(
+                    value: LassoSelectionMode.modifierRequired,
+                    child: Text('SHIFT + EMPTY SPACE DRAG'),
+                  ),
+                  DropdownMenuItem(
+                    value: LassoSelectionMode.disabled,
+                    child: Text('DISABLED'),
+                  ),
+                ],
+                onChanged: (v) {
+                  if (v != null) lassoMode.value = v;
+                },
+              );
+            },
           ),
           const SizedBox(height: 10),
           Text(

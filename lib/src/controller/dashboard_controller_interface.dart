@@ -6,6 +6,7 @@ import 'package:sliver_dashboard/src/engine/layout_engine.dart' as engine;
 import 'package:sliver_dashboard/src/models/dashboard_policy.dart';
 import 'package:sliver_dashboard/src/models/layout_item.dart';
 import 'package:sliver_dashboard/src/view/a11y/dashboard_shortcuts.dart';
+import 'package:sliver_dashboard/src/view/dashboard_configuration.dart';
 import 'package:sliver_dashboard/src/view/guidance/dashboard_guidance.dart';
 import 'package:state_beacon/state_beacon.dart';
 
@@ -300,6 +301,21 @@ abstract class DashboardController {
   /// If null, defaults to [DashboardShortcuts.defaultShortcuts].
   DashboardShortcuts? get shortcuts;
   set shortcuts(DashboardShortcuts? value);
+
+  /// Whether the rubberband ("lasso") modifier is currently held.
+  ///
+  /// [LassoStyle.mode] is [LassoSelectionMode.modifierRequired], where it is
+  /// what makes the lasso cursor appear on a key press that moved no pointer.
+  WritableBeacon<bool> get lassoModifierHeld;
+
+  /// Behaviour and appearance of the rubberband ("lasso") selection.
+  ///
+  /// Defaults to [LassoStyle.byDefault], which lets a drag over empty grid
+  /// space draw a selection rectangle on desktop and web. Assign
+  /// [LassoStyle.off] to disable the feature, or a custom [LassoStyle] to
+  /// require a modifier key and restyle the rectangle.
+  LassoStyle get lassoStyle;
+  set lassoStyle(LassoStyle value);
 
   /// Sets whether moving items can dynamically shrink their neighbors to avoid pushes.
   void setAllowAutoShrink({required bool allow});
