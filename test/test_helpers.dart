@@ -17,6 +17,21 @@ Future<void> runOnDesktop(Future<void> Function() body) async {
   }
 }
 
+/// Runs [body] with the foundation platform override forced to [platform],
+/// restoring the previous value **inside** the test body.
+Future<void> runOnPlatform(
+  TargetPlatform platform,
+  Future<void> Function() body,
+) async {
+  final original = debugDefaultTargetPlatformOverride;
+  debugDefaultTargetPlatformOverride = platform;
+  try {
+    await body();
+  } finally {
+    debugDefaultTargetPlatformOverride = original;
+  }
+}
+
 /// Recording canvas.
 class RecordingCanvas implements Canvas {
   final List<Offset> translations = <Offset>[];

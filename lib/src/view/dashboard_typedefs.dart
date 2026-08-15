@@ -102,3 +102,7 @@ typedef A11yItemMessageBuilder = String Function(String itemId);
 
 /// Builder for accessibility messages related to a grid position.
 typedef A11yPositionMessageBuilder = String Function(int x, int y);
+
+/// Builder for accessibility messages carrying a plain count, such as the
+/// number of items a rubberband ("lasso") selection ended up covering.
+typedef A11yCountMessageBuilder = String Function(int count);

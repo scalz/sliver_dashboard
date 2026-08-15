@@ -5,6 +5,7 @@ import 'package:sliver_dashboard/src/controller/dashboard_controller_interface.d
 import 'package:sliver_dashboard/src/controller/dashboard_controller_provider.dart';
 import 'package:sliver_dashboard/src/models/layout_item.dart';
 import 'package:sliver_dashboard/src/view/guidance/dashboard_guidance.dart';
+import 'package:sliver_dashboard/src/view/guidance/guidance_bubble.dart';
 import 'package:sliver_dashboard/src/view/resize_handle.dart';
 
 /// A widget that detects user interactions (hover, tap, long-press)
@@ -82,7 +83,7 @@ class _GuidanceInteractorState extends State<GuidanceInteractor> {
                 // Align ensures the child doesn't stretch to fill the overlay constraints
                 child: Align(
                   alignment: Alignment.center,
-                  child: _buildMessageBubble(context, message),
+                  child: GuidanceBubble(message: message),
                 ),
               ),
             ),
@@ -101,44 +102,6 @@ class _GuidanceInteractorState extends State<GuidanceInteractor> {
   void _hide() {
     _overlayEntry?.remove();
     _overlayEntry = null;
-  }
-
-  Widget _buildMessageBubble(BuildContext context, String message) {
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
-    final fontSize = _isMobile ? 16.0 : 14.0;
-    final padding = _isMobile
-        ? const EdgeInsets.symmetric(horizontal: 16, vertical: 10)
-        : const EdgeInsets.symmetric(horizontal: 12, vertical: 8);
-
-    return Directionality(
-      textDirection: TextDirection.ltr,
-      child: Material(
-        color: Colors.transparent,
-        child: Container(
-          padding: padding,
-          decoration: BoxDecoration(
-            color: isDark ? Colors.grey[300] : Colors.grey[800],
-            borderRadius: BorderRadius.circular(8),
-            boxShadow: const [
-              BoxShadow(
-                color: Colors.black26,
-                blurRadius: 8,
-                offset: Offset(0, 2),
-              ),
-            ],
-          ),
-          child: Text(
-            message,
-            style: TextStyle(
-              color: isDark ? Colors.black : Colors.white,
-              fontSize: fontSize,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-        ),
-      ),
-    );
   }
 
   @override

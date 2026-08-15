@@ -10,6 +10,7 @@ import 'package:sliver_dashboard/src/models/dashboard_policy.dart';
 import 'package:sliver_dashboard/src/models/layout_item.dart';
 import 'package:sliver_dashboard/src/models/utility.dart';
 import 'package:sliver_dashboard/src/view/a11y/dashboard_shortcuts.dart';
+import 'package:sliver_dashboard/src/view/dashboard_configuration.dart';
 import 'package:sliver_dashboard/src/view/guidance/dashboard_guidance.dart';
 import 'package:sliver_dashboard/src/view/resize_handle.dart';
 import 'package:state_beacon/state_beacon.dart';
@@ -101,6 +102,12 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
 
   @override
   DashboardShortcuts? shortcuts;
+
+  @override
+  LassoStyle lassoStyle = LassoStyle.byDefault;
+
+  @override
+  late final lassoModifierHeld = B.writable<bool>(false);
 
   @override
   DashboardPolicy? policy;

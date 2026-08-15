@@ -413,14 +413,32 @@ class _DashboardItemState extends State<DashboardItem>
               ? (isActive ? guidance.semanticsHintDrop : guidance.semanticsHintGrab)
               : null,
           selected: isSelected,
-          child: Opacity(
-            // Hide if dragged AND not the feedback
-            opacity: (isActive && !widget.isFeedback) ? 0.0 : 1.0,
-            child: Container(
-              decoration: decoration,
-              child: DashboardItemWrapper(
-                item: widget.item,
-                child: _cachedWidget!, // Use the cached heavy content
+          // Cursor floor for the tile.
+          //
+          // Every MouseRegion between here and the pointer defers:
+          // `FocusableActionDetector` builds one with no cursor, and so does
+          // `GuidanceInteractor`. Flutter resolves the cursor from the
+          // innermost NON-deferring region on the hit path, so without this
+          // annotation the search walks straight past the tile and lands on
+          // the rubberband region that `DashboardOverlay` installs as an
+          // ancestor — every tile would show the lasso's `precise` cursor.
+          //
+          // `basic` is exactly what the tile resolved to before this existed
+          // (nothing set a cursor, so the framework fell back to it), and
+          // anything deeper — resize handles, application content — still
+          // wins by being closer to the pointer. It is a floor, not an
+          // override.
+          child: MouseRegion(
+            cursor: SystemMouseCursors.basic,
+            child: Opacity(
+              // Hide if dragged AND not the feedback
+              opacity: (isActive && !widget.isFeedback) ? 0.0 : 1.0,
+              child: Container(
+                decoration: decoration,
+                child: DashboardItemWrapper(
+                  item: widget.item,
+                  child: _cachedWidget!, // Use the cached heavy content
+                ),
               ),
             ),
           ),

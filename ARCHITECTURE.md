@@ -136,6 +136,14 @@ The view layer has been refactored to support native Sliver composition. It is c
     - **The armed-clone exception.** An Alt+drag arms a duplication at pointer-down WITHOUT starting an operation (see §6, Alt+Drag Duplication). It still claims the pointer — an ancestor would otherwise drag the host tile out from under the armed gesture — which reopens exactly the leak above for one path: the mobile-tap branch. `_handleMobileTap` therefore releases an armed-but-unresolved clone explicitly. This is the ONE place where a claim exists without a live operation, and it must stay paired with that release.
   - **Sliver Resolution:** `_findRenderSliver` caches the resolved render object while it stays attached, using a **local** search sentinel and, when a `sliverKey` is supplied, a walk strictly scoped to that key's subtree with **no unscoped fallback** — see §6 (Sliver Resolution) for why both properties are load-bearing.
   - **Placeholder Refactor:** `_updatePlaceholderPosition` (the `DragTarget` external-drop path) now delegates to `_gridPointAtGlobal` + `_showPlaceholderAt(w:, h:)`, shared with cross-grid drags so both flows use the exact same geometry and clamping.
+  - **Content-Origin Site Consolidation (`_contentOriginOf`):** the drag-feedback layer and the rubberband layer resolve the content origin and the sliver clip band through **one** method. This is the §6 convention applied to the layers painted above the scroll view; a second copy of that arithmetic is what produced the historical one-padding offset, and any new layer reuses this instead of re-deriving it.
+  - **Rubberband ("lasso") selection** (configured by `DashboardController.lassoStyle`, alongside `shortcuts` and `guidance` — it is interaction policy, not grid painting, so it stays reachable on a grid with no background and is per-controller in a nested tree): a press on empty grid space ARMS a selection rectangle (`_pendingLassoStart`) and resolves it on the first move past `_dragMoveTolerance` (`_startLasso`) — the same two-phase shape as the Alt+drag clone, for the same reason: `_onPointerDown` fires on the raw button press, so committing there would make every click on the background a selection wipe. Five properties are load-bearing:
+    1. **The anchor lives in grid-content space** (`_lassoAnchorContent`), not overlay-local or global pixels. That is what keeps the rectangle pinned to the content across edge auto-scroll and mouse-wheel scrolling (a `ScrollController` listener re-projects it), and it is also the space the intersection needs, since items are grid-addressed.
+    2. **The selection beacon is written only when the resolved id set changes.** `Set` has identity equality in Dart, so an unguarded write notifies on every pointer event and rebuilds every visible item shell at pointer frequency. The O(N) scan itself is cheap (~6k comparisons at N=1000); the guard is what makes the feature free. The per-event scratch buffer (`_lassoHitScratch`) is reused, so a frame that changes nothing allocates nothing.
+    3. **It claims the pointer while merely armed.** Second and last exception to the "do not pre-claim" rule, alongside the armed clone: without it, a lasso on a nested grid's background lets the parent overlay drag the host tile at the same time (its `_hitTest` walk reaches the host). Paired with the release in `_resetOperationState`, which every pointer-up path reaches through its `finally`; the mobile-tap branch is not a leak path here because the lasso is never armed on touch platforms.
+    4. **The cursor comes from an ANCESTOR `MouseRegion`, paired with a cursor floor on the tile.** Flutter resolves the cursor from the innermost non-deferring region on the hit path, which keeps the lasso cursor over empty space with zero hit tests and zero per-hover work — but only because `DashboardItemWidget` annotates the tile with `SystemMouseCursors.basic`. Both MouseRegions a tile already contained (`FocusableActionDetector`, `GuidanceInteractor`) build with no cursor and therefore DEFER, so without that floor the resolver walks past the tile and the lasso cursor is what tiles would show. Deeper regions (resize handles, application content) still win: it is a floor, not an override. Its `child` is pre-built and handed through the `ValueListenableBuilder`, so a modifier press rebuilds the region and nothing under it. Because key state changes emit no pointer event, a `HardwareKeyboard` handler mirrors the modifier into `DashboardController.lassoModifierHeld` (desktop only, two `Set.contains` per key event) — a beacon rather than a local notifier, symmetric with `swapModifierHeld`, so one `Builder` observes both it and `isEditing` instead of nesting a second builder, and applications can drive a mode indicator from it. The painted rectangle stays a private `ValueNotifier` by contrast: it is per-gesture view state consumed by exactly one widget, the same shape as the cross-grid proxy's own position notifier.
+    5. **The painted frame is a plain `ValueNotifier<LassoOverlayState?>`, not a beacon.** Nothing outside the overlay consumes it and it must not enter the controller's reactive graph. `LassoOverlayState` has value equality so `LassoPainter.shouldRepaint` short-circuits, and the layer sits behind its own `RepaintBoundary`: a lasso drag repaints two `drawRect`s and nothing else.
+    - **Screen-reader announcements are not opt-in.** `guidance == null` disables the cursor change and the on-screen label; `a11yLassoStart` / `a11yLassoEnd` still fire from `DashboardGuidance.byDefault`.
 - **Slot gestures**: `_handleSlotGesture` reuses the drag pipeline's
   `SlotMetrics.pixelToGrid` with
   `offset = viewportScroll - precedingScrollExtent + padding.top` (reduces
@@ -186,6 +194,8 @@ The view layer has been refactored to support native Sliver composition. It is c
   - **Logic:** Detects hover (desktop) and tap/long-press (mobile) events to display contextual guidance messages.
   - **Conflict Management:** Manages gesture conflicts on mobile to ensure drag operations are not blocked.
 - **`DashboardGrid` (background host):** resolves the sliver and hands the painter **value-typed scalars**. It owns the three-tier geometry resolution and the one-shot post-frame retry described in §6.
+- **`GuidanceBubble`:** the shared visual shell of every guidance message. `GuidanceInteractor` still owns *when* and *where* an item bubble appears (anchored to a `LayoutItem` through a `LayerLink` inside an `OverlayEntry`); the lasso label has no item to anchor to and is painted in-tree, so only the appearance is shared.
+- **`DashboardLassoLayer` / `LassoPainter`:** the rubberband layer. Driven by a `ValueListenable<LassoOverlayState?>` published by the overlay, wrapped in `IgnorePointer`, and collapsed to a `SizedBox.shrink()` when no lasso is in flight. It performs **no coordinate math**: the overlay owns the content-origin arithmetic and hands it an overlay-local `Rect` plus the sliver clip band.
 - **`GridBackgroundPainter`:** a pure function of value-typed inputs — `SlotMetrics` implements value-based `==`/`hashCode`, and the sliver geometry enters as two plain `double`s (`sliverLayoutStart`, `sliverContentExtent`) so `shouldRepaint` can short-circuit soundly. The row-line loop is bounded by the clip rect instead of a hard-coded 10,000 px extent (~80–150 mostly-clipped `drawLine` commands per repaint reduced to the visible ~10–20).
   - **Why it must not hold the `RenderSliverDashboard`:** a render-object reference is stable across mutations of its own `constraints`/`geometry`, so `shouldRepaint` cannot detect them. An earlier revision passed the render object; when the lookup went stale the painter kept a zero main-axis origin **permanently**, painting the background one padding too high, and no repaint could correct it. Handing it scalars turned a permanent misalignment into, at worst, a one-frame one.
 
@@ -204,7 +214,7 @@ The package implements a comprehensive A11y strategy based on Flutter's `Actions
 - **Intents:** Abstract user intentions (`DashboardGrabItemIntent`, `DashboardMoveItemIntent`, `DashboardDropItemIntent`).
 - **Shortcuts:** A configurable map binding keys to Intents (e.g., `Space` -> `Grab`, `Arrows` -> `Move`). This is customizable via `DashboardShortcuts`.
 - **Actions:** The logic executed when an Intent is triggered. These call the Controller methods (`moveActiveItemBy`, `cancelInteraction`). **[AUDIT]** Action instances are per-`State` singletons; they must read live state at invoke time, never capture per-build state.
-- **Announcements:** Integration with `SemanticsService` to announce state changes (Selection, Movement coordinates) to screen readers. Messages are customizable via `DashboardGuidance`.
+- **Announcements:** Integration with `SemanticsService` to announce state changes (Selection, Movement coordinates, rubberband start and resulting count) to screen readers. Messages are customizable via `DashboardGuidance`. **They are not gated on `guidance != null`** — a null guidance disables the visual affordances (tooltips, cursors) only, and the built-in English defaults are announced instead.
 
 ## 5. Performance Optimization Strategy
 
@@ -387,46 +397,46 @@ To prevent counter-intuitive layout expansions during resize gestures (e.g., dra
 
 ```mermaid
 sequenceDiagram
-    participant User
-    participant Overlay as DashboardOverlay
-    participant Controller
-    participant Engine as LayoutEngine
-    participant Sliver as SliverDashboard
+  participant User
+  participant Overlay as DashboardOverlay
+  participant Controller
+  participant Engine as LayoutEngine
+  participant Sliver as SliverDashboard
 
-    User->>Overlay: Touch Down
-    Overlay->>Overlay: Hit Test (Find Item & Sliver)
-    Overlay->>Controller: onDragStart(id)
-    Controller->>Controller: Cache gesture invariants (pivot, cluster, bbox)
+  User->>Overlay: Touch Down
+  Overlay->>Overlay: Hit Test (Find Item & Sliver)
+  Overlay->>Controller: onDragStart(id)
+  Controller->>Controller: Cache gesture invariants (pivot, cluster, bbox)
 
-    loop Dragging
-        User->>Overlay: Moves finger
-        Overlay->>Controller: onDragUpdate(offset)
-        Controller->>Engine: moveElement() / moveCluster()
-        Note over Engine: Monotonic cascade + indexed<br/>overlap verification (ID-sorted output)
-        Engine-->>Controller: New Layout
-        Controller-->>Overlay: Drag Offset Beacon (Smooth)
-        Controller-->>Sliver: Layout Beacon (Grid Snap)
+  loop Dragging
+    User->>Overlay: Moves finger
+    Overlay->>Controller: onDragUpdate(offset)
+    Controller->>Engine: moveElement() / moveCluster()
+    Note over Engine: Monotonic cascade + indexed<br/>overlap verification (ID-sorted output)
+    Engine-->>Controller: New Layout
+    Controller-->>Overlay: Drag Offset Beacon (Smooth)
+    Controller-->>Sliver: Layout Beacon (Grid Snap)
 
-        par Update Feedback
-            Overlay->>Overlay: Rebuild Feedback Item
-        and Update Grid
-            Sliver->>Sliver: performLayout (Move items)
-        end
-
-        alt Over Trash Area
-            Overlay->>Overlay: Detect Trash Hover
-        end
+    par Update Feedback
+      Overlay->>Overlay: Rebuild Feedback Item
+    and Update Grid
+      Sliver->>Sliver: performLayout (Move items)
     end
 
-    User->>Overlay: Touch Up (Drop)
-
-    alt Dropped on Armed Trash
-        Overlay->>Controller: removeItem(id)
-    else Dropped on Grid
-        Overlay->>Controller: onDragEnd()
-        Controller->>Engine: compact() (FastVerticalCompactor by default)
-        Controller->>Controller: Clear gesture invariants
+    alt Over Trash Area
+      Overlay->>Overlay: Detect Trash Hover
     end
+  end
+
+  User->>Overlay: Touch Up (Drop)
+
+  alt Dropped on Armed Trash
+    Overlay->>Controller: removeItem(id)
+  else Dropped on Grid
+    Overlay->>Controller: onDragEnd()
+    Controller->>Engine: compact() (FastVerticalCompactor by default)
+    Controller->>Controller: Clear gesture invariants
+  end
 ```
 
 ## 7. Nested Grids & Cross-Grid Drag
@@ -484,29 +494,29 @@ and a drag can travel continuously between any grids sharing a
 
 ```mermaid
 sequenceDiagram
-    participant User
-    participant Src as Source Overlay
-    participant Coord as Coordinator
-    participant Tgt as Hovered Overlay
-    participant SC as Source Controller
-    participant TC as Target Controller
+  participant User
+  participant Src as Source Overlay
+  participant Coord as Coordinator
+  participant Tgt as Hovered Overlay
+  participant SC as Source Controller
+  participant TC as Target Controller
 
-    User->>Src: drag (pointer captured at down)
-    Src->>Coord: targetAt(pos) != self ?
-    Coord->>SC: beginCrossGridExit(id)  — silent removal + snapshot
-    Coord->>Coord: spawn proxy (OverlayEntry)
-    loop pointer moves (still delivered to Src)
-        Src->>Coord: updateSession(pos)
-        Coord->>Tgt: foreignDragOver(item, pos)
-        Tgt->>TC: showPlaceholder(x, y, item.w, item.h)
-        Note over TC: live collision pushes via the<br/>existing external-drag path
-    end
-    User->>Src: pointer up
-    Src->>Coord: dropSession(pos)
-    Coord->>Tgt: foreignDrop(item)
-    Tgt->>TC: onDropExternalItem(template) — 1 event
-    Coord->>SC: finishCrossGridExit(movedAway) — 1 event
-    Coord-->>Src: placed item (onItemDragEnd, onItemMovedToGrid)
+  User->>Src: drag (pointer captured at down)
+  Src->>Coord: targetAt(pos) != self ?
+  Coord->>SC: beginCrossGridExit(id)  — silent removal + snapshot
+  Coord->>Coord: spawn proxy (OverlayEntry)
+  loop pointer moves (still delivered to Src)
+    Src->>Coord: updateSession(pos)
+    Coord->>Tgt: foreignDragOver(item, pos)
+    Tgt->>TC: showPlaceholder(x, y, item.w, item.h)
+    Note over TC: live collision pushes via the<br/>existing external-drag path
+  end
+  User->>Src: pointer up
+  Src->>Coord: dropSession(pos)
+  Coord->>Tgt: foreignDrop(item)
+  Tgt->>TC: onDropExternalItem(template) — 1 event
+  Coord->>SC: finishCrossGridExit(movedAway) — 1 event
+  Coord-->>Src: placed item (onItemDragEnd, onItemMovedToGrid)
 ```
 
 Key properties:
