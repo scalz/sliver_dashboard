@@ -302,11 +302,37 @@ abstract class DashboardController {
   DashboardShortcuts? get shortcuts;
   set shortcuts(DashboardShortcuts? value);
 
+  /// How a dragged item interacts with the items it lands on.
+  ///
+  /// Defaults to [engine.DragMode.cascade] — the package's historical behaviour.
+  /// Set [engine.DragMode.swap] to make direct position exchange the default; either
+  /// way, `DashboardShortcuts.swapModeModifier` temporarily selects the other
+  /// mode while held.
+  WritableBeacon<engine.DragMode> get dragMode;
+
+  /// Sets the default drag mode. See [dragMode].
+  void setDragMode(engine.DragMode mode);
+
+  /// Whether the swap-mode modifier is currently held.
+  ///
+  /// **Driven by `DashboardOverlay`**, which is the only layer that sees key
+  /// events; applications read it (to show a mode indicator, for instance)
+  /// but should not write it. It is always `false` on platforms without a
+  /// hardware keyboard, where [dragMode] alone decides.
+  WritableBeacon<bool> get swapModifierHeld;
+
   /// Whether the rubberband ("lasso") modifier is currently held.
   ///
   /// [LassoStyle.mode] is [LassoSelectionMode.modifierRequired], where it is
   /// what makes the lasso cursor appear on a key press that moved no pointer.
   WritableBeacon<bool> get lassoModifierHeld;
+
+  /// The mode that a drag starting right now would actually use.
+  ///
+  /// `modifierHeld ? opposite(dragMode) : dragMode`, with the modifier read
+  /// from [swapModifierHeld] when [modifierHeld] is omitted. Pure and
+  /// synchronous, so it can be unit-tested without a widget tree.
+  engine.DragMode getEffectiveDragMode({bool? modifierHeld});
 
   /// Behaviour and appearance of the rubberband ("lasso") selection.
   ///

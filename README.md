@@ -81,6 +81,7 @@ The package is WebAssembly (WASM) compatible. Building your production applicati
   - [Custom Drag Feedback](#custom-drag-feedback)
   - [Haptic Feedback](#haptic-feedback)
   - [Multi Selection and Cluster Drag](#multi-selection-and-cluster-drag)
+  - [Swap Mode (Direct Position Exchange)](#swap-mode-direct-position-exchange)
   - [Rectangle / Lasso Selection](#rectangle--lasso-selection)
   - [Duplicate on Drag (Alt / Option)](#duplicate-on-drag-alt--option)
   - [Adaptive Neighbor Shrinking (Auto-Shrink on Drag)](#adaptive-neighbor-shrinking-auto-shrink-on-drag)
@@ -303,7 +304,7 @@ controller.setMaxHistoryLength(50); // default: 30 (throws when negative)
 
 #### Opting out entirely
 
-Layout history is enabled by default (30 steps, negligible ~15KB memory footprint).
+Layout history is enabled by default (30 steps, negligible memory footprint).
 Pass `maxHistoryLength: 0` if you wish to disable history tracking entirely for zero memory usage.
 
 ```dart
@@ -617,6 +618,55 @@ controller.shortcuts = DashboardShortcuts(
 > **Note:** `Alt` is also the default modifier for [Duplicate on Drag](#duplicate-on-drag-alt--option).
 > If you move multi-selection onto `Alt`, move `cloneKeys` elsewhere in the same
 > `DashboardShortcuts` — the two sets must stay disjoint.
+
+### Swap Mode (Direct Position Exchange)
+
+By default a dragged tile **pushes** the tiles it lands on (`DragMode.cascade`,
+the historical behaviour). Swap mode makes it **trade places** with them
+instead.
+
+```dart
+// Make swap the default for every drag:
+controller.setDragMode(DragMode.swap);
+
+// Or leave the default cascade and let the user reach swap with a modifier:
+controller.shortcuts = const DashboardShortcuts(
+  swapModeModifier: [LogicalKeyboardKey.shiftLeft, LogicalKeyboardKey.shiftRight],
+);
+```
+
+The modifier always selects the **opposite** of `dragMode`, so it works as a
+temporary toggle either way:
+
+| `dragMode` | Modifier released | Modifier held |
+|---|---|---|
+| `cascade` (default) | cascade | **swap** |
+| `swap` | swap | **cascade** |
+
+Pass `swapModeModifier: []` to remove the toggle entirely and leave `dragMode`
+in sole control. On platforms without a hardware keyboard the modifier is never
+held, so `dragMode` alone decides.
+
+**What the package guarantees:**
+
+| Rule | Behaviour |
+|---|---|
+| Default | `DragMode.cascade`. Nothing about existing drags changes unless you opt in. |
+| Qualification | The drag box must cover **more than 50% of the candidate's own area**. Measured against the candidate, not the mover, so a small tile dropped on a large one does not swap until it is genuinely on it. |
+| No candidate | The frame falls back to the cascade — a swap-mode drag over empty space, or one that merely clips a neighbour, still moves the tile. |
+| Where the partner goes | To the mover's **pre-drag** slot, clamped into the grid. |
+| Several candidates | Best coverage wins; ties break on absolute overlap, then on id. Deterministic and independent of layout order. |
+| Static tiles | Never swapped, and a static tile is never a valid partner. Section barriers follow the same rule as elsewhere. |
+| Policy | `canCollide` and `canMoveTo` are honoured for both items; a veto means no swap. |
+| 0-overlap | Collision resolution runs whenever the result actually collides — the partner reshaped into a different slot, or a bystander the drag box clipped without qualifying to swap with. A clean same-size swap collides with nothing and stays a pure coordinate exchange with no cascade. |
+| Multi-selection | Swap applies to **single-item drags only**. A cluster drag always cascades. |
+| Mid-drag toggle | Pressing or releasing the modifier re-runs the layout immediately, with no pointer movement required. |
+
+You can read the resolved mode at any time, which is handy for a UI indicator:
+
+```dart
+final mode = controller.getEffectiveDragMode(); // cascade or swap, right now
+```
 
 ### Rectangle / Lasso Selection
 
@@ -1015,9 +1065,9 @@ In native Sliver integration mode, the grid naturally stops drawing at the last 
 ```dart
 // Example of forcing the grid to fill the entire screen height
 DashboardOverlay(
-// ...
-fillViewport: true,
-// ...
+  // ...
+  fillViewport: true,
+  // ...
 )
 ```
 
@@ -1028,14 +1078,14 @@ You can also use DashboardGuidance.byDefault for default English guidance, or se
 
 ```dart
 Dashboard(
-controller: controller,
-// Provide a DashboardGuidance object to enable the feature.
-// You can override default messages for translation or customization.
-guidance: const DashboardGuidance(
-move: InteractionGuidance(SystemMouseCursors.grab, 'Click/Drag to move'),
-tapToResize: 'Tap and hold to change size',
-),
-itemBuilder: (context, item) { /* ... */ },
+  controller: controller,
+  // Provide a DashboardGuidance object to enable the feature.
+  // You can override default messages for translation or customization.
+  guidance: const DashboardGuidance(
+    move: InteractionGuidance(SystemMouseCursors.grab, 'Click/Drag to move'),
+    tapToResize: 'Tap and hold to change size',
+  ),
+  itemBuilder: (context, item) { /* ... */ },
 )
 ```
 
@@ -1045,47 +1095,47 @@ For large dashboards, you can add a Mini-Map to visualize the layout and the cur
 
 ```dart
 Stack(
-children: [
-Dashboard(
-controller: controller,
-scrollController: scrollController, // Required
-// ...
-),
-Positioned(
-right: 20,
-bottom: 20,
-child: Material(
-elevation: 4,
-borderRadius: BorderRadius.circular(8),
-clipBehavior: Clip.antiAlias,
-child: Container(
-// Vertical: Fixed width (120), Flexible height (max 200)
-// Horizontal: Fixed height (120), Flexible width (max 300)
-width: isVertical ? 120 : null,
-height: isVertical ? null : 120,
-constraints: BoxConstraints(
-maxHeight: isVertical ? 200 : 120,
-maxWidth: isVertical ? 120 : 300,
-),
-decoration: BoxDecoration(
-border: Border.all(color: Colors.grey),
-borderRadius: BorderRadius.circular(8),
-),
-child: DashboardMinimap(
-controller: controller,
-scrollController: scrollController, // Must match Dashboard's controller
-// Pass width only in vertical mode to enforce width-based scaling
-width: isVertical ? 120 : null,
-style: const MinimapStyle(
-itemColor: Colors.grey,
-displacedItemColor: Colors.amber, // Highlight displaced items during drag
-viewportColor: Color(0x332196F3),
-),
-),
-),
-),
-),
-],
+  children: [
+    Dashboard(
+      controller: controller,
+      scrollController: scrollController, // Required
+      // ...
+    ),
+    Positioned(
+      right: 20,
+      bottom: 20,
+      child: Material(
+        elevation: 4,
+        borderRadius: BorderRadius.circular(8),
+        clipBehavior: Clip.antiAlias,
+        child: Container(
+          // Vertical: Fixed width (120), Flexible height (max 200)
+          // Horizontal: Fixed height (120), Flexible width (max 300)
+          width: isVertical ? 120 : null,
+          height: isVertical ? null : 120,
+          constraints: BoxConstraints(
+            maxHeight: isVertical ? 200 : 120,
+            maxWidth: isVertical ? 120 : 300,
+          ),
+          decoration: BoxDecoration(
+            border: Border.all(color: Colors.grey),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: DashboardMinimap(
+            controller: controller,
+            scrollController: scrollController, // Must match Dashboard's controller
+            // Pass width only in vertical mode to enforce width-based scaling
+            width: isVertical ? 120 : null,
+            style: const MinimapStyle(
+              itemColor: Colors.grey,
+              displacedItemColor: Colors.amber, // Highlight displaced items during drag
+              viewportColor: Color(0x332196F3),
+            ),
+          ),
+        ),
+      ),
+    ),
+  ],
 )
 ```
 
@@ -1112,29 +1162,29 @@ You can translate messages using `DashboardGuidance` and customize key bindings 
 
 ```dart
 Dashboard(
-controller: controller,
-// 1. Customize Messages (i18n)
-guidance: DashboardGuidance(
-move: InteractionGuidance(SystemMouseCursors.grab, 'Move'),
-a11yGrab: (id) => 'Item $id grabbed. Use arrows to move.',
-a11yDrop: (x, y) => 'Dropped on Row $y, Column $x.',
-a11yMove: (x, y) => 'Row $y, Column $x',
-a11yCancel: 'Cancelled.',
-semanticsHintGrab: 'Press Space to grab',
-semanticsHintDrop: 'Press Space to drop',
-),
+  controller: controller,
+  // 1. Customize Messages (i18n)
+  guidance: DashboardGuidance(
+    move: InteractionGuidance(SystemMouseCursors.grab, 'Move'),
+    a11yGrab: (id) => 'Item $id grabbed. Use arrows to move.',
+    a11yDrop: (x, y) => 'Dropped on Row $y, Column $x.',
+    a11yMove: (x, y) => 'Row $y, Column $x',
+    a11yCancel: 'Cancelled.',
+    semanticsHintGrab: 'Press Space to grab',
+    semanticsHintDrop: 'Press Space to drop',
+  ),
 );
 
 // 2. Customize Keys (e.g. WASD)
 controller.shortcuts = DashboardShortcuts(
-moveUp: {const SingleActivator(LogicalKeyboardKey.keyW)},
-moveLeft: {const SingleActivator(LogicalKeyboardKey.keyA)},
-moveDown: {const SingleActivator(LogicalKeyboardKey.keyS)},
-moveRight: {const SingleActivator(LogicalKeyboardKey.keyD)},
-// Keep defaults for others
-grab: DashboardShortcuts.defaultShortcuts.grab,
-drop: DashboardShortcuts.defaultShortcuts.drop,
-cancel: DashboardShortcuts.defaultShortcuts.cancel,
+  moveUp: {const SingleActivator(LogicalKeyboardKey.keyW)},
+  moveLeft: {const SingleActivator(LogicalKeyboardKey.keyA)},
+  moveDown: {const SingleActivator(LogicalKeyboardKey.keyS)},
+  moveRight: {const SingleActivator(LogicalKeyboardKey.keyD)},
+  // Keep defaults for others
+  grab: DashboardShortcuts.defaultShortcuts.grab,
+  drop: DashboardShortcuts.defaultShortcuts.drop,
+  cancel: DashboardShortcuts.defaultShortcuts.cancel,
 );
 ```
 
@@ -1165,20 +1215,20 @@ Widget build(BuildContext context) {
     body: DashboardOverlay(
       controller: controller,
       scrollController: scrollController,
-
+      
       // Define grid styling here so it renders behind the slivers
-      gridStyle: const GridStyle(lineColor: Colors.red),
+      gridStyle: const GridStyle(lineColor: Colors.red), 
       padding: const EdgeInsets.all(8),
       // grid stops precisely at the content of the dashboard
       // to not draw grid behind subsequent slivers
-      fillViewport: false,
-
+      fillViewport: false, 
+      
       // Handle external drops here
-      onDrop: (data, item) => 'new_id',
-
+      onDrop: (data, item) => 'new_id', 
+      
       // Used for drag feedback rendering
-      itemBuilder: (ctx, item) => MyCard(item),
-
+      itemBuilder: (ctx, item) => MyCard(item), 
+      
       // 2. Your CustomScrollView
       child: CustomScrollView(
         controller: scrollController,
@@ -1188,7 +1238,7 @@ Widget build(BuildContext context) {
             floating: true,
             expandedHeight: 200,
           ),
-
+          
           // 3. The Dashboard Sliver
           SliverPadding(
             padding: const EdgeInsets.all(8),
@@ -1196,11 +1246,11 @@ Widget build(BuildContext context) {
               itemBuilder: (ctx, item) => MyCard(item),
             ),
           ),
-
+          
           // 4. Other Slivers
           SliverList(
             delegate: SliverChildBuilderDelegate(
-                      (ctx, index) => ListTile(title: Text('Item $index')),
+              (ctx, index) => ListTile(title: Text('Item $index')),
               childCount: 20,
             ),
           ),
@@ -1227,21 +1277,21 @@ final root  = DashboardController(initialLayout: [...]);
 final group = DashboardController(initialLayout: [...]);
 
 DashboardNestedScope(
-onItemMovedToGrid: (item, from, to) => persist(),
-child: Dashboard(
-controller: root,
-itemBuilder: (context, item) {
-if (item.id == 'group-1') {
-return NestedDashboard(
-controller: group,
-parentItemId: item.id,   // links the tree
-sizeToContent: true,     // host item grows/shrinks with content
-itemBuilder: buildLeafItem,
-);
-}
-return buildLeafItem(context, item);
-},
-),
+  onItemMovedToGrid: (item, from, to) => persist(),
+  child: Dashboard(
+    controller: root,
+    itemBuilder: (context, item) {
+      if (item.id == 'group-1') {
+        return NestedDashboard(
+          controller: group,
+          parentItemId: item.id,   // links the tree
+          sizeToContent: true,     // host item grows/shrinks with content
+          itemBuilder: buildLeafItem,
+        );
+      }
+      return buildLeafItem(context, item);
+    },
+  ),
 )
 ```
 
@@ -1307,7 +1357,7 @@ Persistence of the whole tree is a single call each way:
 ```dart
 final tree = exportNestedTree(coordinator, root); // JSON-encodable
 loadNestedTree(coordinator, root, tree);          // nested payloads delivered
-// automatically on mount
+                                                  // automatically on mount
 ```
 
 Notes: cross-grid drags carry a single item (multi-selection drags stay in
@@ -1322,16 +1372,16 @@ folder icons, archive bins, "add to group" badges:
 
 ```dart
 Dashboard<String>(
-controller: controller,
-scrollController: scrollController,
-onItemDroppedOnHost: (draggedItems, host, hostGrid, sourceGrid) {
-// The layout is already back to its pre-drag state: nothing landed on
-// the grid, and the items are still in the grid the drag started from.
-// You decide what the drop means.
-sourceGrid.removeItems(draggedItems.map((i) => i.id).toList());
-myFolderModel.addAll(host.id, draggedItems);
-},
-itemBuilder: (context, item) => MyTile(item),
+  controller: controller,
+  scrollController: scrollController,
+  onItemDroppedOnHost: (draggedItems, host, hostGrid, sourceGrid) {
+    // The layout is already back to its pre-drag state: nothing landed on
+    // the grid, and the items are still in the grid the drag started from.
+    // You decide what the drop means.
+    sourceGrid.removeItems(draggedItems.map((i) => i.id).toList());
+    myFolderModel.addAll(host.id, draggedItems);
+  },
+  itemBuilder: (context, item) => MyTile(item),
 )
 ```
 
@@ -1420,17 +1470,17 @@ Widget build(BuildContext context) {
 
 ```dart
 DashboardMinimap(
-controller: controller,
-scrollController: scrollController,
-markers: const [
-MinimapMarker(itemId: 'sales', color: Colors.red), // status dot
-MinimapMarker(
-itemId: 'alerts',
-color: Colors.amber,
-shape: MinimapMarkerShape.triangle,
-alignment: Alignment.bottomLeft,
-),
-],
+  controller: controller,
+  scrollController: scrollController,
+  markers: const [
+    MinimapMarker(itemId: 'sales', color: Colors.red), // status dot
+    MinimapMarker(
+      itemId: 'alerts',
+      color: Colors.amber,
+      shape: MinimapMarkerShape.triangle,
+      alignment: Alignment.bottomLeft,
+    ),
+  ],
 )
 ```
 
@@ -1447,12 +1497,12 @@ each indicator the values its grid publishes rather than constants:
 
 ```dart
 viewportIndicators: [
-for (final grid in [grid1, grid2])
-ViewportIndicator(
-scrollController: scrollController,
-mainAxisLeadingExtent: grid.internal.viewMainAxisLeadingExtent ?? 0,
-mainAxisContentExtent: grid.internal.viewMainAxisContentExtent,
-),
+  for (final grid in [grid1, grid2])
+    ViewportIndicator(
+      scrollController: scrollController,
+      mainAxisLeadingExtent: grid.internal.viewMainAxisLeadingExtent ?? 0,
+      mainAxisContentExtent: grid.internal.viewMainAxisContentExtent,
+    ),
 ],
 ```
 
@@ -1465,20 +1515,20 @@ escape hatch — and `onItemTap` makes the minimap navigable:
 
 ```dart
 DashboardMinimap(
-controller: controller,
-scrollController: scrollController,
-// Widget markers: for SMALL sets (~50). Prefer `markers` beyond that —
-// the Path layer adds zero objects per marker and never repaints on
-// scroll, while widgets are re-reconciled every minimap rebuild.
-markerBuilder: (context, item) => alerts.contains(item.id)
-? const Align(
-alignment: Alignment.centerLeft,
-child: Icon(Icons.warning, size: 8, color: Colors.red),
-)
-        : null, // null = no marker for this item
-// Tap an item on the minimap: select it, scroll to it, open it…
-// (suppresses tap-to-scroll for that tap; empty areas still scroll)
-onItemTap: (item) => controller.scrollToItem(item.id),
+  controller: controller,
+  scrollController: scrollController,
+  // Widget markers: for SMALL sets (~50). Prefer `markers` beyond that —
+  // the Path layer adds zero objects per marker and never repaints on
+  // scroll, while widgets are re-reconciled every minimap rebuild.
+  markerBuilder: (context, item) => alerts.contains(item.id)
+      ? const Align(
+           alignment: Alignment.centerLeft, 
+           child: Icon(Icons.warning, size: 8, color: Colors.red),
+        )
+      : null, // null = no marker for this item
+  // Tap an item on the minimap: select it, scroll to it, open it…
+  // (suppresses tap-to-scroll for that tap; empty areas still scroll)
+  onItemTap: (item) => controller.scrollToItem(item.id),
 )
 ```
 
@@ -1496,9 +1546,9 @@ slot instead of snapping:
 
 ```dart
 Dashboard(
-animateReflow: true, // default: false
-reflowDuration: const Duration(milliseconds: 150),
-// ...
+  animateReflow: true, // default: false
+  reflowDuration: const Duration(milliseconds: 150),
+  // ...
 )
 ```
 
@@ -1594,19 +1644,19 @@ LayoutItem? spotInLastRow = controller.lastRowFreeArea;
 // Check if an item of a certain size can fit anywhere on the board.
 final itemToCheck = const LayoutItem(id: '_', x: 0, y: 0, w: 2, h: 2);
 if (controller.canItemFit(itemToCheck)) {
-print("A 2x2 item can fit!");
+  print("A 2x2 item can fit!");
 }
 
 // You can then use this information to add a new item precisely.
 if (spotInLastRow != null) {
-final newItem = LayoutItem(
-id: 'new',
-x: spotInLastRow.x,
-y: spotInLastRow.y,
-w: spotInLastRow.w,
-h: 1, // Only take 1 row of the available space
-);
-controller.addItem(newItem);
+  final newItem = LayoutItem(
+    id: 'new',
+    x: spotInLastRow.x,
+    y: spotInLastRow.y,
+    w: spotInLastRow.w,
+    h: 1, // Only take 1 row of the available space
+  );
+  controller.addItem(newItem);
 }
 ```
 

@@ -2,6 +2,39 @@
 
 ### Added
 
+- **Swap drag mode (direct position exchange):** a dragged tile can now trade
+  places with the tile it lands on instead of pushing it away.
+  - **New enum** `DragMode` (`cascade`, `swap`) and **new engine function**
+    `swapElements`, a pure function returning `null` when the drop does not
+    qualify.
+  - **New controller API:** `dragMode` beacon (default `DragMode.cascade`),
+    `setDragMode()`, `getEffectiveDragMode({bool? modifierHeld})` and the
+    view-driven `swapModifierHeld` beacon.
+  - **New `DashboardShortcuts.swapModeModifier`** (defaults to the `Shift`
+    keys) which selects the OPPOSITE of `dragMode` while held, so a package
+    left on its default `cascade` gets swap on `Shift`, and a package set to
+    `swap` gets cascade on `Shift`. Pass an empty list to remove the toggle.
+  - **Nothing changes by default.** `DragMode.cascade` is the default and
+    reproduces the previous behaviour exactly; swap is opt-in through the
+    controller or the modifier.
+  - Swap is **opportunistic**: a frame with no qualifying partner (empty
+    space, a tile merely clipped, a static, a policy veto) falls back to the
+    cascade, so the drag never feels stuck.
+  - A candidate qualifies when the drag box covers **more than 50% of the
+    candidate's own area** — measured against the candidate, not the mover, so
+    a small tile dropped on a large one does not swap until it is genuinely on
+    it. Ties break on absolute overlap then id, so the result is
+    order-independent.
+  - The partner takes the mover's **pre-drag** slot (clamped into the grid),
+    not the coordinates the drag is requesting.
+  - Restricted to **single-item drags**. That is also what keeps the `Shift`
+    default safe next to `multiSelectKeys`: a Shift-built multi-selection can
+    never be silently turned into a swap.
+  - Unequal sizes run the compactor's collision resolution to restore the
+    0-overlap invariant, and only then — a same-size swap stays a pure
+    coordinate exchange with no cascade.
+  - Holding or releasing the modifier **mid-drag** re-runs the layout at the
+    current pointer position immediately, with no pointer movement required.
 - **Rectangle / Lasso selection ("Rubberband"):** on desktop and web, drag over
   empty grid space to select every tile the rectangle overlaps.
   - **New `LassoStyle`** (`mode`, `fillColor`, `borderColor`, `borderWidth`)

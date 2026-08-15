@@ -45,6 +45,10 @@ class DashboardShortcuts {
       LogicalKeyboardKey.shiftLeft,
       LogicalKeyboardKey.shiftRight,
     ],
+    this.swapModeModifier = const [
+      LogicalKeyboardKey.shiftLeft,
+      LogicalKeyboardKey.shiftRight,
+    ],
   });
 
   /// Default shortcuts configuration.
@@ -101,11 +105,19 @@ class DashboardShortcuts {
   /// trigger only (the lasso replaces the selection) under
   /// `modifierRequired`; hold a second, non-overlapping [multiSelectKeys]
   /// key to get an additive lasso in that mode.
-  ///
-  /// Declared as plain [LogicalKeyboardKey]s rather than
-  /// [ShortcutActivator]s because it is evaluated against
-  /// `HardwareKeyboard.instance.logicalKeysPressed` during a pointer event,
-  /// where no `KeyEvent` exists to feed `ShortcutActivator.accepts`. Same
-  /// shape as [multiSelectKeys] and [cloneKeys].
   final List<LogicalKeyboardKey> lassoModifier;
+
+  /// Keys that temporarily flip the drag mode to the OPPOSITE of
+  /// `DashboardController.dragMode` while held. Defaults to the `Shift` keys.
+  ///
+  /// With the default `DragMode.cascade`, holding this turns the drag into a
+  /// direct position swap; with `DragMode.swap` set as the controller
+  /// default, holding it restores the cascade. Pass an **empty list** to
+  /// remove the toggle entirely, leaving `dragMode` in sole control.
+  ///
+  /// Only consulted for **single-item** drags: a cluster drag has no
+  /// meaningful swap partner, and this restriction is also what keeps the
+  /// `Shift` default safe next to [multiSelectKeys] — a Shift-built
+  /// multi-selection can never be silently turned into a swap.
+  final List<LogicalKeyboardKey> swapModeModifier;
 }
