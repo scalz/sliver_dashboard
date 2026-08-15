@@ -82,6 +82,7 @@ The package is WebAssembly (WASM) compatible. Building your production applicati
   - [Haptic Feedback](#haptic-feedback)
   - [Multi Selection and Cluster Drag](#multi-selection-and-cluster-drag)
   - [Swap Mode (Direct Position Exchange)](#swap-mode-direct-position-exchange)
+  - [Per-Grid Drop Rules (`canAcceptItem`)](#per-grid-drop-rules-canacceptitem)
   - [Rectangle / Lasso Selection](#rectangle--lasso-selection)
   - [Duplicate on Drag (Alt / Option)](#duplicate-on-drag-alt--option)
   - [Adaptive Neighbor Shrinking (Auto-Shrink on Drag)](#adaptive-neighbor-shrinking-auto-shrink-on-drag)
@@ -618,6 +619,42 @@ controller.shortcuts = DashboardShortcuts(
 > **Note:** `Alt` is also the default modifier for [Duplicate on Drag](#duplicate-on-drag-alt--option).
 > If you move multi-selection onto `Alt`, move `cloneKeys` elsewhere in the same
 > `DashboardShortcuts` — the two sets must stay disjoint.
+
+### Per-Grid Drop Rules (`canAcceptItem`)
+
+In a nested tree, a scope-wide predicate decides which items each grid accepts:
+
+```dart
+DashboardNestedScope(
+  canAcceptItem: (item, targetGrid, sourceGrid) {
+    // Only the sidebar grid takes notes; everything else takes anything.
+    if (identical(targetGrid, sidebarController)) {
+      return item.extra['type'] == 'note';
+    }
+    return true;
+  },
+  child: ...,
+)
+```
+
+**A refused grid is transparent, not a dead zone.** The drag passes straight
+through it to the enclosing grid, which becomes the target — so a note dropped
+over a chart-only sub-grid lands in the parent instead of being stuck. Refusing
+every grid resolves to no target at all and the drop cancels normally.
+
+| Rule | Behaviour |
+|---|---|
+| Signature | `(item, targetGrid, sourceGrid)`. `sourceGrid` is the grid the item was picked up from, so rules work in both directions ("only takes charts", "nothing leaves the archive"). For a same-grid drag both are the same controller. |
+| When it runs | On every pointer event, for the one or two grids actually under the pointer — evaluated after the cheap containment and `canAcceptCrossGridItems` checks. Keep it cheap and side-effect free. |
+| Memoization | None. A predicate may legitimately depend on live state, such as the target grid already being full. |
+| Exit sessions | A scope where every other grid refuses the item does not open one, so the tile never pops into a floating proxy it cannot land from. |
+| Per-grid override | None, by design. The predicate runs while resolving *which* grid is under the pointer, before any grid owns the interaction — branch on `targetGrid` instead. |
+
+**Two cases it cannot cover**, because both run before the target controller
+exists: dropping onto a **closed** host tile (`onItemDroppedOnHost` — the child
+grid is not mounted) and arming a **dynamic** nested grid (`subGridDynamic` —
+the grid is being requested, not entered). Both callbacks hand you the host
+item and the grids involved, which is where those rules belong.
 
 ### Swap Mode (Direct Position Exchange)
 
@@ -1685,7 +1722,7 @@ The development of `sliver_dashboard` can be assisted using AI coding assistants
 
 *   **Strict Architectural Constraints:** All contributions must align with the State, Logic, and View layers detailed in [ARCHITECTURE.md](ARCHITECTURE.md). AI assistants are further guided by the rules in [AGENTS.md](AGENTS.md) file, which dictates core invariants (such as avoiding allocations during layout phases, enforcing proper tree isolation via `RepaintBoundary`, and maintaining row-index consistency).
 *   **Systematic Human Review:** No generated code is merged without manual review to verify algorithmic efficiency, readability, and overall design cohesion.
-*   **CI Test Verification:** The suite of 600+ regression tests running in CI serves as the final validator. Every contribution, whether handwritten or co-authored with an AI, must pass all tests and respect documented performance budgets.
+*   **CI Test Verification:** The suite of 800+ regression tests running in CI serves as the final validator. Every contribution, whether handwritten or co-authored with an AI, must pass all tests and respect documented performance budgets.
 
 #### How to Contribute:
 1. **Understand the System:** Read [ARCHITECTURE.md](ARCHITECTURE.md) to familiarize yourself with the declarative UI, reactive state management, and nested grids protocol.

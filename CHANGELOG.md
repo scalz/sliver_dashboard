@@ -28,6 +28,12 @@ applications that implement the interface by hand must add them.
     the *opposite* of `dragMode` while held. Pass an empty list to remove the
     toggle.
 
+- **Per-grid drop rules for nested trees.** `canAcceptItem` on
+  `DashboardNestedScope` decides which items each grid of a tree accepts. A
+  refused grid is transparent: the drag passes through to the enclosing grid
+  rather than becoming a dead zone.
+  - `DashboardCanAcceptItemCallback(item, targetGrid, sourceGrid)`.
+
 - `GridStyle` gained `copyWith`, `==` and `hashCode`.
 
 ### Fixed
@@ -71,6 +77,10 @@ all three compaction modes, plus two targeted regression suites under
   cascade. A candidate qualifies when the drag box covers more than 50% of
   **the candidate's own area**, and the partner takes the mover's *pre-drag*
   slot.
+- `canAcceptItem` cannot cover two entry points that run before the target
+  controller exists: dropping onto a closed host tile (`onItemDroppedOnHost`)
+  and arming a dynamic nested grid (`subGridDynamic`). Filter those in their
+  own callbacks.
 - Tiles now carry an explicit `SystemMouseCursors.basic` cursor floor. Every
   MouseRegion inside a tile defers, so without it the lasso's ancestor region
   would have resolved as the cursor for tiles too. Anything deeper — resize

@@ -125,6 +125,30 @@ enum CrossGridProbe {
   itemCenter,
 }
 
+/// Decides whether [item], currently being dragged out of [sourceGrid], may
+/// land in [targetGrid].
+///
+/// Returning `false` makes the coordinator behave as if the pointer were not
+/// over [targetGrid] at all: the drag passes cleanly through to the enclosing
+/// grid, which becomes the target instead. It is a filter on the drop target,
+/// never a cancellation of the drag.
+///
+/// [sourceGrid] is the grid the item was picked up from — the same controller
+/// `onItemMovedToGrid` reports as the source — so rules can be expressed in
+/// either direction ("this grid only takes charts", "nothing ever leaves the
+/// archive"). For a drag that has not left its own grid, source and target
+/// are the same controller.
+///
+/// **Called on every pointer event over a candidate grid**, so keep it cheap
+/// and free of side effects. It is deliberately not memoized for the duration
+/// of a drag: a predicate may legitimately depend on live state, such as the
+/// target grid already being full.
+typedef DashboardCanAcceptItemCallback = bool Function(
+  LayoutItem item,
+  DashboardController targetGrid,
+  DashboardController sourceGrid,
+);
+
 /// The role a DashboardOverlay plays in cross-grid drag & drop.
 ///
 /// Implemented by the overlay state; the coordinator only ever talks to grids
@@ -239,7 +263,33 @@ class DashboardNestedCoordinator {
     this.projectionPolicy = DimensionProjectionPolicy.preserveLogicalSize,
     this.customProjectionCallback,
     this.hoverJitterTolerance = 4.0,
+    this.canAcceptItem,
   });
+
+  /// Business filter deciding which items each grid of the tree accepts.
+  ///
+  /// A single scope-wide handler serves the whole tree; branch on the
+  /// `targetGrid` argument to express per-grid rules. There is deliberately
+  /// no per-overlay override: unlike `onCloneRequested` or
+  /// `onItemDroppedOnHost`, this predicate is consulted while resolving which
+  /// grid is under the pointer — before any grid owns the interaction — so it
+  /// has to live where that resolution happens.
+  ///
+  /// See [DashboardCanAcceptItemCallback] for the contract, and [targetAt]
+  /// for exactly where it is evaluated.
+  ///
+  /// ### What it does NOT cover
+  /// Two nested-layer entry points cannot consult it, because they run before
+  /// the target controller exists:
+  ///
+  /// * dropping onto a **closed** host tile (`onItemDroppedOnHost`) — the
+  ///   child grid is not mounted, so there is no controller to pass;
+  /// * arming a **dynamic** nested grid (`subGridDynamic`) — the grid is
+  ///   being requested, not entered.
+  ///
+  /// Both hand you the host item and the grids involved in their own
+  /// callbacks, which is where those cases are meant to be filtered.
+  DashboardCanAcceptItemCallback? canAcceptItem;
 
   /// Fired after a successful cross-grid move (drag & drop or programmatic).
   DashboardItemMovedToGridCallback? onItemMovedToGrid;
@@ -883,13 +933,25 @@ class DashboardNestedCoordinator {
   /// [globalPosition]. Grids that do not [CrossGridDragTarget.canAcceptCrossGridItems]
   /// are skipped when [acceptingOnly] is true.
   ///
+  /// When [draggedItem] is supplied and [canAcceptItem] is set, a grid that
+  /// refuses the item is skipped exactly like one that does not contain the
+  /// point: the enclosing grid then wins the depth comparison and receives
+  /// the drag, which is what makes a refused sub-grid transparent rather than
+  /// a dead zone. Callers that are not resolving a drop target (a plain "which
+  /// grid is under this point?" query) omit [draggedItem] and get the
+  /// unfiltered answer.
+  ///
   /// O(G) where G is the number of live grids — a control-plane cost paid once
-  /// per pointer event, never per item.
+  /// per pointer event, never per item. The business filter runs LAST, after
+  /// the two cheap rejections, so it is invoked only for the one or two grids
+  /// that actually contain the point instead of for every registered grid.
   NestedGridRegistration? targetAt(
     Offset globalPosition, {
     bool acceptingOnly = true,
     DashboardController? excludeSourceController,
     String? excludeItemId,
+    LayoutItem? draggedItem,
+    DashboardController? sourceController,
   }) {
     NestedGridRegistration? best;
     for (final reg in _registrations) {
@@ -919,9 +981,31 @@ class DashboardNestedCoordinator {
         continue;
       }
 
+      // Business filter, evaluated last so user code runs only for grids the
+      // pointer is genuinely over. A refusal is a skip, not a stop: the loop
+      // keeps going and the enclosing grid wins on depth.
+      if (!_accepts(reg, draggedItem, sourceController)) {
+        continue;
+      }
+
       if (best == null || reg.depth > best.depth) best = reg;
     }
     return best;
+  }
+
+  /// Runs [canAcceptItem] for [reg], defaulting to acceptance.
+  ///
+  /// [sourceController] falls back to the target's own controller so a
+  /// same-grid drag still reports a coherent source rather than null.
+  bool _accepts(
+    NestedGridRegistration reg,
+    LayoutItem? item,
+    DashboardController? sourceController,
+  ) {
+    final filter = canAcceptItem;
+    if (filter == null || item == null) return true;
+    final target = reg.target.controller;
+    return filter(item, target, sourceController ?? target);
   }
 
   /// Whether at least one registered grid other than [self] currently accepts
@@ -929,11 +1013,15 @@ class DashboardNestedCoordinator {
   /// exit session (proxy pop-out, silent removal) when there is nowhere else
   /// the item could possibly land — e.g. a single-grid scope opened only for
   /// `subGridDynamicSameGrid`.
-  bool hasAnyTargetBesides(CrossGridDragTarget self) {
+  bool hasAnyTargetBesides(CrossGridDragTarget self, {LayoutItem? draggedItem}) {
     for (final reg in _registrations) {
-      if (!identical(reg.target, self) && reg.target.canAcceptCrossGridItems) {
-        return true;
-      }
+      if (identical(reg.target, self)) continue;
+      if (!reg.target.canAcceptCrossGridItems) continue;
+      // Same filter as [targetAt]: a scope whose every other grid refuses
+      // this item has nowhere for it to land, so opening an exit session
+      // would pop the tile into a floating proxy that can only be cancelled.
+      if (!_accepts(reg, draggedItem, self.controller)) continue;
+      return true;
     }
     return false;
   }
@@ -1026,6 +1114,8 @@ class DashboardNestedCoordinator {
       probePoint,
       excludeSourceController: session.origin.controller,
       excludeItemId: session.item.id,
+      draggedItem: session.item,
+      sourceController: session.origin.controller,
     );
     // Depth limit: dropping a *host* item (one that carries its own nested
     // grid) into a target adds a level below that target. Reject targets that
@@ -1449,6 +1539,7 @@ class DashboardNestedScope extends StatefulWidget {
     this.projectionPolicy = DimensionProjectionPolicy.preserveLogicalSize,
     this.customProjectionCallback,
     this.hoverJitterTolerance = 4.0,
+    this.canAcceptItem,
   });
 
   /// The subtree containing the dashboards.
@@ -1512,6 +1603,14 @@ class DashboardNestedScope extends StatefulWidget {
   /// [DashboardNestedCoordinator.hoverJitterTolerance].
   final double hoverJitterTolerance;
 
+  /// Business filter deciding which items each grid of the tree accepts.
+  ///
+  /// Returning `false` makes the drag pass through the refusing grid to its
+  /// parent, instead of turning it into a dead zone. See
+  /// [DashboardNestedCoordinator.canAcceptItem] for the exact scope of the
+  /// rule and the two entry points it cannot cover.
+  final DashboardCanAcceptItemCallback? canAcceptItem;
+
   /// The coordinator of the nearest enclosing scope, or null.
   static DashboardNestedCoordinator? maybeOf(BuildContext context) =>
       context.dependOnInheritedWidgetOfExactType<_DashboardNestedScopeProvider>()?.coordinator;
@@ -1552,7 +1651,8 @@ class _DashboardNestedScopeState extends State<DashboardNestedScope> {
       ..maxNestingDepth = widget.maxNestingDepth
       ..projectionPolicy = widget.projectionPolicy
       ..customProjectionCallback = widget.customProjectionCallback
-      ..hoverJitterTolerance = widget.hoverJitterTolerance;
+      ..hoverJitterTolerance = widget.hoverJitterTolerance
+      ..canAcceptItem = widget.canAcceptItem;
   }
 
   @override
