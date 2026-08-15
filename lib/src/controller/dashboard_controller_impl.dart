@@ -107,7 +107,21 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
   LassoStyle lassoStyle = LassoStyle.byDefault;
 
   @override
+  late final dragMode = B.writable<engine.DragMode>(engine.DragMode.cascade);
+
+  @override
+  late final swapModifierHeld = B.writable<bool>(false);
+
+  @override
   late final lassoModifierHeld = B.writable<bool>(false);
+
+  /// Effective mode of the frame the boundary bypass last computed.
+  ///
+  /// Part of the bypass key, not just bookkeeping: without it, flipping the
+  /// modifier mid-drag without moving the pointer leaves the target box
+  /// unchanged, the bypass returns early and the mode change is silently
+  /// swallowed — the one failure the view's re-trigger cannot fix on its own.
+  engine.DragMode? _lastDragMode;
 
   @override
   DashboardPolicy? policy;
@@ -1039,6 +1053,19 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
   }
 
   @override
+  void setDragMode(engine.DragMode mode) {
+    dragMode.value = mode;
+  }
+
+  @override
+  engine.DragMode getEffectiveDragMode({bool? modifierHeld}) {
+    final held = modifierHeld ?? swapModifierHeld.peek();
+    final base = dragMode.peek();
+    if (!held) return base;
+    return base == engine.DragMode.cascade ? engine.DragMode.swap : engine.DragMode.cascade;
+  }
+
+  @override
   void setAllowAutoShrink({required bool allow}) {
     allowAutoShrink.value = allow;
   }
@@ -1217,6 +1244,7 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     if (snapshot.isEmpty) return;
     _lastBBoxX = null;
     _lastBBoxY = null;
+    _lastDragMode = null;
     layout.value = List<LayoutItem>.from(snapshot);
   }
 
@@ -1451,6 +1479,7 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     // reset lock
     _lastBBoxX = null;
     _lastBBoxY = null;
+    _lastDragMode = null;
 
     // Snapshot layout for anti-drift
     originalLayoutOnStart.value = layout.value;
@@ -1540,7 +1569,15 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     // changed, the background grid is mathematically identical: only update
     // the lightweight overlay dragOffset. The pivot's logical position is
     // cached from the last moveCluster result instead of an O(N) firstWhere.
-    if (_lastBBoxX == targetBBoxX && _lastBBoxY == targetBBoxY) {
+    // Swap is restricted to single-item drags: a cluster has no single
+    // meaningful partner, and the restriction is also what keeps the default
+    // `Shift` modifier from colliding with Shift-built multi-selections.
+    final effectiveMode =
+        selectedItemIds.value.length == 1 ? getEffectiveDragMode() : engine.DragMode.cascade;
+
+    // Boundary Bypass — keyed on the effective mode as well as the target
+    // box, so a modifier flip with a stationary pointer is not swallowed.
+    if (_lastBBoxX == targetBBoxX && _lastBBoxY == targetBBoxY && _lastDragMode == effectiveMode) {
       final movedPivot = _lastMovedPivot ?? pivotItem;
       final logicalItemPixelX = movedPivot.x * (slotWidth + crossAxisSpacing);
       final logicalItemPixelY = movedPivot.y * (slotHeight + mainAxisSpacing);
@@ -1554,19 +1591,38 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
 
     _lastBBoxX = targetBBoxX;
     _lastBBoxY = targetBBoxY;
+    _lastDragMode = effectiveMode;
 
-    // 5. Move Cluster
-    final newLayout = engine.moveCluster(
-      originalLayoutOnStart.value,
-      selectedItemIds.value,
-      targetBBoxX,
-      targetBBoxY,
-      cols: slotCount.value,
-      compactType: compactionType.value,
-      preventCollision: preventCollision.value,
-      policy: policy,
-      allowAutoShrink: allowAutoShrink.value,
-    );
+    // 5. Move Cluster — or swap, when the mode asks for it AND the drop
+    // qualifies. `swapElements` returns null on any frame with no valid
+    // partner (empty space, a tile merely clipped, a static, a policy veto);
+    // that frame falls back to the cascade so the drag never feels stuck.
+    // Both paths recompute from `originalLayoutOnStart`, which is what makes
+    // switching modes mid-gesture exact rather than incremental.
+    final swapped = effectiveMode == engine.DragMode.swap
+        ? engine.swapElements(
+            originalLayoutOnStart.value,
+            pivotItem,
+            targetBBoxX,
+            targetBBoxY,
+            cols: slotCount.value,
+            compactType: compactionType.value,
+            policy: policy,
+          )
+        : null;
+
+    final newLayout = swapped ??
+        engine.moveCluster(
+          originalLayoutOnStart.value,
+          selectedItemIds.value,
+          targetBBoxX,
+          targetBBoxY,
+          cols: slotCount.value,
+          compactType: compactionType.value,
+          preventCollision: preventCollision.value,
+          policy: policy,
+          allowAutoShrink: allowAutoShrink.value,
+        );
 
     layout.value = newLayout;
 

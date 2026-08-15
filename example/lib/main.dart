@@ -162,6 +162,7 @@ class _DashboardPageState extends State<DashboardPage> {
   final lassoMode = ValueNotifier<LassoSelectionMode>(
     LassoSelectionMode.emptySpace,
   );
+  final dragMode = ValueNotifier<DragMode>(DragMode.cascade);
 
   // null = Use Responsive Breakpoints. Non-null = Override with custom fixed slot count.
   final customSlotCount = ValueNotifier<int?>(null);
@@ -577,6 +578,7 @@ class _DashboardPageState extends State<DashboardPage> {
       enableAltDragClone: enableAltDragClone,
       enableLassoGuidance: enableLassoGuidance,
       lassoMode: lassoMode,
+      dragMode: dragMode,
       customSlotCount: customSlotCount,
       compactionType: compactionType,
       resizeBehavior: resizeBehavior,
@@ -1084,6 +1086,7 @@ class _ConfigPanel extends StatelessWidget {
     required this.enableAltDragClone,
     required this.enableLassoGuidance,
     required this.lassoMode,
+    required this.dragMode,
     required this.customSlotCount,
     required this.compactionType,
     required this.resizeBehavior,
@@ -1108,6 +1111,7 @@ class _ConfigPanel extends StatelessWidget {
   final ValueNotifier<bool> enableAltDragClone;
   final ValueNotifier<bool> enableLassoGuidance;
   final ValueNotifier<LassoSelectionMode> lassoMode;
+  final ValueNotifier<DragMode> dragMode;
   final ValueNotifier<int?> maxRows;
   final ValueNotifier<int?> customSlotCount;
   final ValueNotifier<CompactType> compactionType;
@@ -1156,6 +1160,7 @@ class _ConfigPanel extends StatelessWidget {
                     const SizedBox(height: 4),
                     Text(
                       '• Shift + Click: Multi-select tiles\n'
+                      '• Shift + Drag a tile: toggle Swap / Cascade\n'
                       '• Drag on empty space: Lasso selection\n'
                       '• Shift + Lasso: Add to the current selection\n'
                       '• Ctrl + Drag: Duplicate tile\n'
@@ -1203,6 +1208,41 @@ class _ConfigPanel extends StatelessWidget {
           _SwitchTile(
             title: 'Lasso cursor & tooltip (guidance)',
             notifier: enableLassoGuidance,
+          ),
+          const SizedBox(height: 10),
+          Text(
+            'Drag Mode (Shift toggles the opposite)',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+              color: theme.colorScheme.primary,
+            ),
+          ),
+          const SizedBox(height: 4),
+          ValueListenableBuilder<DragMode>(
+            valueListenable: dragMode,
+            builder: (context, value, _) {
+              return DropdownButton<DragMode>(
+                isExpanded: true,
+                dropdownColor: theme.colorScheme.surfaceContainerHigh,
+                value: value,
+                items: const [
+                  DropdownMenuItem(
+                    value: DragMode.cascade,
+                    child: Text('CASCADE — PUSH NEIGHBOURS (DEFAULT)'),
+                  ),
+                  DropdownMenuItem(
+                    value: DragMode.swap,
+                    child: Text('SWAP — EXCHANGE POSITIONS'),
+                  ),
+                ],
+                onChanged: (v) {
+                  if (v == null) return;
+                  dragMode.value = v;
+                  controller.setDragMode(v);
+                },
+              );
+            },
           ),
           const SizedBox(height: 10),
           Text(

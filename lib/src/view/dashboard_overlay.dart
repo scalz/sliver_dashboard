@@ -488,11 +488,19 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
   LassoStyle get _lassoStyle => widget.controller.lassoStyle;
 
   /// Whether one of [DashboardShortcuts.lassoModifier] is held right now.
-  bool get _isLassoModifierHeld {
+  bool get _isLassoModifierHeld => _anyHeld(_effectiveShortcuts.lassoModifier);
+
+  /// Whether one of [DashboardShortcuts.swapModeModifier] is held right now.
+  ///
+  /// An empty list means "no modifier configured", which yields `false` and
+  /// leaves `DashboardController.dragMode` in sole control.
+  bool get _isSwapModifierHeld => _anyHeld(_effectiveShortcuts.swapModeModifier);
+
+  static bool _anyHeld(List<LogicalKeyboardKey> keys) {
+    if (keys.isEmpty) return false;
     final pressed = HardwareKeyboard.instance.logicalKeysPressed;
-    final modifiers = _effectiveShortcuts.lassoModifier;
-    for (var i = 0; i < modifiers.length; i++) {
-      if (pressed.contains(modifiers[i])) return true;
+    for (var i = 0; i < keys.length; i++) {
+      if (pressed.contains(keys[i])) return true;
     }
     return false;
   }
@@ -595,7 +603,7 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
     // no pointer event. Two Set lookups per key event; never registered on
     // Android / iOS, where the lasso does not exist.
     if (!_isMobile) {
-      HardwareKeyboard.instance.addHandler(_handleLassoModifierKey);
+      HardwareKeyboard.instance.addHandler(_handleModifierKey);
     }
   }
 
@@ -718,7 +726,7 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
   @override
   void dispose() {
     if (!_isMobile) {
-      HardwareKeyboard.instance.removeHandler(_handleLassoModifierKey);
+      HardwareKeyboard.instance.removeHandler(_handleModifierKey);
     }
     _detachLassoScrollListener();
     _lassoOverlay.dispose();
@@ -1428,6 +1436,9 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
         widget.controller.internal.onResizeStart(foundItem.id);
       } else {
         widget.onItemDragStart?.call(foundItem);
+        // Seed the modifier state: a key already held when the drag starts
+        // emits no key event, so the handler would never see it.
+        _syncSwapModifier(reevaluate: false);
         widget.controller.internal.onDragStart(foundItem.id);
       }
     } else {
@@ -1468,6 +1479,7 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
     // that id is not already selected, which is always true for a fresh
     // clone. That is what keeps the pivot inside the selection (the cluster
     // invariant) without this method touching the selection itself.
+    _syncSwapModifier(reevaluate: false);
     widget.controller.internal.onDragStart(effective.id);
   }
 
@@ -2279,19 +2291,52 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
     };
   }
 
-  /// Registered on desktop only and
-  /// never consumes the event; costs two `Set.contains` per key event.
+  /// Mirrors the two drag-related modifiers into observable state, and
+  /// re-evaluates a live drag when the swap modifier flips.
+  ///
+  /// Registered on desktop only and never consumes the event. Costs a handful
+  /// of `Set.contains` per key event, and short-circuits to nothing when the
+  /// state did not change — a held key repeating does not re-run a layout
+  /// pass.
   ///
   /// `HardwareKeyboard` updates its pressed-key map BEFORE dispatching to
   /// handlers, so the getters read here are accurate for the event being
   /// delivered.
-  bool _handleLassoModifierKey(KeyEvent event) {
+  bool _handleModifierKey(KeyEvent event) {
     if (event is KeyRepeatEvent) return false;
 
     final lassoHeld = _isLassoModifierHeld;
     final lassoBeacon = widget.controller.lassoModifierHeld;
     if (lassoHeld != lassoBeacon.peek()) lassoBeacon.value = lassoHeld;
+
+    _syncSwapModifier(reevaluate: true);
     return false;
+  }
+
+  /// Publishes the swap-modifier state to the controller and, when a drag is
+  /// live and the effective mode actually changed, replays the current
+  /// pointer position so the layout reflects the new mode immediately.
+  ///
+  /// The replay is mandatory: without it the mode would only take effect on
+  /// the next pointer movement, and a user holding the modifier over a
+  /// stationary cursor would see nothing happen. It is guarded on a real mode
+  /// change so that pressing an unrelated key mid-drag costs nothing.
+  void _syncSwapModifier({required bool reevaluate}) {
+    final controller = widget.controller;
+    final held = _isSwapModifierHeld;
+    if (held == controller.swapModifierHeld.peek()) return;
+
+    final before = controller.getEffectiveDragMode();
+    controller.swapModifierHeld.value = held;
+    if (!reevaluate) return;
+    if (controller.getEffectiveDragMode() == before) return;
+
+    // Resizes have no drag mode, and a lasso has no dragged item.
+    final position = _lastGlobalPosition;
+    if (position == null) return;
+    if (_activeItemId == null || _activeResizeHandle != null) return;
+    if (_activeSliverMetrics == null) return;
+    _performUpdate(position);
   }
 
   TextDirection get _lassoTextDirection => Directionality.maybeOf(context) ?? TextDirection.ltr;
