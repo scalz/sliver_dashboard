@@ -153,7 +153,7 @@ class VerticalCompactor extends CompactorDelegate {
 
   @override
   List<LayoutItem> resolveCollisions(List<LayoutItem> layout, int cols) {
-    return _resolveCollisionsDefault(layout, CompactType.vertical);
+    return _resolveCollisionsDefault(layout, CompactType.vertical, cols);
   }
 
   LayoutItem _compactItemVertical(
@@ -311,7 +311,7 @@ class HorizontalCompactor extends CompactorDelegate {
 
   @override
   List<LayoutItem> resolveCollisions(List<LayoutItem> layout, int cols) {
-    return _resolveCollisionsDefault(layout, CompactType.horizontal);
+    return _resolveCollisionsDefault(layout, CompactType.horizontal, cols);
   }
 
   LayoutItem _compactItemHorizontal(
@@ -418,7 +418,7 @@ class NoCompactor extends CompactorDelegate {
   @override
   List<LayoutItem> resolveCollisions(List<LayoutItem> layout, int cols) {
     // We use vertical resolution by default for "None" to prevent stacking
-    final resolved = _resolveCollisionsDefault(layout, CompactType.vertical);
+    final resolved = _resolveCollisionsDefault(layout, CompactType.vertical, cols);
 
     return [
       for (final item in resolved)
@@ -781,7 +781,21 @@ LayoutItem resolveCompactionCollision(
 // Row-indexed: each probe only visits rows that can plausibly overlap,
 // replacing the previous O(N^2) scan of the whole processed list
 // (499,500 collides() calls at N=1000) with O(N*k) work (~16k checks).
-List<LayoutItem> _resolveCollisionsDefault(List<LayoutItem> layout, CompactType compactType) {
+/// Pushes every colliding item along the compaction axis until the layout is
+/// overlap-free.
+///
+/// [cols] bounds the horizontal axis. Vertical resolution pushes down a
+/// **column count of rows that is unbounded**, so it can always find room;
+/// horizontal resolution pushes along a **finite** axis and must wrap to the
+/// next row when the push would leave the grid — the same rule
+/// [HorizontalCompactor._compactItemHorizontal] already applies. Callers with
+/// no meaningful column count pass a large sentinel, which reproduces the
+/// historical unbounded behaviour exactly.
+List<LayoutItem> _resolveCollisionsDefault(
+  List<LayoutItem> layout,
+  CompactType compactType,
+  int cols,
+) {
   final items = List<LayoutItem>.from(layout);
   final isHorizontal = compactType == CompactType.horizontal;
 
@@ -830,6 +844,26 @@ List<LayoutItem> _resolveCollisionsDefault(List<LayoutItem> layout, CompactType 
             : current.copyWith(y: obstacle.y + obstacle.h);
         hasCollision = true;
       }
+
+      // Overflow check, horizontal only, and checked even when nothing
+      // collided this round: the item may have arrived already outside the
+      // grid, and the push above may have just carried it out.
+      //
+      // Wrapping — not clamping — is the correct repair. Clamping to
+      // `cols - w` would put the item straight back onto the obstacle it was
+      // pushed off, trading a bounds violation for an OVERLAP violation, and
+      // overlap is the invariant everything downstream relies on. Wrapping
+      // mirrors `_compactItemHorizontal`, which has always resolved
+      // overflows this way; the two paths now agree.
+      //
+      // An item wider than the grid can never fit on any row, so wrapping it
+      // would spin until the safety counter. It is left where it is: an
+      // out-of-bounds item is a lesser failure than a hung layout pass.
+      if (isHorizontal && current.w <= cols && current.x + current.w > cols) {
+        current = current.copyWith(x: 0, y: current.y + 1);
+        hasCollision = true;
+      }
+
       safety++;
     }
     processed.add(current);
@@ -860,9 +894,19 @@ List<LayoutItem> compact(
 /// Resolves collisions.
 ///
 /// This function now delegates to the appropriate [CompactorDelegate].
-List<LayoutItem> resolveCollisions(List<LayoutItem> layout, CompactType compactType) {
+/// Resolves collisions.
+///
+/// [cols] is optional only for backward compatibility: omitting it keeps the
+/// historical `10000` sentinel, i.e. a horizontal resolution that is free to
+/// push items past the last column. Every in-package caller passes the real
+/// value; new callers should too.
+List<LayoutItem> resolveCollisions(
+  List<LayoutItem> layout,
+  CompactType compactType, {
+  int? cols,
+}) {
   final delegate = _getDelegate(compactType);
-  return delegate.resolveCollisions(layout, 10000);
+  return delegate.resolveCollisions(layout, cols ?? 10000);
 }
 
 CompactorDelegate _getDelegate(CompactType type) {
@@ -1091,10 +1135,12 @@ Layout moveElement(
   // The monotonic cascade is overlap-free by construction; keep the legacy
   // full resolution strictly as a fallback, gated behind a cheap O(N*k)
   // verification instead of running the O(N^2) pass on every drag frame.
-  if (preventCollision && _hasResidualOverlap(resultLayout, rowIndex)) {
+  if ((preventCollision || compactType == CompactType.horizontal) &&
+      _hasResidualOverlap(resultLayout, rowIndex)) {
     return resolveCollisions(
       resultLayout,
       compactType == CompactType.none ? CompactType.vertical : compactType,
+      cols: cols,
     );
   }
 
@@ -1567,7 +1613,7 @@ List<LayoutItem> optimizeLayout(List<LayoutItem> layout, int columns) {
   // If the optimizer accidentally placed an item on top of a static item (overlap),
   // this function will detect it and push the dynamic item down, ensuring
   // a valid layout with zero overlaps.
-  return resolveCollisions(placedItems, CompactType.vertical);
+  return resolveCollisions(placedItems, CompactType.vertical, cols: columns);
 }
 
 /// Calculates the bounding box of a group of items.
@@ -1745,6 +1791,7 @@ Layout? swapElements(
     return resolveCollisions(
       result,
       compactType == CompactType.none ? CompactType.vertical : compactType,
+      cols: cols,
     )..sort((a, b) => a.id.compareTo(b.id));
   }
 

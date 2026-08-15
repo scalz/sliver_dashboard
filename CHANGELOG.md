@@ -1,97 +1,93 @@
-**No API breaking changes.**
+
+**No API breaking changes.** New members were added to `DashboardController`;
+applications that implement the interface by hand must add them.
 
 ### Added
 
-- **Swap drag mode (direct position exchange):** a dragged tile can now trade
-  places with the tile it lands on instead of pushing it away.
-  - **New enum** `DragMode` (`cascade`, `swap`) and **new engine function**
-    `swapElements`, a pure function returning `null` when the drop does not
-    qualify.
-  - **New controller API:** `dragMode` beacon (default `DragMode.cascade`),
-    `setDragMode()`, `getEffectiveDragMode({bool? modifierHeld})` and the
-    view-driven `swapModifierHeld` beacon.
-  - **New `DashboardShortcuts.swapModeModifier`** (defaults to the `Shift`
-    keys) which selects the OPPOSITE of `dragMode` while held, so a package
-    left on its default `cascade` gets swap on `Shift`, and a package set to
-    `swap` gets cascade on `Shift`. Pass an empty list to remove the toggle.
-  - **Nothing changes by default.** `DragMode.cascade` is the default and
-    reproduces the previous behaviour exactly; swap is opt-in through the
-    controller or the modifier.
-  - Swap is **opportunistic**: a frame with no qualifying partner (empty
-    space, a tile merely clipped, a static, a policy veto) falls back to the
-    cascade, so the drag never feels stuck.
-  - A candidate qualifies when the drag box covers **more than 50% of the
-    candidate's own area** — measured against the candidate, not the mover, so
-    a small tile dropped on a large one does not swap until it is genuinely on
-    it. Ties break on absolute overlap then id, so the result is
-    order-independent.
-  - The partner takes the mover's **pre-drag** slot (clamped into the grid),
-    not the coordinates the drag is requesting.
-  - Restricted to **single-item drags**. That is also what keeps the `Shift`
-    default safe next to `multiSelectKeys`: a Shift-built multi-selection can
-    never be silently turned into a swap.
-  - Unequal sizes run the compactor's collision resolution to restore the
-    0-overlap invariant, and only then — a same-size swap stays a pure
-    coordinate exchange with no cascade.
-  - Holding or releasing the modifier **mid-drag** re-runs the layout at the
-    current pointer position immediately, with no pointer movement required.
-- **Rectangle / Lasso selection ("Rubberband"):** on desktop and web, drag over
-  empty grid space to select every tile the rectangle overlaps.
-  - **New `LassoStyle`** (`mode`, `fillColor`, `borderColor`, `borderWidth`)
-    and **new enum** `LassoSelectionMode` (`emptySpace`, `modifierRequired`,
-    `disabled`), with `LassoStyle.byDefault` and `LassoStyle.off`.
-  - **New `DashboardController.lassoStyle`**, settable like `shortcuts` and
-    `guidance`: `controller.lassoStyle = LassoStyle.off;`. The lasso is
-    interaction policy, not grid painting, so it is deliberately NOT part of
-    `GridStyle` — a dashboard that draws no background grid configures it the
-    same way as any other, and each grid of a nested tree carries its own
-    policy with no prop drilling.
-  - **New `DashboardController.lassoModifierHeld`** beacon, symmetric with
-    `swapModifierHeld`: written by `DashboardOverlay` (the only layer that
-    sees key events), read by applications that want a mode indicator. It is
-    what lets the lasso cursor appear on a key press that moved no pointer.
-  - **New `DashboardShortcuts.lassoModifier`** (defaults to `shiftLeft` /
-    `shiftRight`), a `List<LogicalKeyboardKey>` like `multiSelectKeys` and
-    `cloneKeys` — it is evaluated against the pressed-key set during a pointer
-    event, where no `KeyEvent` exists.
-  - **New `DashboardGuidance` fields**: `lassoSelect` (cursor + message,
-    default `SystemMouseCursors.precise`), `a11yLassoStart` and `a11yLassoEnd`
-    (`A11yCountMessageBuilder`). Announcements fire with or without guidance;
-    the cursor and the on-screen label require `guidance != null`.
-  - `LassoSelectionMode.disabled` restores the pre-2.5.0 behaviour of an
-    empty-space drag exactly, for applications that bind it themselves.
-  - Selection is previewed live during the drag, replaces the previous
-    selection by default, and is **additive** while a `multiSelectKeys` key is
-    held. Pure static tiles are never selected; section barriers are, matching
-    a plain click.
-  - Edge auto-scroll and mouse-wheel scrolling are supported: the anchor is
-    stored in grid-content space, so the rectangle stays pinned to the content.
+- **Rectangle / Lasso selection.** On desktop and web, drag over empty grid
+  space to select every tile the rectangle overlaps. Selection previews live,
+  replaces the current selection by default, and is additive while a
+  `multiSelectKeys` key is held. Edge auto-scroll and the mouse wheel are
+  supported.
+  - `LassoStyle` (`mode`, `fillColor`, `borderColor`, `borderWidth`) and
+    `LassoSelectionMode` (`emptySpace`, `modifierRequired`, `disabled`), with
+    `LassoStyle.byDefault` and `LassoStyle.off`.
+  - `DashboardController.lassoStyle` and `lassoModifierHeld`.
+  - `DashboardShortcuts.lassoModifier` (defaults to `Shift`).
+  - `DashboardGuidance.lassoSelect`, `a11yLassoStart`, `a11yLassoEnd`, and the
+    `A11yCountMessageBuilder` typedef.
 
+- **Swap drag mode.** A dragged tile can trade places with the tile it lands
+  on instead of pushing it away. **Off by default** — `DragMode.cascade`
+  reproduces the previous behaviour exactly.
+  - `DragMode` (`cascade`, `swap`) and the pure engine function
+    `swapElements`, which returns `null` when the drop does not qualify.
+  - `DashboardController.dragMode`, `setDragMode()`,
+    `getEffectiveDragMode({bool? modifierHeld})` and `swapModifierHeld`.
+  - `DashboardShortcuts.swapModeModifier` (defaults to `Shift`), which selects
+    the *opposite* of `dragMode` while held. Pass an empty list to remove the
+    toggle.
 
-### Notes
+- `GridStyle` gained `copyWith`, `==` and `hashCode`.
 
-- The lasso is a pointer-device feature: it is never armed on Android or iOS,
-  where an empty-space drag scrolls the grid.
-- Tiles now carry an explicit `SystemMouseCursors.basic` floor. Every
-  MouseRegion inside a tile defers (`FocusableActionDetector` and
-  `GuidanceInteractor` both build one with no cursor), so the lasso's ancestor
-  region would otherwise have resolved as the cursor for tiles too. Anything
-  deeper — resize handles, application content — still wins.
-- A press on empty space that never moves is still a no-op — the rectangle
-  materializes on the first movement past the drag threshold, exactly like the
-  Alt+drag clone. Clicking the background does not clear the selection.
-- `GridStyle` gained `copyWith`, `==` and `hashCode`. It had none, which meant
-  the background painter's `shouldRepaint` compared it by identity; it now
-  short-circuits on value equality.
-- The guidance bubble was extracted from `GuidanceInteractor` into a shared
-  `GuidanceBubble`, so the lasso label is the same tooltip as the hover and
-  long-press messages rather than a second, subtly different style. No visual
-  change to existing guidance.
-- `lassoModifier` and `multiSelectKeys` overlap by default (both are `Shift`)
-  and that is intentional — unlike `cloneKeys`, no assertion forbids it. Under
-  `modifierRequired`, a key that is both counts as the trigger only, so a
-  replacing lasso stays reachable.
+### Fixed
 
+- **Horizontal compaction could return overlapping items.** With
+  `CompactType.horizontal` and `preventCollision: false`, `moveElement` — and
+  therefore `moveCluster`, which delegates to it — could return a layout with
+  two items sharing cells. The residual-overlap verification was skipped on
+  the assumption that the push cascade is overlap-free by construction, which
+  only holds on the unbounded vertical axis. It now runs whenever the axis is
+  bounded. **The vertical path is unchanged.**
+
+- **Horizontal collision resolution escaped the grid.** `resolveCollisions`
+  pushed an obstructed item past the last column. It now wraps to the next
+  row, matching what `_compactItemHorizontal` has always done.
+  `resolveCollisions` gained an optional `cols:` argument; omitting it keeps
+  the previous unbounded behaviour, so external callers are unaffected.
+  - **Migration:** layouts persisted while items had escaped the grid are
+    pulled back inside on first load. `CompactType.horizontal` only.
+
+Both are guarded by a seeded fuzz over `moveElement` and `moveCluster` across
+all three compaction modes, plus two targeted regression suites under
+`test/engine/`.
+
+### Behaviour notes
+
+- The lasso is a pointer-device feature and is never armed on Android or iOS,
+  where an empty-space drag scrolls the grid. A press on empty space that
+  never moves stays a no-op: clicking the background does not clear the
+  selection.
+- `lassoModifier`, `swapModeModifier` and `multiSelectKeys` all default to
+  `Shift`. They are read at three different moments — empty-space press, drag
+  update, selection click — so they never contend. Under `modifierRequired`, a
+  key that is both a lasso trigger and a multi-select key counts as the
+  trigger only, so a replacing lasso stays reachable; and swap applies to
+  single-item drags only, so a Shift-built multi-selection can never become a
+  swap.
+- Screen-reader announcements fire with or without `guidance`. Only the cursor
+  change and the on-screen label require `guidance != null`.
+- Swap is opportunistic: a frame with no qualifying partner falls back to the
+  cascade. A candidate qualifies when the drag box covers more than 50% of
+  **the candidate's own area**, and the partner takes the mover's *pre-drag*
+  slot.
+- Tiles now carry an explicit `SystemMouseCursors.basic` cursor floor. Every
+  MouseRegion inside a tile defers, so without it the lasso's ancestor region
+  would have resolved as the cursor for tiles too. Anything deeper — resize
+  handles, application content — still wins.
+- The guidance bubble moved into a shared `GuidanceBubble` so the lasso label
+  matches the hover and long-press tooltips. No visual change to existing
+  guidance.
+
+### Performance
+
+- Horizontal compaction now pays one O(N·k) residual-overlap verification per
+  `moveElement` call, where it previously paid none unless `preventCollision`
+  was set. This is a correctness fix, not a regression to accept silently;
+  vertical and `none` are unaffected. The cost is bounded by cell crossings,
+  not pointer frequency, because the drag boundary bypass only calls the
+  engine when the target cell changes.
+    
 ## 2.5.0
 
 **No API breaking changes.**
