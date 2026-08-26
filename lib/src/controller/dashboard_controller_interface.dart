@@ -18,13 +18,15 @@ typedef DashboardItemInteractionCallback = void Function(LayoutItem item);
 
 /// A callback that is fired when the layout of the dashboard changes.
 ///
-/// [items]: The new layout items.
+/// [items]: The new layout items as an **unmodifiable list** (`List<LayoutItem>.unmodifiable`).
+/// Attempting to mutate this list directly (e.g. `items.sort()`, `items.add()`) will throw
+/// an [UnsupportedError]. To obtain a mutable copy, call `items.toList()`.
 /// [slotCount]: The number of columns associated with this layout (useful for responsive persistence).
 typedef DashboardLayoutChangeListener = void Function(List<LayoutItem> items, int slotCount);
 
 /// A callback fired *after* an undo or a redo restored a layout.
 ///
-/// [restoredLayout]: the layout that is now live.
+/// [restoredLayout]: the layout that is now live, as an **unmodifiable list** (`List<LayoutItem>.unmodifiable`).
 /// [slotCount]: the column count that layout is expressed in.
 ///
 /// This fires in addition to [DashboardLayoutChangeListener], never instead of
@@ -36,14 +38,16 @@ typedef DashboardHistoryRestoreListener = void Function(
 
 /// A veto hook consulted *before* an undo or a redo is applied.
 ///
-/// [candidateLayout] is the layout that would become live. Returning `false`
-/// (or a future completing with `false`) cancels the operation: the layout,
+/// [candidateLayout] is the candidate layout that would become live, provided as
+/// an **unmodifiable list** (`List<LayoutItem>.unmodifiable`).
+/// Returning `false` (or a future completing with `false`) cancels the operation: the layout,
 /// the history cursor and the `canUndo` / `canRedo` beacons are all left
 /// untouched, and `undo()` / `redo()` return `false`.
 ///
 /// The hook may be asynchronous (e.g. to show a confirmation dialog). The
 /// controller re-validates the history cursor after awaiting it and aborts if
-/// anything moved in the meantime.
+/// anything moved in the meantime. The candidate layout must not be retained across
+/// async gaps expecting it to remain live.
 typedef DashboardHistoryVeto = FutureOr<bool> Function(
   List<LayoutItem> candidateLayout,
 );

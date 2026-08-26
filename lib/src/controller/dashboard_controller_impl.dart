@@ -278,6 +278,21 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     return true;
   }
 
+  /// Notifies [onLayoutChanged] with an unmodifiable copy of the current layout.
+  ///
+  /// INVARIANT: Every emission of [onLayoutChanged] must pass through this method.
+  /// Handing out an unmodifiable list prevents external listeners (persistence,
+  /// sorting, debug logging) from corrupting the controller's internal layout state
+  /// or breaking the ascending ID order invariant in place.
+  void _notifyLayoutChanged([List<LayoutItem>? unmodifiableItems]) {
+    final listener = onLayoutChanged;
+    if (listener == null) return;
+    listener(
+      unmodifiableItems ?? List<LayoutItem>.unmodifiable(layout.value),
+      slotCount.value,
+    );
+  }
+
   /// Records the live state as a new history entry.
   ///
   /// INVARIANT — transactional boundaries only. This is called exclusively at
@@ -483,8 +498,9 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     _syncHistoryFlags();
     _pruneSelection();
 
-    onLayoutChanged?.call(layout.value, slotCount.value);
-    (isUndo ? onUndo : onRedo)?.call(layout.value, slotCount.value);
+    final unmodifiableItems = List<LayoutItem>.unmodifiable(layout.value);
+    _notifyLayoutChanged(unmodifiableItems);
+    (isUndo ? onUndo : onRedo)?.call(unmodifiableItems, slotCount.value);
     return true;
   }
 
@@ -707,7 +723,7 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     }
     // Re-compact with new strategy
     layout.value = _compactor.compact(layout.value, slotCount.value);
-    onLayoutChanged?.call(layout.value, slotCount.value);
+    _notifyLayoutChanged();
   }
 
   @override
@@ -718,7 +734,7 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
 
     // Trigger an immediate re-layout using the new strategy.
     layout.value = _compactor.compact(layout.value, slotCount.value);
-    onLayoutChanged?.call(layout.value, slotCount.value);
+    _notifyLayoutChanged();
   }
 
   @override
@@ -746,7 +762,7 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     );
 
     _recordHistory();
-    onLayoutChanged?.call(layout.value, slotCount.value);
+    _notifyLayoutChanged();
   }
 
   @override
@@ -779,7 +795,7 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
 
     layout.value = newLayout;
     _recordHistory();
-    onLayoutChanged?.call(layout.value, slotCount.value);
+    _notifyLayoutChanged();
 
     clearSelection();
   }
@@ -898,7 +914,7 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
       _recordHistory();
     }
 
-    onLayoutChanged?.call(layout.value, slotCount.value);
+    _notifyLayoutChanged();
   }
 
   @override
@@ -959,7 +975,7 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     }
 
     // 5. Notify layout changes
-    onLayoutChanged?.call(layout.value, slotCount.value);
+    _notifyLayoutChanged();
   }
 
   @override
@@ -1012,7 +1028,7 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     );
 
     _recordHistory();
-    onLayoutChanged?.call(layout.value, slotCount.value);
+    _notifyLayoutChanged();
   }
 
   @override
@@ -1184,7 +1200,7 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     placeholder.value = null;
     originalLayoutOnStart.value = [];
 
-    onLayoutChanged?.call(layout.value, slotCount.value);
+    _notifyLayoutChanged();
   }
 
   /// Call when a drag gesture starts on a dashboard item.
@@ -1314,7 +1330,7 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
         layout.value = compactionType.value == engine.CompactType.none
             ? _compactor.resolveCollisions(current, slotCount.value)
             : _compactor.compact(current, slotCount.value);
-        onLayoutChanged?.call(layout.value, slotCount.value);
+        _notifyLayoutChanged();
       case CrossGridExitOutcome.returned:
         break;
       case CrossGridExitOutcome.canceled:
@@ -1356,7 +1372,7 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     placeholder.value = null;
     originalLayoutOnStart.value = [];
 
-    onLayoutChanged?.call(layout.value, slotCount.value);
+    _notifyLayoutChanged();
     var placed = newItem;
     for (final i in layout.value) {
       if (i.id == newItem.id) {
@@ -1413,7 +1429,7 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     layout.value = compactionType.value == engine.CompactType.none
         ? _compactor.resolveCollisions(newLayout, slotCount.value)
         : _compactor.compact(newLayout, slotCount.value);
-    onLayoutChanged?.call(layout.value, slotCount.value);
+    _notifyLayoutChanged();
     for (final i in layout.value) {
       if (i.id == itemId) return i;
     }
@@ -1655,7 +1671,7 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
 
     layout.value = finalLayout;
     _recordHistory();
-    onLayoutChanged?.call(layout.value, slotCount.value);
+    _notifyLayoutChanged();
 
     _isDraggingState.value = false;
     _pivotItemId = null;
@@ -1879,7 +1895,7 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     layout.value = finalLayout;
     _recordHistory();
 
-    onLayoutChanged?.call(layout.value, slotCount.value);
+    _notifyLayoutChanged();
 
     isResizing.value = false;
     _pivotItemId = null;
@@ -1972,7 +1988,7 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
 
     layout.value = optimized;
     _recordHistory();
-    onLayoutChanged?.call(layout.value, slotCount.value);
+    _notifyLayoutChanged();
   }
 
   // Helper to get temporary delegate for overrides

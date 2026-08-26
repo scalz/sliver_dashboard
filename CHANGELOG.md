@@ -97,6 +97,9 @@ all three compaction modes, plus two targeted regression suites under
   vertical and `none` are unaffected. The cost is bounded by cell crossings,
   not pointer frequency, because the drag boundary bypass only calls the
   engine when the target cell changes.
+
+### Breaking Changes
+- **Unmodifiable Layout Callbacks**: `onLayoutChanged`, `onUndo`, `onRedo`, `onWillUndo`, and `onWillRedo` now provide a `List<LayoutItem>.unmodifiable` instead of the controller's internal mutable `layout.value` reference. If you were mutating or sorting the list in-place inside `onLayoutChanged`, call `items.toList()` first.
     
 ## 2.5.0
 
