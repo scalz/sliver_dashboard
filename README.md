@@ -1398,11 +1398,15 @@ The dashboard is fully accessible out of the box. When **Edit Mode** is enabled,
 
 | Key | Action |
 | :--- | :--- |
-| **Tab** | Focus the next item. |
-| **Space** / **Enter** | **Grab** the focused item (arm dragging). |
+| **Tab** / **Shift + Tab** | Focus the next / previous item. |
+| **Space** / **Enter** | **Grab** the focused item (arm drag) or **Drop** the item. |
 | **Arrow Keys** | **Move** the grabbed item (Up, Down, Left, Right). |
-| **Space** / **Enter** | **Drop** the item at the new position. |
-| **Esc** | **Cancel** the move and return the item to its original position. |
+| **Delete** / **Backspace** | **Delete** the selected or focused item(s) (fires `onWillDelete` / `onItemsDeleted`). |
+| **Ctrl + A** / **Cmd + A** | **Select all** non-static items in the grid. |
+| **Ctrl + D** / **Cmd + D** | **Duplicate** the selected item(s) via `onCloneRequested`. |
+| **Ctrl + Z** / **Cmd + Z** | **Undo** the last layout change. |
+| **Ctrl + Y** / **Cmd + Shift + Z** | **Redo** the last undone layout change. |
+| **Escape** | **Cancel** current drag movement, or **Deselect all** when idle. |
 
 **Screen Readers:** The dashboard integrates with `SemanticsService` to announce:
 *   Item selection ("Item {id} grabbed").

@@ -68,6 +68,15 @@ class DashboardOverlayController {
   /// Starts a drag operation programmatically on the item with the given [itemId]
   /// using the provided [globalPosition] as the start coordinate.
   void startDragging(String itemId, Offset globalPosition) {}
+
+  /// Deletion veto callback.
+  DashboardWillDeleteCallback? get onWillDelete => null;
+
+  /// Deletion commit callback.
+  DashboardItemsDeletedCallback? get onItemsDeleted => null;
+
+  /// Clone callback.
+  DashboardCloneRequestCallback? get onCloneRequested => null;
 }
 
 /// An InheritedWidget that provides a [DashboardOverlayController] to its descendants.
@@ -595,6 +604,15 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
   bool get _isMobile =>
       defaultTargetPlatform == TargetPlatform.android ||
       defaultTargetPlatform == TargetPlatform.iOS;
+
+  @override
+  DashboardWillDeleteCallback? get onWillDelete => widget.onWillDelete;
+
+  @override
+  DashboardItemsDeletedCallback? get onItemsDeleted => widget.onItemsDeleted;
+
+  @override
+  DashboardCloneRequestCallback? get onCloneRequested => _cloneCallback;
 
   @override
   void startDragging(String itemId, Offset globalPosition) {

@@ -1248,6 +1248,9 @@ void main() {
     test('DashboardOverlayController default constructor and methods', () {
       const controller = DashboardOverlayController();
       expect(() => controller.startDragging('1', Offset.zero), returnsNormally);
+      expect(controller.onWillDelete, isNull);
+      expect(controller.onItemsDeleted, isNull);
+      expect(controller.onCloneRequested, isNull);
     });
 
     testWidgets(
@@ -3796,6 +3799,186 @@ void main() {
         await g2.up();
         await tester.pumpAndSettle();
       });
+    });
+  });
+
+  group('Dashboard A11y & Keyboard Shortcuts Suite', () {
+    late DashboardControllerImpl controller;
+    const itemA = LayoutItem(id: 'A', x: 0, y: 0, w: 2, h: 2);
+    const itemB = LayoutItem(id: 'B', x: 2, y: 0, w: 2, h: 2);
+    const staticItem = LayoutItem(id: 'S', x: 0, y: 2, w: 4, h: 1, isStatic: true);
+
+    setUp(() {
+      controller = DashboardControllerImpl(
+        initialSlotCount: 4,
+        initialLayout: [itemA, itemB, staticItem],
+      )..setEditMode(true);
+    });
+
+    tearDown(() => controller.dispose());
+
+    Widget buildTestHarness({
+      DashboardWillDeleteCallback? onWillDelete,
+      DashboardItemsDeletedCallback? onItemsDeleted,
+      DashboardCloneRequestCallback? onCloneRequested,
+    }) {
+      return MaterialApp(
+        home: Scaffold(
+          body: FocusScope(
+            autofocus: true,
+            child: Dashboard<String>(
+              controller: controller,
+              onWillDelete: onWillDelete,
+              onItemsDeleted: onItemsDeleted,
+              onCloneRequested: onCloneRequested,
+              itemBuilder: (ctx, item) => SizedBox(child: Text('Card-${item.id}')),
+            ),
+          ),
+        ),
+      );
+    }
+
+    testWidgets('Delete key deletes the focused item when idle', (tester) async {
+      var deletedCount = 0;
+      await tester.pumpWidget(
+        buildTestHarness(
+          onItemsDeleted: (items) => deletedCount = items.length,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final itemAFinder =
+          find.ancestor(of: find.text('Card-A'), matching: find.byType(DashboardItem));
+      await _requestFocus(tester, itemAFinder);
+      await tester.sendKeyEvent(LogicalKeyboardKey.delete);
+      await tester.pumpAndSettle();
+
+      expect(controller.layout.value.any((i) => i.id == 'A'), isFalse);
+      expect(deletedCount, 1);
+    });
+
+    testWidgets('Delete key respects onWillDelete veto hook', (tester) async {
+      await tester.pumpWidget(
+        buildTestHarness(
+          onWillDelete: (items) async => false, // VETO
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final itemAFinder =
+          find.ancestor(of: find.text('Card-A'), matching: find.byType(DashboardItem));
+      await _requestFocus(tester, itemAFinder);
+      await tester.sendKeyEvent(LogicalKeyboardKey.backspace);
+      await tester.pumpAndSettle();
+
+      expect(controller.layout.value.any((i) => i.id == 'A'), isTrue);
+    });
+
+    testWidgets('Ctrl+A selects all non-static items in edit mode', (tester) async {
+      await tester.pumpWidget(buildTestHarness());
+      await tester.pumpAndSettle();
+
+      final itemAFinder =
+          find.ancestor(of: find.text('Card-A'), matching: find.byType(DashboardItem));
+      await _requestFocus(tester, itemAFinder);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyA);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pumpAndSettle();
+
+      expect(controller.selectedItemIds.value, {'A', 'B'});
+      expect(controller.selectedItemIds.value.contains('S'), isFalse); // Statics excluded
+    });
+
+    testWidgets('Escape clears selection when idle and items are selected', (tester) async {
+      await tester.pumpWidget(buildTestHarness());
+      await tester.pumpAndSettle();
+
+      controller.selectedItemIds.value = {'A', 'B'};
+      await tester.pump();
+
+      final itemAFinder =
+          find.ancestor(of: find.text('Card-A'), matching: find.byType(DashboardItem));
+      await _requestFocus(tester, itemAFinder);
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+
+      expect(controller.selectedItemIds.value, isEmpty);
+    });
+
+    testWidgets('Ctrl+D duplicates selected items via onCloneRequested', (tester) async {
+      var cloneCount = 0;
+      await tester.pumpWidget(
+        buildTestHarness(
+          onCloneRequested: (source, grid) {
+            cloneCount++;
+            return source.copyWith(id: '${source.id}_copy');
+          },
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final itemAFinder =
+          find.ancestor(of: find.text('Card-A'), matching: find.byType(DashboardItem));
+      await _requestFocus(tester, itemAFinder);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyD);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pumpAndSettle();
+
+      expect(cloneCount, 1);
+      expect(controller.layout.value.any((i) => i.id == 'A_copy'), isTrue);
+      expect(controller.selectedItemIds.value, {'A_copy'});
+    });
+
+    testWidgets('Ctrl+Z triggers undo and Ctrl+Y triggers redo', (tester) async {
+      await tester.pumpWidget(buildTestHarness());
+      await tester.pumpAndSettle();
+
+      controller.addItem(const LayoutItem(id: 'C', x: 0, y: 3, w: 1, h: 1));
+      expect(controller.layout.value.any((i) => i.id == 'C'), isTrue);
+      expect(controller.canUndo.value, isTrue);
+
+      final itemAFinder =
+          find.ancestor(of: find.text('Card-A'), matching: find.byType(DashboardItem));
+      await _requestFocus(tester, itemAFinder);
+
+      // Undo
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyZ);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pumpAndSettle();
+
+      expect(controller.layout.value.any((i) => i.id == 'C'), isFalse);
+      expect(controller.canRedo.value, isTrue);
+
+      // Redo
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyY);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pumpAndSettle();
+
+      expect(controller.layout.value.any((i) => i.id == 'C'), isTrue);
+    });
+
+    testWidgets('Delete key executes deletion when onWillDelete returns true', (tester) async {
+      var deletedCount = 0;
+      await tester.pumpWidget(
+        buildTestHarness(
+          onWillDelete: (items) async => true,
+          onItemsDeleted: (items) => deletedCount = items.length,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final itemAFinder =
+          find.ancestor(of: find.text('Card-A'), matching: find.byType(DashboardItem));
+      await _requestFocus(tester, itemAFinder);
+      await tester.sendKeyEvent(LogicalKeyboardKey.delete);
+      await tester.pumpAndSettle();
+
+      expect(controller.layout.value.any((i) => i.id == 'A'), isFalse);
+      expect(deletedCount, 1);
     });
   });
 }

@@ -1,3 +1,5 @@
+import 'dart:async' show unawaited;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:sliver_dashboard/src/controller/dashboard_controller_interface.dart'
@@ -9,6 +11,7 @@ import 'package:sliver_dashboard/src/view/a11y/dashboard_intents.dart';
 import 'package:sliver_dashboard/src/view/a11y/dashboard_shortcuts.dart';
 import 'package:sliver_dashboard/src/view/dashboard_configuration.dart';
 import 'package:sliver_dashboard/src/view/dashboard_item_wrapper.dart';
+import 'package:sliver_dashboard/src/view/dashboard_overlay.dart' show DashboardOverlayProvider;
 import 'package:sliver_dashboard/src/view/dashboard_typedefs.dart';
 import 'package:sliver_dashboard/src/view/guidance/dashboard_guidance.dart';
 import 'package:state_beacon/state_beacon.dart';
@@ -263,6 +266,112 @@ class _DashboardItemState extends State<DashboardItem>
           final guidance = controller.guidance ?? DashboardGuidance.byDefault;
           controller.cancelInteraction();
           _announce(guidance.a11yCancel);
+        } else if (controller.selectedItemIds.peek().isNotEmpty) {
+          controller.clearSelection();
+        }
+        return null;
+      },
+    ),
+    DashboardDeleteItemIntent: CallbackAction<DashboardDeleteItemIntent>(
+      onInvoke: (_) {
+        if (!widget.isEditing) return null;
+        final controller = DashboardControllerProvider.of(context);
+        final overlay = DashboardOverlayProvider.maybeOf(context);
+        final selectedIds = controller.selectedItemIds.peek();
+        final idsToDelete = selectedIds.contains(widget.item.id) ? selectedIds : {widget.item.id};
+
+        final itemsToDelete = controller.layout
+            .peek()
+            .where((i) => idsToDelete.contains(i.id) && (!i.isStatic || i.isSectionBarrier))
+            .toList();
+
+        if (itemsToDelete.isEmpty) return null;
+
+        void executeDeletion() {
+          controller.removeItems(itemsToDelete.map((e) => e.id).toList());
+          overlay?.onItemsDeleted?.call(itemsToDelete);
+          final guidance = controller.guidance ?? DashboardGuidance.byDefault;
+          _announce(guidance.a11yDelete(itemsToDelete.length));
+        }
+
+        final willDelete = overlay?.onWillDelete;
+        if (willDelete != null) {
+          unawaited(() async {
+            final approved = await willDelete(itemsToDelete);
+            if (approved) executeDeletion();
+          }());
+        } else {
+          executeDeletion();
+        }
+        return null;
+      },
+    ),
+    DashboardSelectAllIntent: CallbackAction<DashboardSelectAllIntent>(
+      onInvoke: (_) {
+        if (!widget.isEditing) return null;
+        final controller = DashboardControllerProvider.of(context);
+        final nonStaticIds = controller.layout
+            .peek()
+            .where((i) => !i.isStatic || i.isSectionBarrier)
+            .map((i) => i.id)
+            .toSet();
+        if (nonStaticIds.isEmpty) return null;
+        controller.selectedItemIds.value = nonStaticIds;
+        final guidance = controller.guidance ?? DashboardGuidance.byDefault;
+        _announce(guidance.a11ySelectAll(nonStaticIds.length));
+        return null;
+      },
+    ),
+    DashboardDuplicateItemIntent: CallbackAction<DashboardDuplicateItemIntent>(
+      onInvoke: (_) {
+        if (!widget.isEditing) return null;
+        final controller = DashboardControllerProvider.of(context);
+        final overlay = DashboardOverlayProvider.maybeOf(context);
+        final cloneCallback = overlay?.onCloneRequested;
+        if (cloneCallback == null) return null;
+
+        final selectedIds = controller.selectedItemIds.peek();
+        final idsToDuplicate =
+            selectedIds.contains(widget.item.id) ? selectedIds : {widget.item.id};
+
+        final itemsToDuplicate = controller.layout
+            .peek()
+            .where((i) => idsToDuplicate.contains(i.id) && (!i.isStatic || i.isSectionBarrier))
+            .toList();
+
+        if (itemsToDuplicate.isEmpty) return null;
+
+        final newItems = <LayoutItem>[];
+        for (final item in itemsToDuplicate) {
+          final clone = cloneCallback(item, controller);
+          if (clone != null && !controller.layout.peek().any((i) => i.id == clone.id)) {
+            newItems.add(clone.copyWith(x: item.x, y: item.y, moved: false));
+          }
+        }
+
+        if (newItems.isNotEmpty) {
+          controller.addItems(newItems);
+          controller.selectedItemIds.value = {for (final i in newItems) i.id};
+          final guidance = controller.guidance ?? DashboardGuidance.byDefault;
+          _announce(guidance.a11yDuplicate(newItems.length));
+        }
+        return null;
+      },
+    ),
+    DashboardUndoIntent: CallbackAction<DashboardUndoIntent>(
+      onInvoke: (_) {
+        final controller = DashboardControllerProvider.of(context);
+        if (controller.canUndo.peek()) {
+          controller.undo().ignore();
+        }
+        return null;
+      },
+    ),
+    DashboardRedoIntent: CallbackAction<DashboardRedoIntent>(
+      onInvoke: (_) {
+        final controller = DashboardControllerProvider.of(context);
+        if (controller.canRedo.peek()) {
+          controller.redo().ignore();
         }
         return null;
       },
@@ -292,6 +401,12 @@ class _DashboardItemState extends State<DashboardItem>
       };
       _idleShortcuts = <ShortcutActivator, Intent>{
         for (final key in config.grab) key: const DashboardGrabItemIntent(),
+        for (final key in config.delete) key: const DashboardDeleteItemIntent(),
+        for (final key in config.selectAll) key: const DashboardSelectAllIntent(),
+        for (final key in config.duplicate) key: const DashboardDuplicateItemIntent(),
+        for (final key in config.undo) key: const DashboardUndoIntent(),
+        for (final key in config.redo) key: const DashboardRedoIntent(),
+        for (final key in config.cancel) key: const DashboardCancelInteractionIntent(),
       };
     }
     return isActive ? _activeShortcuts : _idleShortcuts;

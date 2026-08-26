@@ -51,6 +51,14 @@ to define their intrinsic footprint (`w`, `h`), resize constraints (`minW`/`maxW
 flags (`isSectionBarrier`, `isStatic`, `isResizable`), and `extra` metadata during drag-over 
 and upon drop. Forwarded across `DashboardOverlay`, `Dashboard`, and `NestedDashboard`.
 
+- **Native Keyboard Shortcuts & A11y Actions**:
+  - `Delete` / `Backspace` (`DashboardDeleteItemIntent`) to remove selected items (respecting `onWillDelete` / `onItemsDeleted`).
+  - `Ctrl+A` / `Cmd+A` (`DashboardSelectAllIntent`) to select all editable items.
+  - `Ctrl+D` / `Cmd+D` (`DashboardDuplicateItemIntent`) to duplicate selected items.
+  - `Ctrl+Z` / `Cmd+Z` (`DashboardUndoIntent`) & `Ctrl+Y` / `Cmd+Shift+Z` (`DashboardRedoIntent`) to navigate layout history.
+  - `Escape` (`DashboardCancelInteractionIntent`) to clear active selection when idle.
+  - Screen reader feedback builders: `a11yDelete`, `a11ySelectAll`, and `a11yDuplicate` on `DashboardGuidance`.
+  
 - Added `copyWith`, `==`, and `hashCode` to `GridStyle`.
 
 ### Fixed

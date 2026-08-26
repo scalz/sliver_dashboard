@@ -29,6 +29,27 @@ class DashboardShortcuts {
     this.moveRight = const {
       SingleActivator(LogicalKeyboardKey.arrowRight),
     },
+    this.delete = const {
+      SingleActivator(LogicalKeyboardKey.delete),
+      SingleActivator(LogicalKeyboardKey.backspace),
+    },
+    this.selectAll = const {
+      SingleActivator(LogicalKeyboardKey.keyA, control: true),
+      SingleActivator(LogicalKeyboardKey.keyA, meta: true),
+    },
+    this.duplicate = const {
+      SingleActivator(LogicalKeyboardKey.keyD, control: true),
+      SingleActivator(LogicalKeyboardKey.keyD, meta: true),
+    },
+    this.undo = const {
+      SingleActivator(LogicalKeyboardKey.keyZ, control: true),
+      SingleActivator(LogicalKeyboardKey.keyZ, meta: true),
+    },
+    this.redo = const {
+      SingleActivator(LogicalKeyboardKey.keyY, control: true),
+      SingleActivator(LogicalKeyboardKey.keyZ, control: true, shift: true),
+      SingleActivator(LogicalKeyboardKey.keyZ, meta: true, shift: true),
+    },
     this.multiSelectKeys = const [
       LogicalKeyboardKey.shiftLeft,
       LogicalKeyboardKey.shiftRight,
@@ -60,7 +81,7 @@ class DashboardShortcuts {
   /// Keys to drop (stop dragging) an item.
   final Set<ShortcutActivator> drop;
 
-  /// Keys to cancel the interaction.
+  /// Keys to cancel the interaction or clear selection.
   final Set<ShortcutActivator> cancel;
 
   /// Keys to move the item up.
@@ -74,6 +95,21 @@ class DashboardShortcuts {
 
   /// Keys to move the item right.
   final Set<ShortcutActivator> moveRight;
+
+  /// Keys to delete the selected / focused items.
+  final Set<ShortcutActivator> delete;
+
+  /// Keys to select all editable items in the grid.
+  final Set<ShortcutActivator> selectAll;
+
+  /// Keys to duplicate the selected / focused items.
+  final Set<ShortcutActivator> duplicate;
+
+  /// Keys to undo the last layout change.
+  final Set<ShortcutActivator> undo;
+
+  /// Keys to redo the last undone layout change.
+  final Set<ShortcutActivator> redo;
 
   /// Keys held down during a click to trigger multi-selection.
   /// Defaults to Shift, Control, and Meta (Command) keys.

@@ -24,8 +24,38 @@ class DashboardMoveItemIntent extends Intent {
   final int dy;
 }
 
-/// Intent to cancel the current interaction and revert changes.
+/// Intent to cancel the current interaction (or clear selection when idle).
 class DashboardCancelInteractionIntent extends Intent {
   /// Creates a [DashboardCancelInteractionIntent].
   const DashboardCancelInteractionIntent();
+}
+
+/// Intent to delete the selected item(s) or the currently focused item.
+class DashboardDeleteItemIntent extends Intent {
+  /// Creates a [DashboardDeleteItemIntent].
+  const DashboardDeleteItemIntent();
+}
+
+/// Intent to select all non-static items in the grid.
+class DashboardSelectAllIntent extends Intent {
+  /// Creates a [DashboardSelectAllIntent].
+  const DashboardSelectAllIntent();
+}
+
+/// Intent to duplicate the active / selected item(s).
+class DashboardDuplicateItemIntent extends Intent {
+  /// Creates a [DashboardDuplicateItemIntent].
+  const DashboardDuplicateItemIntent();
+}
+
+/// Intent to undo the last layout transaction.
+class DashboardUndoIntent extends Intent {
+  /// Creates a [DashboardUndoIntent].
+  const DashboardUndoIntent();
+}
+
+/// Intent to redo the last undone layout transaction.
+class DashboardRedoIntent extends Intent {
+  /// Creates a [DashboardRedoIntent].
+  const DashboardRedoIntent();
 }
