@@ -40,6 +40,7 @@ class Dashboard<T extends Object> extends StatefulWidget {
     this.resizeHandleSide = 20.0,
     this.placeholderWidth = 1,
     this.placeholderHeight = 1,
+    this.externalTemplateBuilder,
     this.onDrop,
     this.gridStyle = const GridStyle(),
     this.itemStyle = DashboardItemStyle.defaultStyle,
@@ -148,6 +149,9 @@ class Dashboard<T extends Object> extends StatefulWidget {
 
   /// The height of the placeholder item in grid units when dragging from outside.
   final int placeholderHeight;
+
+  /// Optional builder to resolve the template [LayoutItem] for an external draggable payload.
+  final DashboardExternalTemplateBuilder<T>? externalTemplateBuilder;
 
   /// Callback when an external draggable is dropped onto the dashboard.
   final DashboardDropCallback<T>? onDrop;
@@ -349,6 +353,7 @@ class _DashboardState<T extends Object> extends State<Dashboard<T>> {
       onItemDroppedOnHost: widget.onItemDroppedOnHost,
       onItemResizeStart: widget.onItemResizeStart,
       onItemResizeEnd: widget.onItemResizeEnd,
+      externalTemplateBuilder: widget.externalTemplateBuilder,
       onDrop: widget.onDrop,
       resizeHandleSide: widget.resizeHandleSide,
       placeholderWidth: widget.placeholderWidth,

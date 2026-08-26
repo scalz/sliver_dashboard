@@ -36,6 +36,8 @@ applications that implement the interface by hand must add them.
 
 - `GridStyle` gained `copyWith`, `==` and `hashCode`.
 
+- **`DashboardExternalTemplateBuilder<T>`**: Allow external draggable payloads (`DragTarget`) to define their intrinsic footprint (`w`, `h`), resize constraints (`minW`/`maxW`/`minH`/`maxH`), flags (`isSectionBarrier`, `isStatic`, `isResizable`), and `extra` metadata during drag-over and upon drop. Forwarded across `DashboardOverlay`, `Dashboard`, and `NestedDashboard`.
+
 ### Fixed
 
 - **Horizontal compaction could return overlapping items.** With

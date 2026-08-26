@@ -159,6 +159,7 @@ The view layer has been refactored to support native Sliver composition. It is c
   main-axis padding legitimately appears). Containment = strict
   sliver bounds, relaxed to the remaining viewport under `fillViewport`
   (which only exists in single-grid setups).
+- **Payload-Aware External Drop (`externalTemplateBuilder`):** `DashboardOverlay` resolves incoming `DragTarget<T>` payloads via `DashboardExternalTemplateBuilder<T>`. When provided, the template's dimensions size the live hover placeholder (clamped to available slot columns), and its constraints (`minW`/`minH`/`maxW`/`maxH`), flags (`isStatic`, `isSectionBarrier`, `isResizable`), and `extra` metadata are passed directly to `onDropExternalItem(template:)` on commit.
 
 #### B. `SliverDashboard` (The Rendering Layer)
 - **Role:** Renders the actual items within the scroll view using the Sliver protocol.

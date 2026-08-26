@@ -136,6 +136,7 @@ class DashboardOverlay<T extends Object> extends StatefulWidget {
     this.resizeHandleSide = 20.0,
     this.placeholderWidth = 1,
     this.placeholderHeight = 1,
+    this.externalTemplateBuilder,
     this.onDrop,
     this.itemGlobalKeySuffix = '',
     this.backgroundBuilder,
@@ -292,6 +293,13 @@ class DashboardOverlay<T extends Object> extends StatefulWidget {
 
   /// The height of the placeholder item in grid units when dragging from outside.
   final int placeholderHeight;
+
+  /// Optional builder to resolve the template [LayoutItem] for an external draggable payload of type [T].
+  ///
+  /// When provided and returning non-null, its width and height size the hover
+  /// placeholder, and its constraints/flags/extra seed the item upon drop.
+  /// If null or returning null, falls back to [placeholderWidth] and [placeholderHeight].
+  final DashboardExternalTemplateBuilder<T>? externalTemplateBuilder;
 
   /// Callback when an external draggable is dropped onto the dashboard.
   final DashboardDropCallback<T>? onDrop;
@@ -751,12 +759,12 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
         overlayController: this,
         child: DragTarget<T>(
           onWillAcceptWithDetails: (details) {
-            _updatePlaceholderPosition(details.offset);
+            _updatePlaceholderPosition(details.offset, details.data);
             return true;
           },
           onMove: (details) {
             _lastGlobalPosition = details.offset;
-            _updatePlaceholderPosition(details.offset);
+            _updatePlaceholderPosition(details.offset, details.data);
             _handleAutoScroll(details.offset);
           },
           onLeave: (data) {
@@ -784,7 +792,18 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
             if (placeholder != null) {
               final newId = await widget.onDrop?.call(details.data, placeholder);
               if (newId != null) {
-                widget.controller.internal.onDropExternal(newId: newId);
+                final template = widget.externalTemplateBuilder?.call(details.data);
+                if (template != null) {
+                  widget.controller.internal.onDropExternalItem(
+                    template: template.copyWith(
+                      id: newId,
+                      x: placeholder.x,
+                      y: placeholder.y,
+                    ),
+                  );
+                } else {
+                  widget.controller.internal.onDropExternal(newId: newId);
+                }
               } else {
                 widget.controller.internal.hidePlaceholder();
               }
@@ -2459,7 +2478,12 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
         } else if (widget.controller.currentDragPlaceholder != null) {
           // External DragTarget hover only; never resurrect a placeholder
           // from a stale position (e.g. when scrolled by delegation).
-          _updatePlaceholderPosition(_lastGlobalPosition!);
+          final p = widget.controller.currentDragPlaceholder!;
+          _showPlaceholderAt(
+            _lastGlobalPosition!,
+            w: p.w,
+            h: p.h,
+          );
         }
       }
     });
@@ -2475,11 +2499,12 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
     _scrollSpeed = 0.0;
   }
 
-  void _updatePlaceholderPosition(Offset globalPosition) {
+  void _updatePlaceholderPosition(Offset globalPosition, T data) {
+    final template = widget.externalTemplateBuilder?.call(data);
     _showPlaceholderAt(
       globalPosition,
-      w: widget.placeholderWidth,
-      h: widget.placeholderHeight,
+      w: template?.w ?? widget.placeholderWidth,
+      h: template?.h ?? widget.placeholderHeight,
     );
   }
 

@@ -3563,4 +3563,239 @@ void main() {
       });
     });
   });
+
+  group('externalTemplateBuilder — DragTarget payload sizing', () {
+    testWidgets(
+        'hover placeholder matches template dimensions and drop preserves all constraints and flags',
+        (tester) async {
+      await runOnDesktop(() async {
+        final controller = DashboardController(
+          initialSlotCount: 8,
+          initialLayout: const [LayoutItem(id: 'existing', x: 0, y: 0, w: 2, h: 2)],
+        )..setEditMode(true);
+        addTearDown(controller.dispose);
+
+        final scrollController = ScrollController();
+        addTearDown(scrollController.dispose);
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: Column(
+                children: [
+                  const Draggable<Map<String, dynamic>>(
+                    data: {'type': 'chart', 'w': 4, 'h': 2, 'minW': 2, 'maxW': 6},
+                    feedback: SizedBox(width: 80, height: 40, child: ColoredBox(color: Colors.red)),
+                    child: Text('Drag Chart'),
+                  ),
+                  Expanded(
+                    child: Dashboard<Map<String, dynamic>>(
+                      controller: controller,
+                      scrollController: scrollController,
+                      externalTemplateBuilder: (data) => LayoutItem(
+                        id: '',
+                        x: 0,
+                        y: 0,
+                        w: data['w'] as int,
+                        h: data['h'] as int,
+                        minW: data['minW'] as int,
+                        maxW: (data['maxW'] as int).toDouble(),
+                        isResizable: true,
+                        extra: {'category': data['type']},
+                      ),
+                      onDrop: (data, item) async => 'new_chart',
+                      itemBuilder: (context, item) => Text('Item ${item.id}'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        final draggableFinder = find.text('Drag Chart');
+        final gesture = await tester.startGesture(
+          tester.getCenter(draggableFinder),
+          kind: PointerDeviceKind.mouse,
+        );
+        await tester.pump();
+
+        // Move onto dashboard grid
+        final dashboardFinder = find.byType(CustomScrollView);
+        await gesture.moveTo(tester.getCenter(dashboardFinder));
+        await tester.pump();
+
+        // 1. Verify that the hover placeholder is sized 4x2 according to the template
+        final placeholder = controller.currentDragPlaceholder;
+        expect(placeholder, isNotNull);
+        expect(placeholder!.w, 4);
+        expect(placeholder.h, 2);
+
+        // 2. Drop
+        await gesture.up();
+        await tester.pumpAndSettle();
+
+        // 3. Verify that the placed item kept constraints, flags, dimensions, and extra metadata
+        final placed = controller.layout.value.firstWhere((i) => i.id == 'new_chart');
+        expect(placed.w, 4);
+        expect(placed.h, 2);
+        expect(placed.minW, 2);
+        expect(placed.maxW, 6);
+        expect(placed.isResizable, isTrue);
+        expect(placed.extra, {'category': 'chart'});
+      });
+    });
+
+    testWidgets('dropping a section barrier template lands as a static barrier', (tester) async {
+      await runOnDesktop(() async {
+        final controller = DashboardController(
+          initialSlotCount: 8,
+          initialLayout: const [LayoutItem(id: 'a', x: 0, y: 1, w: 2, h: 2)],
+        )..setEditMode(true);
+        addTearDown(controller.dispose);
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: Column(
+                children: [
+                  const Draggable<String>(
+                    data: 'barrier',
+                    feedback:
+                        SizedBox(width: 100, height: 20, child: ColoredBox(color: Colors.grey)),
+                    child: Text('Drag Barrier'),
+                  ),
+                  Expanded(
+                    child: Dashboard<String>(
+                      controller: controller,
+                      scrollController: ScrollController(),
+                      externalTemplateBuilder: (data) => const LayoutItem(
+                        id: '',
+                        x: 0,
+                        y: 0,
+                        w: 8,
+                        h: 1,
+                        isSectionBarrier: true,
+                        sectionTitle: 'New Section',
+                      ),
+                      onDrop: (data, item) async => 'sec_header',
+                      itemBuilder: (context, item) => Text('Item ${item.id}'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        final gesture = await tester.startGesture(
+          tester.getCenter(find.text('Drag Barrier')),
+          kind: PointerDeviceKind.mouse,
+        );
+        await tester.pump();
+        await gesture.moveTo(tester.getCenter(find.byType(CustomScrollView)));
+        await tester.pump();
+
+        await gesture.up();
+        await tester.pumpAndSettle();
+
+        final barrier = controller.layout.value.firstWhere((i) => i.id == 'sec_header');
+        expect(barrier.isSectionBarrier, isTrue);
+        expect(barrier.isStatic, isTrue);
+        expect(barrier.sectionTitle, 'New Section');
+        expect(barrier.w, 8);
+      });
+    });
+
+    testWidgets('leave-then-re-enter with different payload re-resolves the template immediately',
+        (tester) async {
+      await runOnDesktop(() async {
+        final controller = DashboardController(
+          initialSlotCount: 8,
+          initialLayout: const [],
+        )..setEditMode(true);
+        addTearDown(controller.dispose);
+
+        final scrollController = ScrollController();
+        addTearDown(scrollController.dispose);
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: Column(
+                children: [
+                  const Row(
+                    children: [
+                      Draggable<int>(
+                        data: 2, // 2x1 item
+                        feedback: SizedBox(width: 40, height: 20),
+                        child: Text('Item 2x1'),
+                      ),
+                      Draggable<int>(
+                        data: 4, // 4x2 item
+                        feedback: SizedBox(width: 80, height: 40),
+                        child: Text('Item 4x2'),
+                      ),
+                    ],
+                  ),
+                  Expanded(
+                    child: Dashboard<int>(
+                      controller: controller,
+                      scrollController: scrollController,
+                      externalTemplateBuilder: (data) => LayoutItem(
+                        id: '',
+                        x: 0,
+                        y: 0,
+                        w: data,
+                        h: data == 4 ? 2 : 1,
+                      ),
+                      itemBuilder: (context, item) => Text('Item ${item.id}'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        final gridCenter = tester.getCenter(find.byType(CustomScrollView));
+
+        // 1. Drag first item (2x1) into grid
+        final g1 = await tester.startGesture(
+          tester.getCenter(find.text('Item 2x1')),
+          kind: PointerDeviceKind.mouse,
+        );
+        await tester.pump();
+        await g1.moveTo(gridCenter);
+        await tester.pump();
+        expect(controller.currentDragPlaceholder?.w, 2);
+        expect(controller.currentDragPlaceholder?.h, 1);
+
+        // Leave grid (arms leaveTimer)
+        await g1.moveTo(const Offset(10, 10));
+        await tester.pump();
+        await g1.up();
+        await tester.pump();
+
+        // 2. Drag second item (4x2) into grid within the leave window
+        final g2 = await tester.startGesture(
+          tester.getCenter(find.text('Item 4x2')),
+          kind: PointerDeviceKind.mouse,
+        );
+        await tester.pump();
+        await g2.moveTo(gridCenter);
+        await tester.pump();
+
+        // Must re-resolve template to 4x2 without retaining stale 2x1 size
+        expect(controller.currentDragPlaceholder?.w, 4);
+        expect(controller.currentDragPlaceholder?.h, 2);
+
+        await g2.up();
+        await tester.pumpAndSettle();
+      });
+    });
+  });
 }
