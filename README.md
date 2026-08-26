@@ -76,6 +76,7 @@ The package is WebAssembly (WASM) compatible. Building your production applicati
   - [Undo / Redo (Layout History)](#undo--redo-layout-history)
 - [Drag & Drop](#drag--drop)
   - [Dragging From Outside](#dragging-from-outside)
+  - [Persisting Layout Changes](#persisting-layout-changes)
   - [Drag to Delete (Trash Bin)](#drag-to-delete-trash-bin)
   - [Custom Drag Handles & Mobile Gestures](#custom-drag-handles--mobile-gestures)
   - [Custom Drag Feedback](#custom-drag-feedback)
@@ -368,35 +369,250 @@ Everything about moving items: external sources, deletion, gestures, feedback, a
 
 ### Dragging From Outside
 
-You can drag items from another widget into the Dashboard. The Dashboard handles auto-scrolling and placement.
+You can drag items from an external source (palette, sidebar) directly into the Dashboard. The grid handles auto-scrolling, live collision pushes, and placement automatically.
+
+Use `externalTemplateBuilder` to define the intrinsic size, resize constraints, and metadata of each component type so the hover preview and the inserted tile match the component's true footprint:
 
 ```dart
 // 1. The Source
-Draggable<MyData>(
-  data: MyData(title: 'New Item'),
-  child: Text('Drag Me'),
-  feedback: Card(child: Text('Dragging...')),
+Draggable<ComponentSpec>(
+  data: const ComponentSpec(type: 'chart_sales', defaultW: 4, defaultH: 2, minW: 2),
+  feedback: const Card(child: Text('Dragging Chart (4x2)...')),
+  child: const Text('Sales Chart'),
 )
 
 // 2. The Target (Dashboard or DashboardOverlay)
-Dashboard<MyData>(
+Dashboard<ComponentSpec>(
   controller: controller,
-  // Called when the item is dropped.
-  // 'item' contains the target coordinates (x, y) calculated by the dashboard.
-  onDrop: (MyData data, LayoutItem item) {
-    final newId = 'new_${DateTime.now().millisecondsSinceEpoch}';
-
-    // Add your data
-    myData[newId] = data;
-
-    // Return the new ID to the controller to finalize the placement
-    return newId;
+  // Define template geometry and constraints per payload
+  externalTemplateBuilder: (spec) => LayoutItem(
+    id: '', // ignored — onDrop provides the real persistent id
+    x: 0, y: 0, // ignored — pointer decides
+    w: spec.defaultW,
+    h: spec.defaultH,
+    minW: spec.minW,
+    extra: {'type': spec.type},
+  ),
+  // Commit the drop and assign the persistent ID
+  onDrop: (spec, placeholder) async {
+    final saved = await api.createWidget(spec, x: placeholder.x, y: placeholder.y);
+    return saved.id; // null cancels the drop
   },
+  itemBuilder: (context, item) => MyWidget(item),
   // Optional: Customize the placeholder shown while hovering
   externalPlaceholderBuilder: (context, item) {
     return Container(color: Colors.blue.withOpacity(0.2));
   },
 )
+```
+
+| Field | On Drop | Behavior |
+|---|---|---|
+| `w`, `h` | **Honoured** | Sizes the hover placeholder and the final tile |
+| `minW`, `minH`, `maxW`, `maxH` | **Honoured** | Preserves component resize constraints |
+| `extra` | **Honoured** | Seeds business metadata immediately without a secondary write |
+| `isSectionBarrier`, `isStatic` | **Honoured** | Allows dragging section dividers or static cards directly from a palette |
+| `id`, `x`, `y`, `moved` | **Ignored** | `onDrop` assigns the ID; coordinates are resolved by pointer placement |
+
+#### The id `onDrop` returns
+
+`onDrop` is the single place where **your application, not the package, names the tile**. Returning `null` cancels the drop and leaves the layout untouched.
+
+This is important when dragging entities that **do not exist yet in your backend**: the payload carries an unsaved draft, the drop commits it, and the ID assigned by your database on insert becomes the tile's permanent ID.
+
+
+```dart
+onDrop: (WidgetDraft draft, LayoutItem placeholder) async {
+  try {
+    // `placeholder` contains the exact grid coordinates resolved by the engine
+    final saved = await api.createWidget(
+      draft,
+      x: placeholder.x,
+      y: placeholder.y,
+      w: placeholder.w,
+      h: placeholder.h,
+    );
+    cache[saved.id] = saved;
+    return saved.id; // One identity shared across DB and grid
+  } on ApiException catch (e) {
+    messenger.showSnackBar(SnackBar(content: Text('Could not add: $e')));
+    return null; // Cancel drop: placeholder disappears, layout untouched
+  }
+},
+```
+
+The same rule applies to [`onCloneRequested`](#duplicate-on-drag-alt--option): a duplicate tile needs a **new ID unique across the entire grid tree**.
+
+> **Carrying business data on the tile:** Do not subclass `LayoutItem`. The layout engine reconstructs items using `copyWith` during pushes and compaction, so custom subclasses would be lost. Use [`extra`](#layoutitem) for JSON-serializable metadata, and keep live controllers/widgets in an application-side map keyed by the tile ID.
+
+#### What the grid does while an async `onDrop` is awaited
+
+When `onDrop` performs an asynchronous operation (e.g. API request), be aware of the engine's concurrency contract:
+
+- **The grid is not locked:** No modal barrier is installed. The user can still drag other tiles, resize items, or hit undo while your request is in flight.
+- **The placeholder stays frozen:** The placeholder remains at its release position with neighbours pushed aside (rendering your `externalPlaceholderBuilder`).
+- **Concurrent drops can race:** If a second drop occurs before the first completes, the single placeholder is replaced by the newest one.
+
+Depending on your UX requirements, two architectural patterns are recommended:
+
+##### Option A: Optimistic Placement (Fastest UX)
+Mint a local ID immediately, return it synchronously to let the grid place the tile instantly, and sync with your backend in the background (with a rollback if the API fails).
+
+##### Option B: Guarded Drop (Safe & Synchronized)
+Keep the `await`, make the operation exclusive with an in-flight guard, and always bound the network call with a timeout:
+
+```dart
+bool _dropInFlight = false;
+
+onDrop: (draft, placeholder) async {
+  // Prevent concurrent drops from clashing while one is pending
+  if (_dropInFlight) return null;
+  _dropInFlight = true;
+  setState(() {}); // Show loading indicator in your palette if desired
+  
+  try {
+    final saved = await api.createWidget(
+    draft,
+    x: placeholder.x,
+    y: placeholder.y,
+    ).timeout(const Duration(seconds: 5));
+    
+    cache[saved.id] = saved;
+    return saved.id;
+  } on TimeoutException {
+    messenger.showSnackBar(const SnackBar(content: Text('Server timeout')));
+    return null; // Cancels drop, removes placeholder cleanly
+  } on ApiException catch (e) {
+    messenger.showSnackBar(SnackBar(content: Text('Failed: $e')));
+    return null;
+  } finally {
+    _dropInFlight = false;
+    if (mounted) setState(() {});
+  }
+},
+```
+
+Always bound the wait. Without a timeout, an unreachable server leaves the
+placeholder on the grid for as long as the request hangs, and the user has no
+way to dismiss it.
+
+Give `externalPlaceholderBuilder` a pending state so the frozen rectangle reads
+as "saving" rather than "stuck".
+
+### Persisting Layout Changes
+
+#### When `onLayoutChanged` fires — read this first
+
+`onLayoutChanged` is called **once per completed transaction, never per frame**. `onDragUpdate` runs at 60/120 Hz internally without notifying; `onDragEnd` and `onResizeEnd` emit exactly once when the gesture commits.
+
+It fires on: drag end, resize end, item add/remove/update, import, `optimizeLayout`, and **undo / redo**.
+
+```dart
+DashboardController(
+  initialSlotCount: 12,
+  onLayoutChanged: (items, slotCount) => repo.save(items, slotCount),
+);
+```
+
+#### Immutability and Debouncing
+
+The `items` list passed to `onLayoutChanged` is an **unmodifiable snapshot** (`List<LayoutItem>.unmodifiable`). Attempting to mutate it directly (`items.sort(...)`, `items.clear()`) will throw an `UnsupportedError`. If you need a mutable working copy, call `items.toList()`.
+
+If you debounce database writes to batch multiple rapid tile moves, map the snapshot immediately into lightweight DTOs:
+
+```dart
+List<({String id, int x, int y, int w, int h})>? _pending;
+Timer? _debounce;
+
+void _onLayoutChanged(List<LayoutItem> items, int slotCount) {
+  // 1. Capture data immediately
+  _pending = [
+    for (final i in items) (id: i.id, x: i.x, y: i.y, w: i.w, h: i.h),
+  ];
+  // 2. Coalesce rapid moves
+  _debounce?.cancel();
+  _debounce = Timer(const Duration(milliseconds: 300), _flush);
+}
+
+@override
+void dispose() {
+  _debounce?.cancel();
+  super.dispose();
+}
+```
+
+Similarly, candidate layouts passed to `onWillUndo` / `onWillRedo` are unmodifiable and must not be retained across async gaps expecting them to remain live.
+
+#### Write a diff in one transaction
+
+`onLayoutChanged` provides a complete layout snapshot. To optimize backend writes, diff against your last written state and batch in a single database transaction:
+
+```dart
+Future<void> _flush() async {
+  final snapshot = _pending;
+  if (snapshot == null) return;
+  _pending = null;
+
+  final changed = [
+    for (final row in snapshot)
+      if (_lastWritten[row.id] != row) row,
+  ];
+  if (changed.isEmpty) return;
+
+  await db.transaction(() async {
+    await db.widgets.putMany(changed);
+  });
+  for (final row in changed) {
+    _lastWritten[row.id] = row;
+  }
+
+  // Cleanup deleted entries from memory cache
+  final liveIds = {for (final row in snapshot) row.id};
+  _lastWritten.removeWhere((id, _) => !liveIds.contains(id));
+}
+```
+
+#### The persistence key includes the column count
+
+The callback signature is `(items, slotCount)`. With [responsive breakpoints](#responsive-layouts), key your persistence on **`(dashboardId, slotCount)`** so a mobile layout does not overwrite the desktop column arrangement.
+
+#### Guard against the remote sync feedback loop
+
+If your backend broadcasts updates that you feed back into `controller.importLayout()`, prevent recursive echo loops with a simple synchronous guard:
+
+```dart
+bool _applyingRemote = false;
+
+void _onRemoteDataReceived(List<LayoutItem> remoteItems) {
+  _applyingRemote = true;
+  try {
+    // importLayout triggers onLayoutChanged synchronously
+    controller.importLayout([for (final i in remoteItems) i.toMap()]);
+  } finally {
+    _applyingRemote = false;
+  }
+}
+
+void _onLayoutChanged(List<LayoutItem> items, int slotCount) {
+  if (_applyingRemote) return; // Ignore echo of our own remote sync
+  _saveToDatabase(items, slotCount);
+}
+```
+
+#### Undo / redo persist for free — but only the geometry
+
+`undo()` and `redo()` fire `onLayoutChanged` like any other change, so once the
+listener is wired the history is persisted with no extra work.
+
+However, **history restores positions, never database entities**. 
+If an item was permanently deleted from your database, undoing will put a ghost tile on the grid. 
+If your dashboard supports undo on delete, use **soft deletes** in your backend (`deleted_at` timestamp) so restored items remain valid.
+
+```dart
+onItemsDeleted: (items) async {
+  // Soft delete: recoverable by undo.
+  await db.widgets.markDeleted([for (final i in items) i.id]);
+},
 ```
 
 ### Drag to Delete (Trash Bin)

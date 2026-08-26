@@ -1,6 +1,17 @@
+## 2.6.0
 
-**No API breaking changes.** New members were added to `DashboardController`;
-applications that implement the interface by hand must add them.
+### Breaking Changes (Safety Hardening & Interface)
+
+> **Note:** For 99% of users, this update is a seamless drop-in with zero code changes required.
+
+- **Unmodifiable Layout Callbacks (Safety Hardening)**: `onLayoutChanged`, `onUndo`, `onRedo`, `onWillUndo`, 
+and `onWillRedo` now provide a `List<LayoutItem>.unmodifiable` instead of the controller's 
+internal mutable `layout.value` reference. This protects internal layout state and 
+ID ordering invariants against accidental in-place mutations.
+  - *Migration:* If you were sorting the list in-place inside `onLayoutChanged` (`items.sort(...)`), call `items.toList()` first. Reading/iterating the list is completely unaffected.
+- **`DashboardController` Interface**: New members were added to the abstract interface. 
+Only applications creating custom classes with `class MyController implements DashboardController` 
+(e.g. manual test mocks) need to add the missing members.
 
 ### Added
 
@@ -34,75 +45,28 @@ applications that implement the interface by hand must add them.
   rather than becoming a dead zone.
   - `DashboardCanAcceptItemCallback(item, targetGrid, sourceGrid)`.
 
-- `GridStyle` gained `copyWith`, `==` and `hashCode`.
+- **Payload-Aware External Drops**: Added `DashboardExternalTemplateBuilder<T>` on `Dashboard`, 
+`DashboardOverlay`, and `NestedDashboard`. Allow external draggable payloads (`DragTarget`) 
+to define their intrinsic footprint (`w`, `h`), resize constraints (`minW`/`maxW`/`minH`/`maxH`), 
+flags (`isSectionBarrier`, `isStatic`, `isResizable`), and `extra` metadata during drag-over 
+and upon drop. Forwarded across `DashboardOverlay`, `Dashboard`, and `NestedDashboard`.
 
-- **`DashboardExternalTemplateBuilder<T>`**: Allow external draggable payloads (`DragTarget`) to define their intrinsic footprint (`w`, `h`), resize constraints (`minW`/`maxW`/`minH`/`maxH`), flags (`isSectionBarrier`, `isStatic`, `isResizable`), and `extra` metadata during drag-over and upon drop. Forwarded across `DashboardOverlay`, `Dashboard`, and `NestedDashboard`.
+- Added `copyWith`, `==`, and `hashCode` to `GridStyle`.
 
 ### Fixed
 
-- **Horizontal compaction could return overlapping items.** With
-  `CompactType.horizontal` and `preventCollision: false`, `moveElement` — and
-  therefore `moveCluster`, which delegates to it — could return a layout with
-  two items sharing cells. The residual-overlap verification was skipped on
-  the assumption that the push cascade is overlap-free by construction, which
-  only holds on the unbounded vertical axis. It now runs whenever the axis is
-  bounded. **The vertical path is unchanged.**
-
-- **Horizontal collision resolution escaped the grid.** `resolveCollisions`
-  pushed an obstructed item past the last column. It now wraps to the next
-  row, matching what `_compactItemHorizontal` has always done.
-  `resolveCollisions` gained an optional `cols:` argument; omitting it keeps
-  the previous unbounded behaviour, so external callers are unaffected.
-  - **Migration:** layouts persisted while items had escaped the grid are
-    pulled back inside on first load. `CompactType.horizontal` only.
-
-Both are guarded by a seeded fuzz over `moveElement` and `moveCluster` across
-all three compaction modes, plus two targeted regression suites under
-`test/engine/`.
-
-### Behaviour notes
-
-- The lasso is a pointer-device feature and is never armed on Android or iOS,
-  where an empty-space drag scrolls the grid. A press on empty space that
-  never moves stays a no-op: clicking the background does not clear the
-  selection.
-- `lassoModifier`, `swapModeModifier` and `multiSelectKeys` all default to
-  `Shift`. They are read at three different moments — empty-space press, drag
-  update, selection click — so they never contend. Under `modifierRequired`, a
-  key that is both a lasso trigger and a multi-select key counts as the
-  trigger only, so a replacing lasso stays reachable; and swap applies to
-  single-item drags only, so a Shift-built multi-selection can never become a
-  swap.
-- Screen-reader announcements fire with or without `guidance`. Only the cursor
-  change and the on-screen label require `guidance != null`.
-- Swap is opportunistic: a frame with no qualifying partner falls back to the
-  cascade. A candidate qualifies when the drag box covers more than 50% of
-  **the candidate's own area**, and the partner takes the mover's *pre-drag*
-  slot.
-- `canAcceptItem` cannot cover two entry points that run before the target
-  controller exists: dropping onto a closed host tile (`onItemDroppedOnHost`)
-  and arming a dynamic nested grid (`subGridDynamic`). Filter those in their
-  own callbacks.
-- Tiles now carry an explicit `SystemMouseCursors.basic` cursor floor. Every
-  MouseRegion inside a tile defers, so without it the lasso's ancestor region
-  would have resolved as the cursor for tiles too. Anything deeper — resize
-  handles, application content — still wins.
-- The guidance bubble moved into a shared `GuidanceBubble` so the lasso label
-  matches the hover and long-press tooltips. No visual change to existing
-  guidance.
+- **Horizontal Compaction Overlaps**: Fixed an issue where `moveElement` / `moveCluster` 
+with `CompactType.horizontal` and `preventCollision: false` could 
+return overlapping tiles due to bounded-axis wrapping.
+- **Horizontal Collision Resolution Overflow**: Fixed `resolveCollisions` pushing 
+obstructed items beyond the grid boundary; items now correctly wrap to 
+the next row matching `_compactItemHorizontal`.
+  - Layouts persisted with out-of-bound items are automatically pulled back within grid boundaries on load.
 
 ### Performance
 
-- Horizontal compaction now pays one O(N·k) residual-overlap verification per
-  `moveElement` call, where it previously paid none unless `preventCollision`
-  was set. This is a correctness fix, not a regression to accept silently;
-  vertical and `none` are unaffected. The cost is bounded by cell crossings,
-  not pointer frequency, because the drag boundary bypass only calls the
-  engine when the target cell changes.
-
-### Breaking Changes
-- **Unmodifiable Layout Callbacks**: `onLayoutChanged`, `onUndo`, `onRedo`, `onWillUndo`, and `onWillRedo` now provide a `List<LayoutItem>.unmodifiable` instead of the controller's internal mutable `layout.value` reference. If you were mutating or sorting the list in-place inside `onLayoutChanged`, call `items.toList()` first.
-    
+- **Optimized Horizontal Invariant Checks**: Added indexed O(N·k) verification on cell crossings during horizontal moves to ensure zero-overlap guarantees with bounded complexity. Vertical and free (`CompactType.none`) compaction paths remain completely untouched.
+   
 ## 2.5.0
 
 **No API breaking changes.**
