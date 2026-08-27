@@ -15,41 +15,38 @@ Only applications creating custom classes with `class MyController implements Da
 
 ### Added
 
-- **Rectangle / Lasso selection.** On desktop and web, drag over empty grid
+- **Rectangle / Lasso Selection (Desktop & Web)**: On desktop and web, drag over empty grid
   space to select every tile the rectangle overlaps. Selection previews live,
   replaces the current selection by default, and is additive while a
-  `multiSelectKeys` key is held. Edge auto-scroll and the mouse wheel are
+  `multiSelectKeys` key is held. Edge auto-scroll and mouse wheel are
   supported.
-  - `LassoStyle` (`mode`, `fillColor`, `borderColor`, `borderWidth`) and
+  - Added `LassoStyle` (`mode`, `fillColor`, `borderColor`, `borderWidth`) and
     `LassoSelectionMode` (`emptySpace`, `modifierRequired`, `disabled`), with
     `LassoStyle.byDefault` and `LassoStyle.off`.
-  - `DashboardController.lassoStyle` and `lassoModifierHeld`.
-  - `DashboardShortcuts.lassoModifier` (defaults to `Shift`).
-  - `DashboardGuidance.lassoSelect`, `a11yLassoStart`, `a11yLassoEnd`, and the
+  - Added `DashboardController.lassoStyle` and `lassoModifierHeld`.
+  - Added `DashboardShortcuts.lassoModifier` (defaults to `Shift`).
+  - Added `DashboardGuidance.lassoSelect`, `a11yLassoStart`, `a11yLassoEnd`, and the
     `A11yCountMessageBuilder` typedef.
 
-- **Swap drag mode.** A dragged tile can trade places with the tile it lands
-  on instead of pushing it away. **Off by default** — `DragMode.cascade`
+- **Swap Drag Mode**: A dragged tile can trade places with the tile it lands
+  on (> 50% coverage) instead of pushing neighbours away. **Off by default** — `DragMode.cascade`
   reproduces the previous behaviour exactly.
-  - `DragMode` (`cascade`, `swap`) and the pure engine function
-    `swapElements`, which returns `null` when the drop does not qualify.
-  - `DashboardController.dragMode`, `setDragMode()`,
+  - Added `DragMode` (`cascade`, `swap`) and the pure engine helper `swapElements`.
+  - Added `DashboardController.dragMode`, `setDragMode()`,
     `getEffectiveDragMode({bool? modifierHeld})` and `swapModifierHeld`.
-  - `DashboardShortcuts.swapModeModifier` (defaults to `Shift`), which selects
-    the *opposite* of `dragMode` while held. Pass an empty list to remove the
-    toggle.
+  - Added `DashboardShortcuts.swapModeModifier` (defaults to `Shift`) to dynamically toggle
+    the opposite mode while held.
 
-- **Per-grid drop rules for nested trees.** `canAcceptItem` on
+- **Per-Grid Drop Rules for Nested Grids**: `canAcceptItem` on
   `DashboardNestedScope` decides which items each grid of a tree accepts. A
-  refused grid is transparent: the drag passes through to the enclosing grid
-  rather than becoming a dead zone.
-  - `DashboardCanAcceptItemCallback(item, targetGrid, sourceGrid)`.
+  refused grid is transparent, passing the drag through to the parent grid.
+  - Added `DashboardCanAcceptItemCallback(item, targetGrid, sourceGrid)`.
 
 - **Payload-Aware External Drops**: Added `DashboardExternalTemplateBuilder<T>` on `Dashboard`, 
-`DashboardOverlay`, and `NestedDashboard`. Allow external draggable payloads (`DragTarget`) 
-to define their intrinsic footprint (`w`, `h`), resize constraints (`minW`/`maxW`/`minH`/`maxH`), 
-flags (`isSectionBarrier`, `isStatic`, `isResizable`), and `extra` metadata during drag-over 
-and upon drop. Forwarded across `DashboardOverlay`, `Dashboard`, and `NestedDashboard`.
+  `DashboardOverlay`, and `NestedDashboard`. Allows external draggable payloads (`DragTarget`) 
+  to define their intrinsic footprint (`w`, `h`), resize constraints (`minW`/`maxW`/`minH`/`maxH`), 
+  flags (`isSectionBarrier`, `isStatic`, `isResizable`), and `extra` metadata during drag-over 
+  and upon drop.
 
 - **Native Keyboard Shortcuts & A11y Actions**:
   - `Delete` / `Backspace` (`DashboardDeleteItemIntent`) to remove selected items (respecting `onWillDelete` / `onItemsDeleted`).
@@ -58,19 +55,19 @@ and upon drop. Forwarded across `DashboardOverlay`, `Dashboard`, and `NestedDash
   - `Ctrl+Z` / `Cmd+Z` (`DashboardUndoIntent`) & `Ctrl+Y` / `Cmd+Shift+Z` (`DashboardRedoIntent`) to navigate layout history.
   - `Escape` (`DashboardCancelInteractionIntent`) to clear active selection when idle.
   - Screen reader feedback builders: `a11yDelete`, `a11ySelectAll`, and `a11yDuplicate` on `DashboardGuidance`.
-  
+
 - Added `copyWith`, `==`, and `hashCode` to `GridStyle`.
 
 ### Fixed
 
 - **Horizontal Compaction Overlaps**: Fixed an issue where `moveElement` / `moveCluster` 
-with `CompactType.horizontal` and `preventCollision: false` could 
-return overlapping tiles due to bounded-axis wrapping.
+  with `CompactType.horizontal` and `preventCollision: false` could 
+  return overlapping tiles due to bounded-axis wrapping.
 - **Horizontal Collision Resolution Overflow**: Fixed `resolveCollisions` pushing 
-obstructed items beyond the grid boundary; items now correctly wrap to 
-the next row matching `_compactItemHorizontal`.
+  obstructed items beyond the grid boundary; items now correctly wrap to 
+  the next row matching `_compactItemHorizontal`.
   - Layouts persisted with out-of-bound items are automatically pulled back within grid boundaries on load.
-- Keep keyboard focus and selection in sync
+- **Focus & Selection Desynchronization**: Fixed an issue where clicking a tile with the mouse did not transfer Flutter's keyboard focus, causing `Delete` and keyboard shortcuts to target the previously focused tile.
 
 ### Performance
 

@@ -3,7 +3,7 @@ description: "Smooth, sliver-based drag & resize grid engine. Supports nested gr
 homepage: https://github.com/scalz/sliver_dashboard
 repository: https://github.com/scalz/sliver_dashboard
 issue_tracker: https://github.com/scalz/sliver_dashboard/issues
-version: 2.5.0
+version: 2.6.0
 
 environment:
   sdk:  ">=3.0.0 <4.0.0"
@@ -14,7 +14,7 @@ dependencies:
     sdk: flutter
 
   meta: ">=1.8.0 <2.0.0"
-  state_beacon: ^3.1.1
+  state_beacon: ^3.1.2
 
 dev_dependencies:
   coverage: ^1.15.1
