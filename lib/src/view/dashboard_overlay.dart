@@ -18,7 +18,9 @@ import 'package:sliver_dashboard/src/view/dashboard_configuration.dart';
 import 'package:sliver_dashboard/src/view/dashboard_feedback_widget.dart';
 import 'package:sliver_dashboard/src/view/dashboard_grid.dart';
 import 'package:sliver_dashboard/src/view/dashboard_item_widget.dart';
+import 'package:sliver_dashboard/src/view/dashboard_lasso_layer.dart';
 import 'package:sliver_dashboard/src/view/dashboard_typedefs.dart';
+import 'package:sliver_dashboard/src/view/guidance/dashboard_guidance.dart';
 import 'package:sliver_dashboard/src/view/nested/dashboard_nested_scope.dart';
 import 'package:sliver_dashboard/src/view/resize_handle.dart';
 import 'package:sliver_dashboard/src/view/sliver_dashboard.dart';
@@ -66,6 +68,15 @@ class DashboardOverlayController {
   /// Starts a drag operation programmatically on the item with the given [itemId]
   /// using the provided [globalPosition] as the start coordinate.
   void startDragging(String itemId, Offset globalPosition) {}
+
+  /// Deletion veto callback.
+  DashboardWillDeleteCallback? get onWillDelete => null;
+
+  /// Deletion commit callback.
+  DashboardItemsDeletedCallback? get onItemsDeleted => null;
+
+  /// Clone callback.
+  DashboardCloneRequestCallback? get onCloneRequested => null;
 }
 
 /// An InheritedWidget that provides a [DashboardOverlayController] to its descendants.
@@ -134,6 +145,7 @@ class DashboardOverlay<T extends Object> extends StatefulWidget {
     this.resizeHandleSide = 20.0,
     this.placeholderWidth = 1,
     this.placeholderHeight = 1,
+    this.externalTemplateBuilder,
     this.onDrop,
     this.itemGlobalKeySuffix = '',
     this.backgroundBuilder,
@@ -291,6 +303,13 @@ class DashboardOverlay<T extends Object> extends StatefulWidget {
   /// The height of the placeholder item in grid units when dragging from outside.
   final int placeholderHeight;
 
+  /// Optional builder to resolve the template [LayoutItem] for an external draggable payload of type [T].
+  ///
+  /// When provided and returning non-null, its width and height size the hover
+  /// placeholder, and its constraints/flags/extra seed the item upon drop.
+  /// If null or returning null, falls back to [placeholderWidth] and [placeholderHeight].
+  final DashboardExternalTemplateBuilder<T>? externalTemplateBuilder;
+
   /// Callback when an external draggable is dropped onto the dashboard.
   final DashboardDropCallback<T>? onDrop;
 
@@ -412,6 +431,97 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
   /// is.
   static const double _dragMoveTolerance = 2;
 
+  // ===========================================================================
+  // Rubberband ("lasso") selection — desktop / web only
+  // ===========================================================================
+
+  /// A press on empty grid space that COULD become a lasso, but has not
+  /// travelled far enough yet.
+  ///
+  /// Two-phase for the same reason the Alt+drag clone is (see
+  /// [_pendingCloneSource]): `_onPointerDown` fires on the raw button press,
+  /// so committing here would turn every click on the background into a
+  /// selection wipe. Resolved by [_startLasso] on the first move past
+  /// [_dragMoveTolerance]; dropped by [_clearLassoState] otherwise.
+  ///
+  /// Carries the anchor **already resolved into content space** rather than
+  /// just the global position. Arming has to resolve it anyway to know the
+  /// press is over a live grid, so re-deriving it at start duplicated a
+  /// `_gridPointAtGlobal` call (one `SlotMetrics` allocation) and introduced
+  /// a failure branch that could not happen. It is also the more correct
+  /// anchor: it pins the rectangle to the cell that was under the cursor when
+  /// the button went down, even if the wheel scrolled the grid before the
+  /// gesture crossed the threshold.
+  ({Offset global, Offset content, SlotMetrics metrics})? _pendingLasso;
+
+  /// Anchor corner of a LIVE lasso, in **grid-content pixels** (the space
+  /// [_gridPointAtGlobal] returns). Non-null exactly while a lasso is in
+  /// flight, and the single predicate every lasso branch tests.
+  ///
+  /// Content space — not overlay-local, not global — is what makes the
+  /// rectangle survive a scroll: the anchor stays pinned to the grid while
+  /// the content moves under it (edge auto-scroll, mouse wheel).
+  Offset? _lassoAnchorContent;
+
+  /// Selection the lasso started from, and therefore preserves. Empty for a
+  /// replacing lasso, which is the default; populated only when an additive
+  /// modifier was held at the press (see [_startLasso]).
+  Set<String> _lassoBaseSelection = const <String>{};
+
+  /// Reusable scratch buffer for the per-event intersection pass. Reused so
+  /// the O(N) scan allocates nothing on a frame that does not change the
+  /// selection — which is the overwhelming majority of them.
+  final List<String> _lassoHitScratch = <String>[];
+
+  /// Ids the previous intersection pass produced. The selection beacon is
+  /// written ONLY when this set changes: `Set` has identity equality in
+  /// Dart, so an unguarded write would notify on every pointer event and
+  /// rebuild every item shell at pointer frequency.
+  Set<String> _lastLassoHits = const <String>{};
+
+  /// The painted rectangle. A plain [ValueNotifier] rather than a beacon:
+  /// nothing outside this widget consumes it, and it must not participate in
+  /// the controller's reactive graph (a lasso is a view-layer gesture).
+  final ValueNotifier<LassoOverlayState?> _lassoOverlay = ValueNotifier<LassoOverlayState?>(null);
+
+  /// The scroll controller [_onScrollDuringLasso] is registered on, kept
+  /// explicitly so a `didUpdateWidget` swapping the controller cannot strand
+  /// the listener on the old one.
+  ScrollController? _lassoScrollListenerTarget;
+
+  /// Effective guidance, falling back to the built-in English messages.
+  ///
+  /// Screen-reader announcements are NOT opt-in ("accessible out of the
+  /// box"): `guidance == null` disables the visual tooltip and the cursor
+  /// change, never the announcements.
+  DashboardGuidance get _effectiveGuidance =>
+      widget.controller.guidance ?? DashboardGuidance.byDefault;
+
+  /// Effective shortcuts, falling back to the defaults.
+  DashboardShortcuts get _effectiveShortcuts =>
+      widget.controller.shortcuts ?? DashboardShortcuts.defaultShortcuts;
+
+  /// Rubberband policy and appearance.
+  LassoStyle get _lassoStyle => widget.controller.lassoStyle;
+
+  /// Whether one of [DashboardShortcuts.lassoModifier] is held right now.
+  bool get _isLassoModifierHeld => _anyHeld(_effectiveShortcuts.lassoModifier);
+
+  /// Whether one of [DashboardShortcuts.swapModeModifier] is held right now.
+  ///
+  /// An empty list means "no modifier configured", which yields `false` and
+  /// leaves `DashboardController.dragMode` in sole control.
+  bool get _isSwapModifierHeld => _anyHeld(_effectiveShortcuts.swapModeModifier);
+
+  static bool _anyHeld(List<LogicalKeyboardKey> keys) {
+    if (keys.isEmpty) return false;
+    final pressed = HardwareKeyboard.instance.logicalKeysPressed;
+    for (var i = 0; i < keys.length; i++) {
+      if (pressed.contains(keys[i])) return true;
+    }
+    return false;
+  }
+
   /// The drop-target tile under [globalPosition], or null.
   ///
   /// Returns null immediately when no callback is registered, which is what
@@ -496,6 +606,15 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
       defaultTargetPlatform == TargetPlatform.iOS;
 
   @override
+  DashboardWillDeleteCallback? get onWillDelete => widget.onWillDelete;
+
+  @override
+  DashboardItemsDeletedCallback? get onItemsDeleted => widget.onItemsDeleted;
+
+  @override
+  DashboardCloneRequestCallback? get onCloneRequested => _cloneCallback;
+
+  @override
   void startDragging(String itemId, Offset globalPosition) {
     if (!widget.controller.isEditing.value) return;
     _onPointerDown(globalPosition);
@@ -505,6 +624,13 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
   void initState() {
     super.initState();
     _setupScrollListener();
+    // Desktop / web only: the lasso cursor must react to a modifier press
+    // that arrives WITHOUT any pointer movement, and key state changes emit
+    // no pointer event. Two Set lookups per key event; never registered on
+    // Android / iOS, where the lasso does not exist.
+    if (!_isMobile) {
+      HardwareKeyboard.instance.addHandler(_handleModifierKey);
+    }
   }
 
   @override
@@ -625,6 +751,11 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
 
   @override
   void dispose() {
+    if (!_isMobile) {
+      HardwareKeyboard.instance.removeHandler(_handleModifierKey);
+    }
+    _detachLassoScrollListener();
+    _lassoOverlay.dispose();
     _scrollSubscription?.cancel().ignore();
     _scrollTimer?.cancel();
     _leaveTimer?.cancel();
@@ -646,12 +777,12 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
         overlayController: this,
         child: DragTarget<T>(
           onWillAcceptWithDetails: (details) {
-            _updatePlaceholderPosition(details.offset);
+            _updatePlaceholderPosition(details.offset, details.data);
             return true;
           },
           onMove: (details) {
             _lastGlobalPosition = details.offset;
-            _updatePlaceholderPosition(details.offset);
+            _updatePlaceholderPosition(details.offset, details.data);
             _handleAutoScroll(details.offset);
           },
           onLeave: (data) {
@@ -679,7 +810,18 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
             if (placeholder != null) {
               final newId = await widget.onDrop?.call(details.data, placeholder);
               if (newId != null) {
-                widget.controller.internal.onDropExternal(newId: newId);
+                final template = widget.externalTemplateBuilder?.call(details.data);
+                if (template != null) {
+                  widget.controller.internal.onDropExternalItem(
+                    template: template.copyWith(
+                      id: newId,
+                      x: placeholder.x,
+                      y: placeholder.y,
+                    ),
+                  );
+                } else {
+                  widget.controller.internal.onDropExternal(newId: newId);
+                }
               } else {
                 widget.controller.internal.hidePlaceholder();
               }
@@ -767,56 +909,21 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
                       _onPointerUp().ignore();
                       _pointerDownPosition = null; // Cleanup
                     },
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.translucent,
-                      onTapUp: widget.onSlotTap != null
-                          ? (details) => _handleSlotGesture(
-                                details.globalPosition,
-                                widget.onSlotTap,
-                              )
-                          : null,
-                      onLongPressStart:
-                          (_isMobile && widget.dragStartGesture == DragStartGesture.longPress) ||
-                                  widget.onSlotLongPress != null
-                              ? (details) {
-                                  if (_nestedCoordinator?.isPointerClaimedByOther(this) ?? false) {
-                                    return;
-                                  }
-
-                                  // Empty-slot long-press wins; item long-press
-                                  // keeps its historical role (drag start on
-                                  // mobile longPress mode).
-                                  if (widget.onSlotLongPress != null &&
-                                      _hitTest(details.globalPosition).item == null) {
-                                    _handleSlotGesture(
-                                      details.globalPosition,
-                                      widget.onSlotLongPress,
-                                    );
-                                    return;
-                                  }
-                                  if (_isMobile &&
-                                      widget.dragStartGesture == DragStartGesture.longPress) {
-                                    _onPointerDown(details.globalPosition);
-                                  }
-                                }
-                              : null,
-                      onLongPressMoveUpdate:
-                          _isMobile && widget.dragStartGesture == DragStartGesture.longPress
-                              ? (details) => _onPointerMove(details.globalPosition)
-                              : null,
-                      onLongPressEnd:
-                          _isMobile && widget.dragStartGesture == DragStartGesture.longPress
-                              ? (details) => _onPointerUp()
-                              : null,
-                      onLongPressCancel:
-                          _isMobile && widget.dragStartGesture == DragStartGesture.longPress
-                              ? _onPointerUp
-                              : null,
-                      child: widget.child,
-                    ),
+                    child: _buildLassoCursorRegion(_buildGestureContent()),
                   ),
                 ),
-                // 3. Feedback & Trash
+
+                // 3. Rubberband selection rectangle.
+                // Above the content so it is visible, below the drag
+                // feedback so a cross-grid proxy is never hidden by it, and
+                // pointer-transparent (the layer wraps itself in an
+                // IgnorePointer). Driven by a ValueNotifier, so a lasso drag
+                // rebuilds this subtree and nothing else.
+                Positioned.fill(
+                  child: DashboardLassoLayer(state: _lassoOverlay),
+                ),
+
+                // 4. Feedback & Trash
                 _buildFeedbackLayer(),
                 _buildTrashLayer(),
               ],
@@ -828,6 +935,83 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
   }
 
   Offset? _pointerDownPosition;
+
+  /// The interactive grid content: the gesture layer and the caller's
+  /// scroll view.
+  ///
+  /// Extracted so [_buildLassoCursorRegion] can hand it through as a
+  /// pre-built `child`, which is what keeps a modifier press from rebuilding
+  /// the scroll view.
+  Widget _buildGestureContent() {
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onTapUp: widget.onSlotTap != null
+          ? (details) => _handleSlotGesture(
+                details.globalPosition,
+                widget.onSlotTap,
+              )
+          : null,
+      onLongPressStart: (_isMobile && widget.dragStartGesture == DragStartGesture.longPress) ||
+              widget.onSlotLongPress != null
+          ? (details) {
+              if (_nestedCoordinator?.isPointerClaimedByOther(this) ?? false) {
+                return;
+              }
+
+              // Empty-slot long-press wins; item long-press
+              // keeps its historical role (drag start on
+              // mobile longPress mode).
+              if (widget.onSlotLongPress != null && _hitTest(details.globalPosition).item == null) {
+                _handleSlotGesture(
+                  details.globalPosition,
+                  widget.onSlotLongPress,
+                );
+                return;
+              }
+              if (_isMobile && widget.dragStartGesture == DragStartGesture.longPress) {
+                _onPointerDown(details.globalPosition);
+              }
+            }
+          : null,
+      onLongPressMoveUpdate: _isMobile && widget.dragStartGesture == DragStartGesture.longPress
+          ? (details) => _onPointerMove(details.globalPosition)
+          : null,
+      onLongPressEnd: _isMobile && widget.dragStartGesture == DragStartGesture.longPress
+          ? (details) => _onPointerUp()
+          : null,
+      onLongPressCancel:
+          _isMobile && widget.dragStartGesture == DragStartGesture.longPress ? _onPointerUp : null,
+      child: widget.child,
+    );
+  }
+
+  /// Wraps the grid content in the [MouseRegion] carrying the lasso cursor.
+  ///
+  /// The region is deliberately an ANCESTOR of the item shells: Flutter
+  /// resolves the cursor from the innermost non-deferring `MouseRegion` on
+  /// the hit path, so an item's own cursor (grab, resize) wins by
+  /// construction and this one only ever surfaces over empty grid space.
+  /// That is what makes "lasso cursor over empty space" cost zero hit tests
+  /// and zero per-hover work.
+  ///
+  /// [child] is built once by the caller and passed straight through, so a
+  /// modifier press rebuilds this `MouseRegion` and nothing under it
+  /// (`Element.updateChild` short-circuits on an identical widget instance).
+  Widget _buildLassoCursorRegion(Widget child) {
+    return Builder(
+      builder: (context) {
+        final isEditing = widget.controller.isEditing.watch(context);
+        final modifierDown = widget.controller.lassoModifierHeld.watch(context);
+        return MouseRegion(
+          cursor: _lassoCursor(
+            isEditing: isEditing,
+            modifierDown: modifierDown,
+          ),
+          child: child,
+        );
+      },
+    );
+  }
 
   /// Resolves an empty-slot gesture: converts the position to grid
   /// coordinates through the same [SlotMetrics] math the drag pipeline
@@ -935,37 +1119,12 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
 
         final isEditing = widget.controller.isEditing.watch(context);
         final metrics = _activeSliverMetrics!;
-        final isVertical = metrics.scrollDirection == Axis.vertical;
 
-        // Position & Clipping (Same robust logic as before)
-
-        final sliverLayoutStart = renderSliver.constraints.precedingScrollExtent;
-        final scrollOffset =
-            widget.scrollController.hasClients ? widget.scrollController.offset : 0.0;
-        final visualStart = sliverLayoutStart - scrollOffset;
-
-        final Offset currentSliverStart;
-        if (isVertical) {
-          currentSliverStart = Offset(metrics.padding.left, visualStart);
-        } else {
-          currentSliverStart = Offset(visualStart, metrics.padding.top);
-        }
-
-        Rect? sliverBounds;
-        final overlayBox = _overlayStackKey.currentContext?.findRenderObject() as RenderBox?;
-
-        if (overlayBox != null) {
-          final overlaySize = overlayBox.size;
-          final overlap = renderSliver.constraints.overlap;
-          final clipStart = max(visualStart, overlap);
-
-          if (isVertical) {
-            sliverBounds = Rect.fromLTRB(0, clipStart, overlaySize.width, overlaySize.height);
-          } else {
-            sliverBounds = Rect.fromLTRB(clipStart, 0, overlaySize.width, overlaySize.height);
-          }
-          sliverBounds = sliverBounds.intersect(Offset.zero & overlaySize);
-        }
+        // Position & Clipping. Resolved by the single content-origin site
+        // shared with the rubberband layer — see [_contentOriginOf].
+        final origin = _contentOriginOf(renderSliver, metrics);
+        final currentSliverStart = origin.sliverStart;
+        final sliverBounds = origin.bounds;
 
         // RENDER CLUSTER
         return Stack(
@@ -993,6 +1152,50 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
           }).toList(),
         );
       },
+    );
+  }
+
+  /// Resolves where this grid's content origin currently sits in
+  /// overlay-local pixels, together with the visible band of its sliver.
+  ///
+  /// Single implementation of the **Content-Origin Convention** for the
+  /// layers painted on top of the scroll view (drag feedback, rubberband
+  /// selection): the main-axis origin is
+  /// `precedingScrollExtent - scrollOffset` and the main-axis padding must
+  /// NEVER be added on top of it (the `SliverPadding` already forwarded it);
+  /// the cross-axis padding is not part of the scroll extent and IS added
+  /// manually. Any new layer reuses this rather than re-deriving the
+  /// transform — the two sites that once re-derived it both double-counted
+  /// the leading padding, an error of exactly zero pixels on the
+  /// padding-free grids the suite used to exercise.
+  ///
+  /// `bounds` is null only while the overlay's Stack has no render object,
+  /// which happens for one frame at mount; callers then simply do not clip.
+  ({Offset sliverStart, Rect? bounds}) _contentOriginOf(
+    RenderSliverDashboard renderSliver,
+    SlotMetrics metrics,
+  ) {
+    final isVertical = metrics.scrollDirection == Axis.vertical;
+    final sliverLayoutStart = renderSliver.constraints.precedingScrollExtent;
+    final scrollOffset = widget.scrollController.hasClients ? widget.scrollController.offset : 0.0;
+    final visualStart = sliverLayoutStart - scrollOffset;
+
+    final sliverStart = isVertical
+        ? Offset(metrics.padding.left, visualStart)
+        : Offset(visualStart, metrics.padding.top);
+
+    final overlayBox = _overlayStackKey.currentContext?.findRenderObject() as RenderBox?;
+    if (overlayBox == null) return (sliverStart: sliverStart, bounds: null);
+
+    final overlaySize = overlayBox.size;
+    final clipStart = max(visualStart, renderSliver.constraints.overlap);
+    final raw = isVertical
+        ? Rect.fromLTRB(0, clipStart, overlaySize.width, overlaySize.height)
+        : Rect.fromLTRB(clipStart, 0, overlaySize.width, overlaySize.height);
+
+    return (
+      sliverStart: sliverStart,
+      bounds: raw.intersect(Offset.zero & overlaySize),
     );
   }
 
@@ -1131,8 +1334,10 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
     // first in the dispatch order): do not steal the drag.
     if (_nestedCoordinator?.isPointerClaimedByOther(this) ?? false) return;
 
-    // A new press always supersedes a clone armed by a previous one.
+    // A new press always supersedes a clone or a lasso armed by a previous
+    // one.
     _pendingCloneSource = null;
+    _pendingLasso = null;
 
     final hit = _hitTest(position);
     final foundItem = hit.item;
@@ -1268,8 +1473,14 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
         widget.controller.internal.onResizeStart(foundItem.id);
       } else {
         widget.onItemDragStart?.call(foundItem);
+        // Seed the modifier state: a key already held when the drag starts
+        // emits no key event, so the handler would never see it.
+        _syncSwapModifier(reevaluate: false);
         widget.controller.internal.onDragStart(foundItem.id);
       }
+    } else {
+      // Empty grid space: candidate for a rubberband selection.
+      _maybeArmLasso(position);
     }
   }
 
@@ -1305,6 +1516,7 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
     // that id is not already selected, which is always true for a fresh
     // clone. That is what keeps the pivot inside the selection (the cluster
     // invariant) without this method touching the selection itself.
+    _syncSwapModifier(reevaluate: false);
     widget.controller.internal.onDragStart(effective.id);
   }
 
@@ -1387,6 +1599,25 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
       _pendingCloneSource = null;
       _resolvePendingClone(pendingClone);
       justCloned = true;
+    }
+
+    // Rubberband selection. Placed before the `_activeItemId` guard (a lasso
+    // has no active item) and before the web throttle: the rectangle must
+    // track the cursor at device frequency to feel attached to it, and the
+    // per-event cost is bounded by design — one O(N) scan whose result is
+    // published to the selection beacon ONLY when the resolved id set
+    // changes, plus one clipped `drawRect` behind its own RepaintBoundary.
+    final pendingLasso = _pendingLasso;
+    if (pendingLasso != null) {
+      if ((position - pendingLasso.global).distance <= _dragMoveTolerance) return;
+      _pendingLasso = null;
+      _startLasso(pendingLasso.content, pendingLasso.metrics);
+    }
+    if (_lassoAnchorContent != null) {
+      _lastGlobalPosition = position;
+      _handleAutoScroll(position);
+      _updateLasso(position);
+      return;
     }
 
     if (_activeItemId == null) return;
@@ -1657,6 +1888,15 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
     final hadActiveDrag = _activeItemId != null;
 
     try {
+      // A live rubberband selection resolves here and nowhere else: the
+      // selection was committed continuously during the drag, so releasing
+      // only has to announce the result and tear the gesture down. The
+      // `finally` below still runs (state reset + pointer-claim release).
+      if (_lassoAnchorContent != null) {
+        _finishLasso();
+        return;
+      }
+
       _stopScrollTimer();
       _trashTimer?.cancel();
 
@@ -1806,6 +2046,7 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
     _throttleFlushScheduled?.cancel();
     _throttleFlushScheduled = null;
     _pendingThrottledPosition = null;
+    _clearLassoState();
     _cancelSameGridNest();
     // Cross-grid cleanup: release the pointer claim and, if a session we own
     // is somehow still alive (exception path), cancel it so the source grid
@@ -1818,6 +2059,324 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
     }
     widget.controller.internal.setDragOffset(Offset.zero);
   }
+
+  // ===========================================================================
+  // Rubberband ("lasso") selection
+  // ===========================================================================
+
+  /// Arms a rubberband selection on a press over empty grid space.
+  ///
+  /// Nothing is selected and nothing is painted here — see
+  /// [_pendingLasso] for why the gesture is two-phase.
+  void _maybeArmLasso(Offset position) {
+    // Pointer devices only. On Android / iOS an empty-space drag scrolls the
+    // grid, and the Listener does not even deliver moves unless a drag is
+    // already live, so an armed lasso there could never be resolved OR
+    // released.
+    if (_isMobile) return;
+
+    final style = _lassoStyle;
+    switch (style.mode) {
+      case LassoSelectionMode.disabled:
+        return;
+      case LassoSelectionMode.modifierRequired:
+        if (!_isLassoModifierHeld) return;
+      case LassoSelectionMode.emptySpace:
+        break;
+    }
+
+    // Same containment rule as the empty-slot gestures: strict sliver bounds
+    // keep several grids sharing one scroll view from cross-firing, relaxed
+    // under fillViewport (single-grid usage, where the grid owns the
+    // remaining viewport).
+    if (!widget.fillViewport && !isPointInsideSliver(position)) return;
+    final point = _gridPointAtGlobal(position);
+    if (point == null) return;
+
+    _pendingLasso = (
+      global: position,
+      content: Offset(point.dx, point.dy),
+      metrics: point.metrics,
+    );
+    _operationStartPosition = position;
+
+    // Claim the pointer for exactly the reason the armed clone does:
+    // ancestors test the claim in THEIR pointer-down, which runs after ours
+    // (deepest-first dispatch). Without it, a lasso started on a nested
+    // grid's background would also have the parent grid drag the host tile.
+    // Released in [_resetOperationState], which every pointer-up path
+    // reaches through its `finally`.
+    _nestedCoordinator?.claimPointer(this);
+  }
+
+  /// Promotes an armed lasso into a live one on the first qualifying move.
+  ///
+  /// [anchorContent] and [metrics] were resolved when the gesture armed, so
+  /// this cannot fail.
+  void _startLasso(Offset anchorContent, SlotMetrics metrics) {
+    final shortcuts = _effectiveShortcuts;
+    final pressed = HardwareKeyboard.instance.logicalKeysPressed;
+    final modifierRequired = _lassoStyle.mode == LassoSelectionMode.modifierRequired;
+
+    // Additive vs replacing. A held multi-selection modifier means "add to
+    // what is already selected" — the universal desktop convention. The one
+    // subtlety: under `modifierRequired` the lasso trigger is Shift by
+    // default and Shift is ALSO a multi-select key, so treating it as
+    // additive would make a replacing lasso unreachable in that mode. A key
+    // that is both the trigger and a multi-select key therefore counts as
+    // the trigger only; hold a second, non-overlapping multi-select key to
+    // get an additive lasso there.
+    var additive = false;
+    for (final key in shortcuts.multiSelectKeys) {
+      if (!pressed.contains(key)) continue;
+      if (modifierRequired && shortcuts.lassoModifier.contains(key)) continue;
+      additive = true;
+      break;
+    }
+
+    _lassoBaseSelection =
+        additive ? widget.controller.selectedItemIds.peek().toSet() : const <String>{};
+    _lastLassoHits = const <String>{};
+    _lassoHitScratch.clear();
+    _lassoAnchorContent = anchorContent;
+    _activeSliverMetrics = metrics;
+    _attachLassoScrollListener();
+
+    // A replacing lasso wipes the previous selection at START, not at
+    // release: the rectangle is a live preview and must not show stale
+    // selections for its whole duration.
+    if (!additive && widget.controller.selectedItemIds.peek().isNotEmpty) {
+      widget.controller.clearSelection();
+    }
+
+    // Use the old API for older Flutter versions, and ignore the deprecation warning
+    // Until we have no other choice to use sendAnnouncement
+    // ignore: deprecated_member_use
+    SemanticsService.announce(_effectiveGuidance.a11yLassoStart, _lassoTextDirection).ignore();
+  }
+
+  /// Recomputes the rectangle, the selection and the painted frame for
+  /// [position]. Called from the pointer move, and from the scroll listener
+  /// so the anchor stays pinned to the content while the grid scrolls under
+  /// it (edge auto-scroll, mouse wheel).
+  void _updateLasso(Offset position) {
+    final anchor = _lassoAnchorContent;
+    if (anchor == null) return;
+    final point = _gridPointAtGlobal(position);
+    if (point == null) return;
+
+    final metrics = point.metrics;
+    _activeSliverMetrics = metrics;
+
+    final left = min(anchor.dx, point.dx);
+    final top = min(anchor.dy, point.dy);
+    final right = max(anchor.dx, point.dx);
+    final bottom = max(anchor.dy, point.dy);
+
+    _applyLassoSelection(metrics, left, top, right, bottom);
+    _paintLasso(metrics, left, top, right, bottom);
+  }
+
+  /// O(N) intersection of the content-space rectangle against every item's
+  /// pixel bounds, publishing the result **only when the resolved id set
+  /// actually changed**.
+  ///
+  /// That guard is the load-bearing part, not the linear scan: `Set` has
+  /// identity equality in Dart, so an unconditional write to
+  /// `selectedItemIds` would notify on every pointer event and rebuild every
+  /// visible item shell at pointer frequency (120 Hz on a fast desktop
+  /// mouse). With it, a rectangle growing inside the cells it already covers
+  /// costs one scan and zero rebuilds.
+  ///
+  /// Intersection is pixel-precise rather than cell-precise: a rectangle
+  /// drawn entirely inside the gutter between two tiles selects neither,
+  /// which is what users expect from a rubberband.
+  void _applyLassoSelection(
+    SlotMetrics metrics,
+    double left,
+    double top,
+    double right,
+    double bottom,
+  ) {
+    final isVertical = metrics.scrollDirection == Axis.vertical;
+    final spacingX = isVertical ? metrics.crossAxisSpacing : metrics.mainAxisSpacing;
+    final spacingY = isVertical ? metrics.mainAxisSpacing : metrics.crossAxisSpacing;
+    final strideX = metrics.slotWidth + spacingX;
+    final strideY = metrics.slotHeight + spacingY;
+
+    final hits = _lassoHitScratch..clear();
+    final layout = widget.controller.layout.peek();
+    for (var i = 0; i < layout.length; i++) {
+      final item = layout[i];
+      if (item.id == '__placeholder__') continue;
+      // Pure statics are not selectable (same rule as a plain click, which
+      // returns before touching the selection). Section barriers ARE: they
+      // are static but interactive, and clicking one already selects it.
+      if (item.isStatic && !item.isSectionBarrier) continue;
+
+      final itemLeft = item.x * strideX;
+      final itemTop = item.y * strideY;
+      final itemRight = itemLeft + item.w * strideX - spacingX;
+      final itemBottom = itemTop + item.h * strideY - spacingY;
+
+      if (itemRight < left || itemLeft > right) continue;
+      if (itemBottom < top || itemTop > bottom) continue;
+      hits.add(item.id);
+    }
+
+    var changed = hits.length != _lastLassoHits.length;
+    if (!changed) {
+      for (var i = 0; i < hits.length; i++) {
+        if (_lastLassoHits.contains(hits[i])) continue;
+        changed = true;
+        break;
+      }
+    }
+    if (!changed) return;
+
+    _lastLassoHits = hits.toSet();
+    widget.controller.selectedItemIds.value = <String>{
+      ..._lassoBaseSelection,
+      ...hits,
+    };
+  }
+
+  /// Publishes the painted frame: content rectangle translated through the
+  /// shared content origin, clipped to this grid's visible band.
+  void _paintLasso(
+    SlotMetrics metrics,
+    double left,
+    double top,
+    double right,
+    double bottom,
+  ) {
+    final renderSliver = _findRenderSliver();
+    if (renderSliver == null || !renderSliver.attached) return;
+
+    final origin = _contentOriginOf(renderSliver, metrics);
+    final style = _lassoStyle;
+    _lassoOverlay.value = LassoOverlayState(
+      rect: Rect.fromLTRB(left, top, right, bottom).shift(origin.sliverStart),
+      clipRect: origin.bounds,
+      fillColor: style.fillColor,
+      borderColor: style.borderColor,
+      borderWidth: style.borderWidth,
+      // The tooltip follows the guidance opt-in; the announcements above do
+      // not (a11y is not opt-in).
+      message: widget.controller.guidance?.lassoSelect.message,
+    );
+  }
+
+  /// Finalizes a live lasso on release: announces the resulting selection
+  /// size and tears the gesture down. The selection itself is already
+  /// committed — it was updated live throughout the drag.
+  void _finishLasso() {
+    final count = widget.controller.selectedItemIds.peek().length;
+    // Use the old API for older Flutter versions, and ignore the deprecation warning
+    // Until we have no other choice to use sendAnnouncement
+    // ignore: deprecated_member_use
+    SemanticsService.announce(_effectiveGuidance.a11yLassoEnd(count), _lassoTextDirection).ignore();
+    _stopScrollTimer();
+    _clearLassoState();
+  }
+
+  /// Drops every trace of an armed or live lasso. Idempotent: it runs on
+  /// every pointer-up through [_resetOperationState], including the vast
+  /// majority that never armed one.
+  void _clearLassoState() {
+    _pendingLasso = null;
+    _lassoAnchorContent = null;
+    _lassoBaseSelection = const <String>{};
+    _lastLassoHits = const <String>{};
+    _lassoHitScratch.clear();
+    _detachLassoScrollListener();
+    _lassoOverlay.value = null;
+  }
+
+  void _attachLassoScrollListener() {
+    if (_lassoScrollListenerTarget != null) return;
+    _lassoScrollListenerTarget = widget.scrollController..addListener(_onScrollDuringLasso);
+  }
+
+  void _detachLassoScrollListener() {
+    _lassoScrollListenerTarget?.removeListener(_onScrollDuringLasso);
+    _lassoScrollListenerTarget = null;
+  }
+
+  /// Re-derives the rectangle when the content scrolls under a stationary
+  /// pointer. The anchor lives in content space, so this is a pure
+  /// re-projection: the selection it resolves is unchanged unless the
+  /// pointer's own content coordinates moved.
+  void _onScrollDuringLasso() {
+    final position = _lastGlobalPosition;
+    if (position == null || _lassoAnchorContent == null) return;
+    _updateLasso(position);
+  }
+
+  /// Cursor to apply over empty grid space (item cursors are set deeper in
+  /// the tree and win over this one by construction — Flutter picks the
+  /// innermost non-deferring cursor on the hit path).
+  MouseCursor _lassoCursor({required bool isEditing, required bool modifierDown}) {
+    final guidance = widget.controller.guidance;
+    if (guidance == null || _isMobile || !isEditing) return MouseCursor.defer;
+    if (_lassoAnchorContent != null) return guidance.lassoSelect.cursor;
+    return switch (_lassoStyle.mode) {
+      LassoSelectionMode.emptySpace => guidance.lassoSelect.cursor,
+      LassoSelectionMode.modifierRequired =>
+        modifierDown ? guidance.lassoSelect.cursor : MouseCursor.defer,
+      LassoSelectionMode.disabled => MouseCursor.defer,
+    };
+  }
+
+  /// Mirrors the two drag-related modifiers into observable state, and
+  /// re-evaluates a live drag when the swap modifier flips.
+  ///
+  /// Registered on desktop only and never consumes the event. Costs a handful
+  /// of `Set.contains` per key event, and short-circuits to nothing when the
+  /// state did not change — a held key repeating does not re-run a layout
+  /// pass.
+  ///
+  /// `HardwareKeyboard` updates its pressed-key map BEFORE dispatching to
+  /// handlers, so the getters read here are accurate for the event being
+  /// delivered.
+  bool _handleModifierKey(KeyEvent event) {
+    if (event is KeyRepeatEvent) return false;
+
+    final lassoHeld = _isLassoModifierHeld;
+    final lassoBeacon = widget.controller.lassoModifierHeld;
+    if (lassoHeld != lassoBeacon.peek()) lassoBeacon.value = lassoHeld;
+
+    _syncSwapModifier(reevaluate: true);
+    return false;
+  }
+
+  /// Publishes the swap-modifier state to the controller and, when a drag is
+  /// live and the effective mode actually changed, replays the current
+  /// pointer position so the layout reflects the new mode immediately.
+  ///
+  /// The replay is mandatory: without it the mode would only take effect on
+  /// the next pointer movement, and a user holding the modifier over a
+  /// stationary cursor would see nothing happen. It is guarded on a real mode
+  /// change so that pressing an unrelated key mid-drag costs nothing.
+  void _syncSwapModifier({required bool reevaluate}) {
+    final controller = widget.controller;
+    final held = _isSwapModifierHeld;
+    if (held == controller.swapModifierHeld.peek()) return;
+
+    final before = controller.getEffectiveDragMode();
+    controller.swapModifierHeld.value = held;
+    if (!reevaluate) return;
+    if (controller.getEffectiveDragMode() == before) return;
+
+    // Resizes have no drag mode, and a lasso has no dragged item.
+    final position = _lastGlobalPosition;
+    if (position == null) return;
+    if (_activeItemId == null || _activeResizeHandle != null) return;
+    if (_activeSliverMetrics == null) return;
+    _performUpdate(position);
+  }
+
+  TextDirection get _lassoTextDirection => Directionality.maybeOf(context) ?? TextDirection.ltr;
 
   // Auto Scroll
 
@@ -1937,7 +2496,12 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
         } else if (widget.controller.currentDragPlaceholder != null) {
           // External DragTarget hover only; never resurrect a placeholder
           // from a stale position (e.g. when scrolled by delegation).
-          _updatePlaceholderPosition(_lastGlobalPosition!);
+          final p = widget.controller.currentDragPlaceholder!;
+          _showPlaceholderAt(
+            _lastGlobalPosition!,
+            w: p.w,
+            h: p.h,
+          );
         }
       }
     });
@@ -1953,11 +2517,12 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
     _scrollSpeed = 0.0;
   }
 
-  void _updatePlaceholderPosition(Offset globalPosition) {
+  void _updatePlaceholderPosition(Offset globalPosition, T data) {
+    final template = widget.externalTemplateBuilder?.call(data);
     _showPlaceholderAt(
       globalPosition,
-      w: widget.placeholderWidth,
-      h: widget.placeholderHeight,
+      w: template?.w ?? widget.placeholderWidth,
+      h: template?.h ?? widget.placeholderHeight,
     );
   }
 
@@ -2441,7 +3006,7 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
         // could receive the item; a single-grid scope (e.g. opened purely for
         // subGridDynamicSameGrid) keeps the native drag, which also keeps the
         // trash flow alive.
-        coordinator.hasAnyTargetBesides(this) &&
+        coordinator.hasAnyTargetBesides(this, draggedItem: item) &&
         // The trash zone lives outside the sliver's paint bounds by
         // construction; starting an exit session there would cancel the trash
         // timers and make deletion unreachable (_checkTrash runs after this
@@ -2459,6 +3024,12 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
       probePoint,
       excludeSourceController: widget.controller,
       excludeItemId: itemId,
+      // Second `targetAt` call site: the session-entry probe. It must apply
+      // the same business filter as the in-session one, or a grid that
+      // refuses the item would still capture the handover on entry and only
+      // reject it on the next pointer event.
+      draggedItem: item,
+      sourceController: widget.controller,
     );
 
     // Ancestor handover requires a REAL exit. `targetAt` can resolve an

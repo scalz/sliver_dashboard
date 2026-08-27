@@ -1,3 +1,4 @@
+import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sliver_dashboard/sliver_dashboard.dart';
@@ -601,5 +602,90 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('child1'), findsOneWidget);
+  });
+
+  testWidgets('NestedDashboard forwards externalTemplateBuilder and onDrop to inner dashboard',
+      (tester) async {
+    await runOnDesktop(() async {
+      final coordinator = DashboardNestedCoordinator();
+      addTearDown(coordinator.dispose);
+
+      final parent = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: const [LayoutItem(id: 'group', x: 0, y: 0, w: 4, h: 4)],
+      )..setEditMode(true);
+      final child = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: const [],
+      )..setEditMode(true);
+      addTearDown(parent.dispose);
+      addTearDown(child.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: DashboardNestedScope(
+              coordinator: coordinator,
+              child: Column(
+                children: [
+                  const Draggable<String>(
+                    data: 'nested_payload',
+                    feedback: SizedBox(width: 50, height: 50),
+                    child: Text('Drag To Child'),
+                  ),
+                  Expanded(
+                    child: Dashboard<String>(
+                      controller: parent,
+                      itemBuilder: (context, item) {
+                        if (item.id == 'group') {
+                          return NestedDashboard<String>(
+                            controller: child,
+                            parentItemId: 'group',
+                            autoSlotCount: false,
+                            externalTemplateBuilder: (data) => const LayoutItem(
+                              id: '',
+                              x: 0,
+                              y: 0,
+                              w: 3,
+                              h: 2,
+                              minW: 2,
+                            ),
+                            onDrop: (data, placeholder) async => 'dropped_in_child',
+                            itemBuilder: (ctx, nested) => Text('C-${nested.id}'),
+                          );
+                        }
+                        return Text('P-${item.id}');
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final gesture = await tester.startGesture(
+        tester.getCenter(find.text('Drag To Child')),
+        kind: PointerDeviceKind.mouse,
+      );
+      await tester.pump();
+
+      final childGridCenter = tester.getCenter(find.byType(NestedDashboard<String>));
+      await gesture.moveTo(childGridCenter);
+      await tester.pump();
+
+      expect(child.currentDragPlaceholder?.w, 3);
+      expect(child.currentDragPlaceholder?.h, 2);
+
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      final placed = child.layout.value.firstWhere((i) => i.id == 'dropped_in_child');
+      expect(placed.w, 3);
+      expect(placed.h, 2);
+      expect(placed.minW, 2);
+    });
   });
 }

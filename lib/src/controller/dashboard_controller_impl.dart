@@ -10,6 +10,7 @@ import 'package:sliver_dashboard/src/models/dashboard_policy.dart';
 import 'package:sliver_dashboard/src/models/layout_item.dart';
 import 'package:sliver_dashboard/src/models/utility.dart';
 import 'package:sliver_dashboard/src/view/a11y/dashboard_shortcuts.dart';
+import 'package:sliver_dashboard/src/view/dashboard_configuration.dart';
 import 'package:sliver_dashboard/src/view/guidance/dashboard_guidance.dart';
 import 'package:sliver_dashboard/src/view/resize_handle.dart';
 import 'package:state_beacon/state_beacon.dart';
@@ -101,6 +102,26 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
 
   @override
   DashboardShortcuts? shortcuts;
+
+  @override
+  LassoStyle lassoStyle = LassoStyle.byDefault;
+
+  @override
+  late final dragMode = B.writable<engine.DragMode>(engine.DragMode.cascade);
+
+  @override
+  late final swapModifierHeld = B.writable<bool>(false);
+
+  @override
+  late final lassoModifierHeld = B.writable<bool>(false);
+
+  /// Effective mode of the frame the boundary bypass last computed.
+  ///
+  /// Part of the bypass key, not just bookkeeping: without it, flipping the
+  /// modifier mid-drag without moving the pointer leaves the target box
+  /// unchanged, the bypass returns early and the mode change is silently
+  /// swallowed — the one failure the view's re-trigger cannot fix on its own.
+  engine.DragMode? _lastDragMode;
 
   @override
   DashboardPolicy? policy;
@@ -255,6 +276,21 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
       if (a[i] != b[i]) return false;
     }
     return true;
+  }
+
+  /// Notifies [onLayoutChanged] with an unmodifiable copy of the current layout.
+  ///
+  /// INVARIANT: Every emission of [onLayoutChanged] must pass through this method.
+  /// Handing out an unmodifiable list prevents external listeners (persistence,
+  /// sorting, debug logging) from corrupting the controller's internal layout state
+  /// or breaking the ascending ID order invariant in place.
+  void _notifyLayoutChanged([List<LayoutItem>? unmodifiableItems]) {
+    final listener = onLayoutChanged;
+    if (listener == null) return;
+    listener(
+      unmodifiableItems ?? List<LayoutItem>.unmodifiable(layout.value),
+      slotCount.value,
+    );
   }
 
   /// Records the live state as a new history entry.
@@ -462,8 +498,9 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     _syncHistoryFlags();
     _pruneSelection();
 
-    onLayoutChanged?.call(layout.value, slotCount.value);
-    (isUndo ? onUndo : onRedo)?.call(layout.value, slotCount.value);
+    final unmodifiableItems = List<LayoutItem>.unmodifiable(layout.value);
+    _notifyLayoutChanged(unmodifiableItems);
+    (isUndo ? onUndo : onRedo)?.call(unmodifiableItems, slotCount.value);
     return true;
   }
 
@@ -686,7 +723,7 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     }
     // Re-compact with new strategy
     layout.value = _compactor.compact(layout.value, slotCount.value);
-    onLayoutChanged?.call(layout.value, slotCount.value);
+    _notifyLayoutChanged();
   }
 
   @override
@@ -697,7 +734,7 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
 
     // Trigger an immediate re-layout using the new strategy.
     layout.value = _compactor.compact(layout.value, slotCount.value);
-    onLayoutChanged?.call(layout.value, slotCount.value);
+    _notifyLayoutChanged();
   }
 
   @override
@@ -725,7 +762,7 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     );
 
     _recordHistory();
-    onLayoutChanged?.call(layout.value, slotCount.value);
+    _notifyLayoutChanged();
   }
 
   @override
@@ -758,7 +795,7 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
 
     layout.value = newLayout;
     _recordHistory();
-    onLayoutChanged?.call(layout.value, slotCount.value);
+    _notifyLayoutChanged();
 
     clearSelection();
   }
@@ -877,7 +914,7 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
       _recordHistory();
     }
 
-    onLayoutChanged?.call(layout.value, slotCount.value);
+    _notifyLayoutChanged();
   }
 
   @override
@@ -938,7 +975,7 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     }
 
     // 5. Notify layout changes
-    onLayoutChanged?.call(layout.value, slotCount.value);
+    _notifyLayoutChanged();
   }
 
   @override
@@ -991,7 +1028,7 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     );
 
     _recordHistory();
-    onLayoutChanged?.call(layout.value, slotCount.value);
+    _notifyLayoutChanged();
   }
 
   @override
@@ -1029,6 +1066,19 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
   void setScrollDirection(Axis direction) {
     if (scrollDirection.value == direction) return;
     scrollDirection.value = direction;
+  }
+
+  @override
+  void setDragMode(engine.DragMode mode) {
+    dragMode.value = mode;
+  }
+
+  @override
+  engine.DragMode getEffectiveDragMode({bool? modifierHeld}) {
+    final held = modifierHeld ?? swapModifierHeld.peek();
+    final base = dragMode.peek();
+    if (!held) return base;
+    return base == engine.DragMode.cascade ? engine.DragMode.swap : engine.DragMode.cascade;
   }
 
   @override
@@ -1150,7 +1200,7 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     placeholder.value = null;
     originalLayoutOnStart.value = [];
 
-    onLayoutChanged?.call(layout.value, slotCount.value);
+    _notifyLayoutChanged();
   }
 
   /// Call when a drag gesture starts on a dashboard item.
@@ -1210,6 +1260,7 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     if (snapshot.isEmpty) return;
     _lastBBoxX = null;
     _lastBBoxY = null;
+    _lastDragMode = null;
     layout.value = List<LayoutItem>.from(snapshot);
   }
 
@@ -1279,7 +1330,7 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
         layout.value = compactionType.value == engine.CompactType.none
             ? _compactor.resolveCollisions(current, slotCount.value)
             : _compactor.compact(current, slotCount.value);
-        onLayoutChanged?.call(layout.value, slotCount.value);
+        _notifyLayoutChanged();
       case CrossGridExitOutcome.returned:
         break;
       case CrossGridExitOutcome.canceled:
@@ -1321,7 +1372,7 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     placeholder.value = null;
     originalLayoutOnStart.value = [];
 
-    onLayoutChanged?.call(layout.value, slotCount.value);
+    _notifyLayoutChanged();
     var placed = newItem;
     for (final i in layout.value) {
       if (i.id == newItem.id) {
@@ -1378,7 +1429,7 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     layout.value = compactionType.value == engine.CompactType.none
         ? _compactor.resolveCollisions(newLayout, slotCount.value)
         : _compactor.compact(newLayout, slotCount.value);
-    onLayoutChanged?.call(layout.value, slotCount.value);
+    _notifyLayoutChanged();
     for (final i in layout.value) {
       if (i.id == itemId) return i;
     }
@@ -1444,6 +1495,7 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     // reset lock
     _lastBBoxX = null;
     _lastBBoxY = null;
+    _lastDragMode = null;
 
     // Snapshot layout for anti-drift
     originalLayoutOnStart.value = layout.value;
@@ -1533,7 +1585,15 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     // changed, the background grid is mathematically identical: only update
     // the lightweight overlay dragOffset. The pivot's logical position is
     // cached from the last moveCluster result instead of an O(N) firstWhere.
-    if (_lastBBoxX == targetBBoxX && _lastBBoxY == targetBBoxY) {
+    // Swap is restricted to single-item drags: a cluster has no single
+    // meaningful partner, and the restriction is also what keeps the default
+    // `Shift` modifier from colliding with Shift-built multi-selections.
+    final effectiveMode =
+        selectedItemIds.value.length == 1 ? getEffectiveDragMode() : engine.DragMode.cascade;
+
+    // Boundary Bypass — keyed on the effective mode as well as the target
+    // box, so a modifier flip with a stationary pointer is not swallowed.
+    if (_lastBBoxX == targetBBoxX && _lastBBoxY == targetBBoxY && _lastDragMode == effectiveMode) {
       final movedPivot = _lastMovedPivot ?? pivotItem;
       final logicalItemPixelX = movedPivot.x * (slotWidth + crossAxisSpacing);
       final logicalItemPixelY = movedPivot.y * (slotHeight + mainAxisSpacing);
@@ -1547,19 +1607,38 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
 
     _lastBBoxX = targetBBoxX;
     _lastBBoxY = targetBBoxY;
+    _lastDragMode = effectiveMode;
 
-    // 5. Move Cluster
-    final newLayout = engine.moveCluster(
-      originalLayoutOnStart.value,
-      selectedItemIds.value,
-      targetBBoxX,
-      targetBBoxY,
-      cols: slotCount.value,
-      compactType: compactionType.value,
-      preventCollision: preventCollision.value,
-      policy: policy,
-      allowAutoShrink: allowAutoShrink.value,
-    );
+    // 5. Move Cluster — or swap, when the mode asks for it AND the drop
+    // qualifies. `swapElements` returns null on any frame with no valid
+    // partner (empty space, a tile merely clipped, a static, a policy veto);
+    // that frame falls back to the cascade so the drag never feels stuck.
+    // Both paths recompute from `originalLayoutOnStart`, which is what makes
+    // switching modes mid-gesture exact rather than incremental.
+    final swapped = effectiveMode == engine.DragMode.swap
+        ? engine.swapElements(
+            originalLayoutOnStart.value,
+            pivotItem,
+            targetBBoxX,
+            targetBBoxY,
+            cols: slotCount.value,
+            compactType: compactionType.value,
+            policy: policy,
+          )
+        : null;
+
+    final newLayout = swapped ??
+        engine.moveCluster(
+          originalLayoutOnStart.value,
+          selectedItemIds.value,
+          targetBBoxX,
+          targetBBoxY,
+          cols: slotCount.value,
+          compactType: compactionType.value,
+          preventCollision: preventCollision.value,
+          policy: policy,
+          allowAutoShrink: allowAutoShrink.value,
+        );
 
     layout.value = newLayout;
 
@@ -1592,7 +1671,7 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
 
     layout.value = finalLayout;
     _recordHistory();
-    onLayoutChanged?.call(layout.value, slotCount.value);
+    _notifyLayoutChanged();
 
     _isDraggingState.value = false;
     _pivotItemId = null;
@@ -1816,7 +1895,7 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     layout.value = finalLayout;
     _recordHistory();
 
-    onLayoutChanged?.call(layout.value, slotCount.value);
+    _notifyLayoutChanged();
 
     isResizing.value = false;
     _pivotItemId = null;
@@ -1909,7 +1988,7 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
 
     layout.value = optimized;
     _recordHistory();
-    onLayoutChanged?.call(layout.value, slotCount.value);
+    _notifyLayoutChanged();
   }
 
   // Helper to get temporary delegate for overrides

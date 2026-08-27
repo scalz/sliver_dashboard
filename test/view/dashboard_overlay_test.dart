@@ -1248,6 +1248,9 @@ void main() {
     test('DashboardOverlayController default constructor and methods', () {
       const controller = DashboardOverlayController();
       expect(() => controller.startDragging('1', Offset.zero), returnsNormally);
+      expect(controller.onWillDelete, isNull);
+      expect(controller.onItemsDeleted, isNull);
+      expect(controller.onCloneRequested, isNull);
     });
 
     testWidgets(
@@ -3561,6 +3564,452 @@ void main() {
         expect(child.layout.value.any((i) => i.id == 'c1'), isFalse);
         expect(moves, 1);
       });
+    });
+  });
+
+  group('externalTemplateBuilder — DragTarget payload sizing', () {
+    testWidgets(
+        'hover placeholder matches template dimensions and drop preserves all constraints and flags',
+        (tester) async {
+      await runOnDesktop(() async {
+        final controller = DashboardController(
+          initialSlotCount: 8,
+          initialLayout: const [LayoutItem(id: 'existing', x: 0, y: 0, w: 2, h: 2)],
+        )..setEditMode(true);
+        addTearDown(controller.dispose);
+
+        final scrollController = ScrollController();
+        addTearDown(scrollController.dispose);
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: Column(
+                children: [
+                  const Draggable<Map<String, dynamic>>(
+                    data: {'type': 'chart', 'w': 4, 'h': 2, 'minW': 2, 'maxW': 6},
+                    feedback: SizedBox(width: 80, height: 40, child: ColoredBox(color: Colors.red)),
+                    child: Text('Drag Chart'),
+                  ),
+                  Expanded(
+                    child: Dashboard<Map<String, dynamic>>(
+                      controller: controller,
+                      scrollController: scrollController,
+                      externalTemplateBuilder: (data) => LayoutItem(
+                        id: '',
+                        x: 0,
+                        y: 0,
+                        w: data['w'] as int,
+                        h: data['h'] as int,
+                        minW: data['minW'] as int,
+                        maxW: (data['maxW'] as int).toDouble(),
+                        isResizable: true,
+                        extra: {'category': data['type']},
+                      ),
+                      onDrop: (data, item) async => 'new_chart',
+                      itemBuilder: (context, item) => Text('Item ${item.id}'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        final draggableFinder = find.text('Drag Chart');
+        final gesture = await tester.startGesture(
+          tester.getCenter(draggableFinder),
+          kind: PointerDeviceKind.mouse,
+        );
+        await tester.pump();
+
+        // Move onto dashboard grid
+        final dashboardFinder = find.byType(CustomScrollView);
+        await gesture.moveTo(tester.getCenter(dashboardFinder));
+        await tester.pump();
+
+        // 1. Verify that the hover placeholder is sized 4x2 according to the template
+        final placeholder = controller.currentDragPlaceholder;
+        expect(placeholder, isNotNull);
+        expect(placeholder!.w, 4);
+        expect(placeholder.h, 2);
+
+        // 2. Drop
+        await gesture.up();
+        await tester.pumpAndSettle();
+
+        // 3. Verify that the placed item kept constraints, flags, dimensions, and extra metadata
+        final placed = controller.layout.value.firstWhere((i) => i.id == 'new_chart');
+        expect(placed.w, 4);
+        expect(placed.h, 2);
+        expect(placed.minW, 2);
+        expect(placed.maxW, 6);
+        expect(placed.isResizable, isTrue);
+        expect(placed.extra, {'category': 'chart'});
+      });
+    });
+
+    testWidgets('dropping a section barrier template lands as a static barrier', (tester) async {
+      await runOnDesktop(() async {
+        final controller = DashboardController(
+          initialSlotCount: 8,
+          initialLayout: const [LayoutItem(id: 'a', x: 0, y: 1, w: 2, h: 2)],
+        )..setEditMode(true);
+        addTearDown(controller.dispose);
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: Column(
+                children: [
+                  const Draggable<String>(
+                    data: 'barrier',
+                    feedback:
+                        SizedBox(width: 100, height: 20, child: ColoredBox(color: Colors.grey)),
+                    child: Text('Drag Barrier'),
+                  ),
+                  Expanded(
+                    child: Dashboard<String>(
+                      controller: controller,
+                      scrollController: ScrollController(),
+                      externalTemplateBuilder: (data) => const LayoutItem(
+                        id: '',
+                        x: 0,
+                        y: 0,
+                        w: 8,
+                        h: 1,
+                        isSectionBarrier: true,
+                        sectionTitle: 'New Section',
+                      ),
+                      onDrop: (data, item) async => 'sec_header',
+                      itemBuilder: (context, item) => Text('Item ${item.id}'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        final gesture = await tester.startGesture(
+          tester.getCenter(find.text('Drag Barrier')),
+          kind: PointerDeviceKind.mouse,
+        );
+        await tester.pump();
+        await gesture.moveTo(tester.getCenter(find.byType(CustomScrollView)));
+        await tester.pump();
+
+        await gesture.up();
+        await tester.pumpAndSettle();
+
+        final barrier = controller.layout.value.firstWhere((i) => i.id == 'sec_header');
+        expect(barrier.isSectionBarrier, isTrue);
+        expect(barrier.isStatic, isTrue);
+        expect(barrier.sectionTitle, 'New Section');
+        expect(barrier.w, 8);
+      });
+    });
+
+    testWidgets('leave-then-re-enter with different payload re-resolves the template immediately',
+        (tester) async {
+      await runOnDesktop(() async {
+        final controller = DashboardController(
+          initialSlotCount: 8,
+          initialLayout: const [],
+        )..setEditMode(true);
+        addTearDown(controller.dispose);
+
+        final scrollController = ScrollController();
+        addTearDown(scrollController.dispose);
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: Column(
+                children: [
+                  const Row(
+                    children: [
+                      Draggable<int>(
+                        data: 2, // 2x1 item
+                        feedback: SizedBox(width: 40, height: 20),
+                        child: Text('Item 2x1'),
+                      ),
+                      Draggable<int>(
+                        data: 4, // 4x2 item
+                        feedback: SizedBox(width: 80, height: 40),
+                        child: Text('Item 4x2'),
+                      ),
+                    ],
+                  ),
+                  Expanded(
+                    child: Dashboard<int>(
+                      controller: controller,
+                      scrollController: scrollController,
+                      externalTemplateBuilder: (data) => LayoutItem(
+                        id: '',
+                        x: 0,
+                        y: 0,
+                        w: data,
+                        h: data == 4 ? 2 : 1,
+                      ),
+                      itemBuilder: (context, item) => Text('Item ${item.id}'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        final gridCenter = tester.getCenter(find.byType(CustomScrollView));
+
+        // 1. Drag first item (2x1) into grid
+        final g1 = await tester.startGesture(
+          tester.getCenter(find.text('Item 2x1')),
+          kind: PointerDeviceKind.mouse,
+        );
+        await tester.pump();
+        await g1.moveTo(gridCenter);
+        await tester.pump();
+        expect(controller.currentDragPlaceholder?.w, 2);
+        expect(controller.currentDragPlaceholder?.h, 1);
+
+        // Leave grid (arms leaveTimer)
+        await g1.moveTo(const Offset(10, 10));
+        await tester.pump();
+        await g1.up();
+        await tester.pump();
+
+        // 2. Drag second item (4x2) into grid within the leave window
+        final g2 = await tester.startGesture(
+          tester.getCenter(find.text('Item 4x2')),
+          kind: PointerDeviceKind.mouse,
+        );
+        await tester.pump();
+        await g2.moveTo(gridCenter);
+        await tester.pump();
+
+        // Must re-resolve template to 4x2 without retaining stale 2x1 size
+        expect(controller.currentDragPlaceholder?.w, 4);
+        expect(controller.currentDragPlaceholder?.h, 2);
+
+        await g2.up();
+        await tester.pumpAndSettle();
+      });
+    });
+  });
+
+  group('Dashboard A11y & Keyboard Shortcuts Suite', () {
+    late DashboardControllerImpl controller;
+    const itemA = LayoutItem(id: 'A', x: 0, y: 0, w: 2, h: 2);
+    const itemB = LayoutItem(id: 'B', x: 2, y: 0, w: 2, h: 2);
+    const staticItem = LayoutItem(id: 'S', x: 0, y: 2, w: 4, h: 1, isStatic: true);
+
+    setUp(() {
+      controller = DashboardControllerImpl(
+        initialSlotCount: 4,
+        initialLayout: [itemA, itemB, staticItem],
+      )..setEditMode(true);
+    });
+
+    tearDown(() => controller.dispose());
+
+    Widget buildTestHarness({
+      DashboardWillDeleteCallback? onWillDelete,
+      DashboardItemsDeletedCallback? onItemsDeleted,
+      DashboardCloneRequestCallback? onCloneRequested,
+    }) {
+      return MaterialApp(
+        home: Scaffold(
+          body: FocusScope(
+            autofocus: true,
+            child: Dashboard<String>(
+              controller: controller,
+              onWillDelete: onWillDelete,
+              onItemsDeleted: onItemsDeleted,
+              onCloneRequested: onCloneRequested,
+              itemBuilder: (ctx, item) => SizedBox(child: Text('Card-${item.id}')),
+            ),
+          ),
+        ),
+      );
+    }
+
+    testWidgets('Delete key deletes the focused item when idle', (tester) async {
+      var deletedCount = 0;
+      await tester.pumpWidget(
+        buildTestHarness(
+          onItemsDeleted: (items) => deletedCount = items.length,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final itemAFinder =
+          find.ancestor(of: find.text('Card-A'), matching: find.byType(DashboardItem));
+      await _requestFocus(tester, itemAFinder);
+      await tester.sendKeyEvent(LogicalKeyboardKey.delete);
+      await tester.pumpAndSettle();
+
+      expect(controller.layout.value.any((i) => i.id == 'A'), isFalse);
+      expect(deletedCount, 1);
+    });
+
+    testWidgets('Delete key respects onWillDelete veto hook', (tester) async {
+      await tester.pumpWidget(
+        buildTestHarness(
+          onWillDelete: (items) async => false, // VETO
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final itemAFinder =
+          find.ancestor(of: find.text('Card-A'), matching: find.byType(DashboardItem));
+      await _requestFocus(tester, itemAFinder);
+      await tester.sendKeyEvent(LogicalKeyboardKey.backspace);
+      await tester.pumpAndSettle();
+
+      expect(controller.layout.value.any((i) => i.id == 'A'), isTrue);
+    });
+
+    testWidgets('Ctrl+A selects all non-static items in edit mode', (tester) async {
+      await tester.pumpWidget(buildTestHarness());
+      await tester.pumpAndSettle();
+
+      final itemAFinder =
+          find.ancestor(of: find.text('Card-A'), matching: find.byType(DashboardItem));
+      await _requestFocus(tester, itemAFinder);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyA);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pumpAndSettle();
+
+      expect(controller.selectedItemIds.value, {'A', 'B'});
+      expect(controller.selectedItemIds.value.contains('S'), isFalse); // Statics excluded
+    });
+
+    testWidgets('Escape clears selection when idle and items are selected', (tester) async {
+      await tester.pumpWidget(buildTestHarness());
+      await tester.pumpAndSettle();
+
+      controller.selectedItemIds.value = {'A', 'B'};
+      await tester.pump();
+
+      final itemAFinder =
+          find.ancestor(of: find.text('Card-A'), matching: find.byType(DashboardItem));
+      await _requestFocus(tester, itemAFinder);
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+
+      expect(controller.selectedItemIds.value, isEmpty);
+    });
+
+    testWidgets('Ctrl+D duplicates selected items via onCloneRequested', (tester) async {
+      var cloneCount = 0;
+      await tester.pumpWidget(
+        buildTestHarness(
+          onCloneRequested: (source, grid) {
+            cloneCount++;
+            return source.copyWith(id: '${source.id}_copy');
+          },
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final itemAFinder =
+          find.ancestor(of: find.text('Card-A'), matching: find.byType(DashboardItem));
+      await _requestFocus(tester, itemAFinder);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyD);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pumpAndSettle();
+
+      expect(cloneCount, 1);
+      expect(controller.layout.value.any((i) => i.id == 'A_copy'), isTrue);
+      expect(controller.selectedItemIds.value, {'A_copy'});
+    });
+
+    testWidgets('Ctrl+Z triggers undo and Ctrl+Y triggers redo', (tester) async {
+      await tester.pumpWidget(buildTestHarness());
+      await tester.pumpAndSettle();
+
+      controller.addItem(const LayoutItem(id: 'C', x: 0, y: 3, w: 1, h: 1));
+      expect(controller.layout.value.any((i) => i.id == 'C'), isTrue);
+      expect(controller.canUndo.value, isTrue);
+
+      final itemAFinder =
+          find.ancestor(of: find.text('Card-A'), matching: find.byType(DashboardItem));
+      await _requestFocus(tester, itemAFinder);
+
+      // Undo
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyZ);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pumpAndSettle();
+
+      expect(controller.layout.value.any((i) => i.id == 'C'), isFalse);
+      expect(controller.canRedo.value, isTrue);
+
+      // Redo
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyY);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pumpAndSettle();
+
+      expect(controller.layout.value.any((i) => i.id == 'C'), isTrue);
+    });
+
+    testWidgets('Delete key executes deletion when onWillDelete returns true', (tester) async {
+      var deletedCount = 0;
+      await tester.pumpWidget(
+        buildTestHarness(
+          onWillDelete: (items) async => true,
+          onItemsDeleted: (items) => deletedCount = items.length,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final itemAFinder =
+          find.ancestor(of: find.text('Card-A'), matching: find.byType(DashboardItem));
+      await _requestFocus(tester, itemAFinder);
+      await tester.sendKeyEvent(LogicalKeyboardKey.delete);
+      await tester.pumpAndSettle();
+
+      expect(controller.layout.value.any((i) => i.id == 'A'), isFalse);
+      expect(deletedCount, 1);
+    });
+
+    testWidgets('Clicking item B after focusing item A moves focus and deletes B on Delete key',
+        (tester) async {
+      await tester.pumpWidget(buildTestHarness());
+      await tester.pumpAndSettle();
+
+      final itemAFinder =
+          find.ancestor(of: find.text('Card-A'), matching: find.byType(DashboardItem));
+      await _requestFocus(tester, itemAFinder);
+      await tester.pumpAndSettle();
+
+      final itemBFinder = find.text('Card-B');
+      await tester.tap(itemBFinder);
+      await tester.pumpAndSettle();
+
+      expect(controller.selectedItemIds.value, {'B'});
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.delete);
+      await tester.pumpAndSettle();
+
+      expect(
+        controller.layout.value.any((i) => i.id == 'B'),
+        isFalse,
+        reason: 'Item B should be deleted',
+      );
+      expect(
+        controller.layout.value.any((i) => i.id == 'A'),
+        isTrue,
+        reason: 'Item A should remain untouched',
+      );
     });
   });
 }

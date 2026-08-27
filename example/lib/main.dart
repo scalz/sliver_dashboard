@@ -8,6 +8,7 @@ import 'package:sliver_dashboard/sliver_dashboard.dart';
 
 import 'multi_sliver_crossdrag_example.dart' show MultiSliverExamplePage;
 import 'nested_example.dart' show NestedExamplePage;
+import 'shortcuts_hud.dart';
 
 void main() {
   runApp(const MyApp());
@@ -52,7 +53,7 @@ class ExampleHome extends StatelessWidget {
               leading: Icon(Icons.dashboard, color: theme.colorScheme.primary),
               title: const Text('Playground'),
               subtitle: const Text(
-                'Single grid: drag, resize, custom columns (up to 60+), slot tap, maxRows, extra metadata…',
+                'Single grid: drag, resize, component palette, shortcuts HUD, lasso, maxRows…',
               ),
               trailing: const Icon(Icons.chevron_right),
               onTap: () => Navigator.of(context).push(
@@ -101,6 +102,32 @@ class ExampleHome extends StatelessWidget {
       ),
     );
   }
+}
+
+class ComponentSpec {
+  const ComponentSpec({
+    required this.type,
+    required this.label,
+    required this.icon,
+    required this.w,
+    required this.h,
+    this.minW = 1,
+    this.minH = 1,
+    this.maxW = double.infinity,
+    this.maxH = double.infinity,
+    this.isSectionBarrier = false,
+  });
+
+  final String type;
+  final String label;
+  final IconData icon;
+  final int w;
+  final int h;
+  final int minW;
+  final int minH;
+  final double maxW;
+  final double maxH;
+  final bool isSectionBarrier;
 }
 
 /// A strict policy to isolate layout regions and block specific collisions.
@@ -158,6 +185,11 @@ class _DashboardPageState extends State<DashboardPage> {
   final maxRows = ValueNotifier<int?>(null);
   final enableSlotTapToAdd = ValueNotifier<bool>(false);
   final enableAltDragClone = ValueNotifier<bool>(true);
+  final enableLassoGuidance = ValueNotifier<bool>(true);
+  final lassoMode = ValueNotifier<LassoSelectionMode>(
+    LassoSelectionMode.emptySpace,
+  );
+  final dragMode = ValueNotifier<DragMode>(DragMode.cascade);
 
   // null = Use Responsive Breakpoints. Non-null = Override with custom fixed slot count.
   final customSlotCount = ValueNotifier<int?>(null);
@@ -475,6 +507,14 @@ class _DashboardPageState extends State<DashboardPage> {
     }
   }
 
+  void _showShortcutsHudModal() {
+    showDialog<void>(
+      context: context,
+      barrierColor: Colors.black54,
+      builder: (_) => const DashboardShortcutsHud(),
+    );
+  }
+
   void _handleSlotLongPress(int x, int y) {
     if (mounted) {
       ScaffoldMessenger.of(context).hideCurrentSnackBar();
@@ -571,6 +611,9 @@ class _DashboardPageState extends State<DashboardPage> {
       maxRows: maxRows,
       enableSlotTapToAdd: enableSlotTapToAdd,
       enableAltDragClone: enableAltDragClone,
+      enableLassoGuidance: enableLassoGuidance,
+      lassoMode: lassoMode,
+      dragMode: dragMode,
       customSlotCount: customSlotCount,
       compactionType: compactionType,
       resizeBehavior: resizeBehavior,
@@ -579,6 +622,7 @@ class _DashboardPageState extends State<DashboardPage> {
       onForceGenerate: _forceGenerateJson,
       onImportJson: _importJson,
       onStressTest: _addStressTestItems,
+      onShowHud: _showShortcutsHudModal,
     );
 
     return Scaffold(
@@ -586,6 +630,11 @@ class _DashboardPageState extends State<DashboardPage> {
         title: const Text('Sliver Dashboard Playground'),
         elevation: 2,
         actions: [
+          IconButton(
+            icon: const Icon(Icons.keyboard_outlined),
+            tooltip: 'Shortcuts HUD (A11y & Keys)',
+            onPressed: _showShortcutsHudModal,
+          ),
           Builder(
             builder: (context) {
               return IconButton(
@@ -701,6 +750,36 @@ class _DashboardPageState extends State<DashboardPage> {
 
   int _cloneCounter = 0;
 
+  /// Grid style shared by both demos.
+  GridStyle _buildGridStyle(ThemeData theme) {
+    return GridStyle(
+      fillColor: theme.colorScheme.onSurface.withValues(alpha: 0.03),
+      handleColor: theme.colorScheme.primary,
+      lineColor: theme.colorScheme.onSurface.withValues(alpha: 0.08),
+      lineWidth: 1,
+    );
+  }
+
+  /// Pushes the rubberband ("lasso") configuration onto the controller.
+  ///
+  /// It lives there — next to `shortcuts` and `guidance` — rather than on
+  /// the widget, because it is interaction policy rather than grid painting.
+  void _syncLassoStyle(ThemeData theme) {
+    controller
+      ..lassoStyle = LassoStyle(
+        mode: lassoMode.value,
+        fillColor: theme.colorScheme.primary.withValues(alpha: 0.18),
+        borderColor: theme.colorScheme.primary,
+        borderWidth: 1.5,
+      )
+      // Guidance drives the lasso cursor (precise, over empty space) and the
+      // label drawn beside the rectangle. Screen-reader announcements fire
+      // either way.
+      ..guidance = enableLassoGuidance.value
+          ? DashboardGuidance.byDefault
+          : null;
+  }
+
   Widget _buildCard(BuildContext context, LayoutItem item) {
     final theme = Theme.of(context);
     final colorId = (item.extra?['clonedFrom'] as String?) ?? item.id;
@@ -718,6 +797,35 @@ class _DashboardPageState extends State<DashboardPage> {
     );
   }
 
+  /// Résout le gabarit selon le composant déposé depuis la palette
+  LayoutItem? _buildExternalTemplate(ComponentSpec spec) {
+    return LayoutItem(
+      id: '', // ignoré — assigné par onDrop
+      x: 0,
+      y: 0,
+      w: spec.w,
+      h: spec.h,
+      minW: spec.minW,
+      minH: spec.minH,
+      maxW: spec.maxW,
+      maxH: spec.maxH,
+      isSectionBarrier: spec.isSectionBarrier,
+      sectionTitle: spec.isSectionBarrier ? spec.label : null,
+      isResizable: !spec.isSectionBarrier,
+      extra: {'category': spec.type, 'label': spec.label},
+    );
+  }
+
+  /// Valide et nomme la tuile lors du drop externe
+  Future<String?> _handleExternalDrop(
+    ComponentSpec spec,
+    LayoutItem placeholder,
+  ) async {
+    final newId =
+        '${spec.type}_${DateTime.now().millisecondsSinceEpoch % 10000}';
+    return newId;
+  }
+
   Widget _buildStandardDemoView() {
     final theme = Theme.of(context);
     return ListenableBuilder(
@@ -729,6 +837,8 @@ class _DashboardPageState extends State<DashboardPage> {
         useDragHandlesOnly,
         showMinimap,
         animateReflow,
+        enableLassoGuidance,
+        lassoMode,
       ]),
       builder: (context, _) {
         final overrideSlots = customSlotCount.value;
@@ -739,9 +849,11 @@ class _DashboardPageState extends State<DashboardPage> {
         final minimap = showMinimap.value;
         final reflow = animateReflow.value;
 
+        _syncLassoStyle(theme);
+
         return Stack(
           children: [
-            Dashboard<String>(
+            Dashboard<ComponentSpec>(
               controller: controller,
               scrollController: standardScrollController,
               scrollDirection: controller.scrollDirection.value,
@@ -756,6 +868,8 @@ class _DashboardPageState extends State<DashboardPage> {
               // cursor, the original stays put. Registering the callback
               // is what turns the feature on.
               onCloneRequested: cloneEnabled ? _handleCloneRequested : null,
+              externalTemplateBuilder: _buildExternalTemplate,
+              onDrop: _handleExternalDrop,
               dragStartGesture: handlesOnly
                   ? DragStartGesture.none
                   : DragStartGesture.longPress,
@@ -766,12 +880,7 @@ class _DashboardPageState extends State<DashboardPage> {
                   : {0: 4, 600: 6, 900: 8},
               itemBuilder: _buildCard,
               onWillDelete: _confirmDeletion,
-              gridStyle: GridStyle(
-                fillColor: theme.colorScheme.onSurface.withValues(alpha: 0.03),
-                handleColor: theme.colorScheme.primary,
-                lineColor: theme.colorScheme.onSurface.withValues(alpha: 0.08),
-                lineWidth: 1,
-              ),
+              gridStyle: _buildGridStyle(theme),
               itemStyle: DashboardItemStyle(
                 focusColor: theme.colorScheme.primary,
                 activeColor: theme.colorScheme.secondary,
@@ -809,6 +918,8 @@ class _DashboardPageState extends State<DashboardPage> {
         useDragHandlesOnly,
         enableImpactPreview,
         animateReflow,
+        enableLassoGuidance,
+        lassoMode,
       ]),
       builder: (context, _) {
         final slotTapEnabled = enableSlotTapToAdd.value;
@@ -819,9 +930,11 @@ class _DashboardPageState extends State<DashboardPage> {
         final impactPreviewEnabled = enableImpactPreview.value;
         final overrideSlots = customSlotCount.value;
 
+        _syncLassoStyle(theme);
+
         return Stack(
           children: [
-            DashboardOverlay<String>(
+            DashboardOverlay<ComponentSpec>(
               controller: controller,
               scrollController: sliverScrollController,
               dragStartGesture: handlesOnly
@@ -832,12 +945,9 @@ class _DashboardPageState extends State<DashboardPage> {
               // Same feature, wired on the raw overlay instead of the
               // high-level Dashboard widget.
               onCloneRequested: cloneEnabled ? _handleCloneRequested : null,
-              gridStyle: GridStyle(
-                fillColor: theme.colorScheme.onSurface.withValues(alpha: 0.03),
-                handleColor: theme.colorScheme.primary,
-                lineColor: theme.colorScheme.onSurface.withValues(alpha: 0.08),
-                lineWidth: 1,
-              ),
+              externalTemplateBuilder: _buildExternalTemplate,
+              onDrop: _handleExternalDrop,
+              gridStyle: _buildGridStyle(theme),
               itemStyle: DashboardItemStyle(
                 focusColor: theme.colorScheme.primary,
                 activeColor: theme.colorScheme.secondary,
@@ -1048,6 +1158,9 @@ class _ConfigPanel extends StatelessWidget {
     required this.maxRows,
     required this.enableSlotTapToAdd,
     required this.enableAltDragClone,
+    required this.enableLassoGuidance,
+    required this.lassoMode,
+    required this.dragMode,
     required this.customSlotCount,
     required this.compactionType,
     required this.resizeBehavior,
@@ -1056,6 +1169,7 @@ class _ConfigPanel extends StatelessWidget {
     required this.onForceGenerate,
     required this.onImportJson,
     required this.onStressTest,
+    required this.onShowHud,
   });
 
   final DashboardController controller;
@@ -1070,6 +1184,9 @@ class _ConfigPanel extends StatelessWidget {
   final ValueNotifier<bool> autoShrink;
   final ValueNotifier<bool> enableSlotTapToAdd;
   final ValueNotifier<bool> enableAltDragClone;
+  final ValueNotifier<bool> enableLassoGuidance;
+  final ValueNotifier<LassoSelectionMode> lassoMode;
+  final ValueNotifier<DragMode> dragMode;
   final ValueNotifier<int?> maxRows;
   final ValueNotifier<int?> customSlotCount;
   final ValueNotifier<CompactType> compactionType;
@@ -1079,6 +1196,40 @@ class _ConfigPanel extends StatelessWidget {
   final VoidCallback onForceGenerate;
   final VoidCallback onImportJson;
   final void Function(int) onStressTest;
+  final VoidCallback onShowHud;
+
+  static const _palette = [
+    ComponentSpec(
+      type: 'chart_kpi',
+      label: 'KPI Widget',
+      icon: Icons.trending_up,
+      w: 2,
+      h: 1,
+    ),
+    ComponentSpec(
+      type: 'chart_sales',
+      label: 'Sales Chart',
+      icon: Icons.bar_chart,
+      w: 4,
+      h: 2,
+      minW: 2,
+    ),
+    ComponentSpec(
+      type: 'switch_btn',
+      label: 'Control',
+      icon: Icons.toggle_on,
+      w: 1,
+      h: 1,
+    ),
+    ComponentSpec(
+      type: 'sec_custom',
+      label: 'Divider Header',
+      icon: Icons.view_headline,
+      w: 8,
+      h: 1,
+      isSectionBarrier: true,
+    ),
+  ];
 
   @override
   Widget build(BuildContext context) {
@@ -1097,39 +1248,51 @@ class _ConfigPanel extends StatelessWidget {
             ),
           ),
           const Divider(),
-          SizedBox(
-            width: double.infinity,
-            child: Card(
-              elevation: 0,
-              color: theme.colorScheme.surfaceContainerHigh,
-              child: Padding(
-                padding: const EdgeInsets.all(10.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '💡 Keyboard Shortcuts:',
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold,
-                        color: theme.colorScheme.primary,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '• Shift + Click: Multi-select tiles\n'
-                      '• Ctrl + Drag: Duplicate tile\n'
-                      '• Space / Arrows: A11y keyboard moves',
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+          const _SectionTitle('Draggable Component Palette'),
+          Text(
+            'Drag items onto the grid (demonstrates externalTemplateBuilder):',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
             ),
           ),
           const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: _palette.map((spec) {
+              return Draggable<ComponentSpec>(
+                data: spec,
+                feedback: Material(
+                  elevation: 8,
+                  borderRadius: BorderRadius.circular(8),
+                  child: Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.primaryContainer,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(spec.icon, size: 16),
+                        const SizedBox(width: 6),
+                        Text(
+                          '${spec.label} (${spec.w}x${spec.h})',
+                          style: const TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                child: Chip(
+                  avatar: Icon(spec.icon, size: 16),
+                  label: Text('${spec.w}x${spec.h}'),
+                  backgroundColor: theme.colorScheme.surfaceContainerHigh,
+                ),
+              );
+            }).toList(),
+          ),
+          const SizedBox(height: 12),
           const _SectionTitle('Visual Modes & Structures'),
           _SwitchTile(
             title: 'Edit Mode (Draggable/Resizable)',
@@ -1159,6 +1322,82 @@ class _ConfigPanel extends StatelessWidget {
           _SwitchTile(
             title: 'Highlight displaced tiles on drag (Impact Preview)',
             notifier: enableImpactPreview,
+          ),
+          _SwitchTile(
+            title: 'Lasso cursor & tooltip (guidance)',
+            notifier: enableLassoGuidance,
+          ),
+          const SizedBox(height: 10),
+          Text(
+            'Drag Mode (Shift toggles the opposite)',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+              color: theme.colorScheme.primary,
+            ),
+          ),
+          const SizedBox(height: 4),
+          ValueListenableBuilder<DragMode>(
+            valueListenable: dragMode,
+            builder: (context, value, _) {
+              return DropdownButton<DragMode>(
+                isExpanded: true,
+                dropdownColor: theme.colorScheme.surfaceContainerHigh,
+                value: value,
+                items: const [
+                  DropdownMenuItem(
+                    value: DragMode.cascade,
+                    child: Text('CASCADE — PUSH NEIGHBOURS'),
+                  ),
+                  DropdownMenuItem(
+                    value: DragMode.swap,
+                    child: Text('SWAP — EXCHANGE POSITIONS'),
+                  ),
+                ],
+                onChanged: (v) {
+                  if (v == null) return;
+                  dragMode.value = v;
+                  controller.setDragMode(v);
+                },
+              );
+            },
+          ),
+          const SizedBox(height: 10),
+          Text(
+            'Lasso Selection Trigger (desktop / web)',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+              color: theme.colorScheme.primary,
+            ),
+          ),
+          const SizedBox(height: 4),
+          ValueListenableBuilder<LassoSelectionMode>(
+            valueListenable: lassoMode,
+            builder: (context, value, _) {
+              return DropdownButton<LassoSelectionMode>(
+                isExpanded: true,
+                dropdownColor: theme.colorScheme.surfaceContainerHigh,
+                value: value,
+                items: const [
+                  DropdownMenuItem(
+                    value: LassoSelectionMode.emptySpace,
+                    child: Text('EMPTY SPACE DRAG (DEFAULT)'),
+                  ),
+                  DropdownMenuItem(
+                    value: LassoSelectionMode.modifierRequired,
+                    child: Text('SHIFT + EMPTY SPACE DRAG'),
+                  ),
+                  DropdownMenuItem(
+                    value: LassoSelectionMode.disabled,
+                    child: Text('DISABLED'),
+                  ),
+                ],
+                onChanged: (v) {
+                  if (v != null) lassoMode.value = v;
+                },
+              );
+            },
           ),
           const SizedBox(height: 10),
           Text(

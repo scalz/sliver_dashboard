@@ -1,3 +1,78 @@
+## 2.6.0
+
+### Breaking Changes (Safety Hardening & Interface)
+
+> **Note:** For 99% of users, this update is a seamless drop-in with zero code changes required.
+
+- **Unmodifiable Layout Callbacks (Safety Hardening)**: `onLayoutChanged`, `onUndo`, `onRedo`, `onWillUndo`, 
+and `onWillRedo` now provide a `List<LayoutItem>.unmodifiable` instead of the controller's 
+internal mutable `layout.value` reference. This protects internal layout state and 
+ID ordering invariants against accidental in-place mutations.
+  - *Migration:* If you were sorting the list in-place inside `onLayoutChanged` (`items.sort(...)`), call `items.toList()` first. Reading/iterating the list is completely unaffected.
+- **`DashboardController` Interface**: New members were added to the abstract interface. 
+Only applications creating custom classes with `class MyController implements DashboardController` 
+(e.g. manual test mocks) need to add the missing members.
+
+### Added
+
+- **Rectangle / Lasso Selection (Desktop & Web)**: On desktop and web, drag over empty grid
+  space to select every tile the rectangle overlaps. Selection previews live,
+  replaces the current selection by default, and is additive while a
+  `multiSelectKeys` key is held. Edge auto-scroll and mouse wheel are
+  supported.
+  - Added `LassoStyle` (`mode`, `fillColor`, `borderColor`, `borderWidth`) and
+    `LassoSelectionMode` (`emptySpace`, `modifierRequired`, `disabled`), with
+    `LassoStyle.byDefault` and `LassoStyle.off`.
+  - Added `DashboardController.lassoStyle` and `lassoModifierHeld`.
+  - Added `DashboardShortcuts.lassoModifier` (defaults to `Shift`).
+  - Added `DashboardGuidance.lassoSelect`, `a11yLassoStart`, `a11yLassoEnd`, and the
+    `A11yCountMessageBuilder` typedef.
+
+- **Swap Drag Mode**: A dragged tile can trade places with the tile it lands
+  on (> 50% coverage) instead of pushing neighbours away. **Off by default** — `DragMode.cascade`
+  reproduces the previous behaviour exactly.
+  - Added `DragMode` (`cascade`, `swap`) and the pure engine helper `swapElements`.
+  - Added `DashboardController.dragMode`, `setDragMode()`,
+    `getEffectiveDragMode({bool? modifierHeld})` and `swapModifierHeld`.
+  - Added `DashboardShortcuts.swapModeModifier` (defaults to `Shift`) to dynamically toggle
+    the opposite mode while held.
+
+- **Per-Grid Drop Rules for Nested Grids**: `canAcceptItem` on
+  `DashboardNestedScope` decides which items each grid of a tree accepts. A
+  refused grid is transparent, passing the drag through to the parent grid.
+  - Added `DashboardCanAcceptItemCallback(item, targetGrid, sourceGrid)`.
+
+- **Payload-Aware External Drops**: Added `DashboardExternalTemplateBuilder<T>` on `Dashboard`, 
+  `DashboardOverlay`, and `NestedDashboard`. Allows external draggable payloads (`DragTarget`) 
+  to define their intrinsic footprint (`w`, `h`), resize constraints (`minW`/`maxW`/`minH`/`maxH`), 
+  flags (`isSectionBarrier`, `isStatic`, `isResizable`), and `extra` metadata during drag-over 
+  and upon drop.
+
+- **Native Keyboard Shortcuts & A11y Actions**:
+  - `Delete` / `Backspace` (`DashboardDeleteItemIntent`) to remove selected items (respecting `onWillDelete` / `onItemsDeleted`).
+  - `Ctrl+A` / `Cmd+A` (`DashboardSelectAllIntent`) to select all editable items.
+  - `Ctrl+D` / `Cmd+D` (`DashboardDuplicateItemIntent`) to duplicate selected items.
+  - `Ctrl+Z` / `Cmd+Z` (`DashboardUndoIntent`) & `Ctrl+Y` / `Cmd+Shift+Z` (`DashboardRedoIntent`) to navigate layout history.
+  - `Escape` (`DashboardCancelInteractionIntent`) to clear active selection when idle.
+  - Screen reader feedback builders: `a11yDelete`, `a11ySelectAll`, and `a11yDuplicate` on `DashboardGuidance`.
+
+- Added `copyWith`, `==`, and `hashCode` to `GridStyle`.
+
+### Fixed
+
+- **Horizontal Compaction Overlaps**: Fixed an issue where `moveElement` / `moveCluster` 
+  with `CompactType.horizontal` and `preventCollision: false` could 
+  return overlapping tiles due to bounded-axis wrapping.
+- **Horizontal Collision Resolution Overflow**: Fixed `resolveCollisions` pushing 
+  obstructed items beyond the grid boundary; items now correctly wrap to 
+  the next row matching `_compactItemHorizontal`.
+  - Layouts persisted with out-of-bound items are automatically pulled back within grid boundaries on load.
+- **Focus & Selection Desynchronization**: Fixed an issue where clicking a tile with the mouse did not transfer Flutter's keyboard focus, causing `Delete` and keyboard shortcuts to target the previously focused tile.
+
+### Performance
+
+- **Optimized Horizontal Invariant Checks**: Added indexed O(N·k) verification on cell crossings during horizontal moves to ensure zero-overlap guarantees with bounded complexity. Vertical and free (`CompactType.none`) compaction paths remain completely untouched.
+   
 ## 2.5.0
 
 **No API breaking changes.**

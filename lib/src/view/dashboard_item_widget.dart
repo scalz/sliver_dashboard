@@ -1,3 +1,5 @@
+import 'dart:async' show unawaited;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:sliver_dashboard/src/controller/dashboard_controller_interface.dart'
@@ -9,9 +11,16 @@ import 'package:sliver_dashboard/src/view/a11y/dashboard_intents.dart';
 import 'package:sliver_dashboard/src/view/a11y/dashboard_shortcuts.dart';
 import 'package:sliver_dashboard/src/view/dashboard_configuration.dart';
 import 'package:sliver_dashboard/src/view/dashboard_item_wrapper.dart';
+import 'package:sliver_dashboard/src/view/dashboard_overlay.dart' show DashboardOverlayProvider;
 import 'package:sliver_dashboard/src/view/dashboard_typedefs.dart';
 import 'package:sliver_dashboard/src/view/guidance/dashboard_guidance.dart';
 import 'package:state_beacon/state_beacon.dart';
+
+/// The pointer ID currently being handled by a focused tile.
+///
+/// Prevents ancestor host tiles in a NestedDashboard from stealing focus
+/// during deepest-first pointer event dispatch.
+int? _focusClaimedPointer;
 
 /// A widget that wraps a single dashboard item, handling caching, focus,
 /// edit mode interactions, and accessibility.
@@ -117,6 +126,22 @@ class _DashboardItemState extends State<DashboardItem>
 
   bool _isFocused = false;
 
+  /// Keyboard focus of the interaction shell.
+  ///
+  /// Owned here rather than left to [FocusableActionDetector]'s internal node,
+  /// because the tile must be able to TAKE focus on a pointer press.
+  late final FocusNode _focusNode = FocusNode(
+    debugLabel: 'DashboardItem(${widget.item.id})',
+  );
+
+  /// Tracks previous selection state to only release focus on the transition
+  /// from selected to empty (preserving keyboard Tab entry into untouched grids).
+  bool _wasSelected = false;
+
+  /// Guards [_releaseFocusAfterFrame] against scheduling several callbacks for
+  /// the same episode.
+  bool _focusReleaseScheduled = false;
+
   // The collision cascade in LayoutEngine.moveElement can shift
   // hundreds of items' `y` on every drag frame (see moveElement). Since
   // RenderSliverDashboard.performLayout recomputes its visible index range
@@ -147,6 +172,12 @@ class _DashboardItemState extends State<DashboardItem>
     _lastWidth = widget.itemWidth;
     _lastHeight = widget.itemHeight;
     _lastSlotCount = widget.slotCount;
+  }
+
+  @override
+  void dispose() {
+    _focusNode.dispose();
+    super.dispose();
   }
 
   @override
@@ -223,6 +254,35 @@ class _DashboardItemState extends State<DashboardItem>
     SemanticsService.announce(message, Directionality.of(context)).ignore();
   }
 
+  /// Takes keyboard focus on pointer press.
+  ///
+  /// Deliberately avoids mutating selection, which is handled exclusively by DashboardOverlay.
+  /// Skips if a descendant (like an application TextField) already holds focus.
+  void _handlePointerDownFocus(PointerDownEvent event) {
+    if (_focusClaimedPointer == event.pointer) return;
+    if (!_focusNode.canRequestFocus) return;
+    _focusClaimedPointer = event.pointer;
+    if (_focusNode.hasFocus) return;
+    _focusNode.requestFocus();
+  }
+
+  /// Releases keyboard focus when the selection this item belonged to becomes empty.
+  ///
+  /// Deferred post-frame to avoid focus mutations during the build phase.
+  void _releaseFocusAfterFrame() {
+    if (_focusReleaseScheduled) return;
+    _focusReleaseScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _focusReleaseScheduled = false;
+      if (!mounted) return;
+      final controller = DashboardControllerProvider.of(context);
+      if (controller.selectedItemIds.peek().isNotEmpty) return;
+      // Only our own node: a descendant (an application text field) that holds
+      // the focus must keep it.
+      if (_focusNode.hasPrimaryFocus) _focusNode.unfocus();
+    });
+  }
+
   late final Map<Type, Action<Intent>> _actions = <Type, Action<Intent>>{
     DashboardGrabItemIntent: CallbackAction<DashboardGrabItemIntent>(
       onInvoke: (_) {
@@ -263,6 +323,112 @@ class _DashboardItemState extends State<DashboardItem>
           final guidance = controller.guidance ?? DashboardGuidance.byDefault;
           controller.cancelInteraction();
           _announce(guidance.a11yCancel);
+        } else if (controller.selectedItemIds.peek().isNotEmpty) {
+          controller.clearSelection();
+        }
+        return null;
+      },
+    ),
+    DashboardDeleteItemIntent: CallbackAction<DashboardDeleteItemIntent>(
+      onInvoke: (_) {
+        if (!widget.isEditing) return null;
+        final controller = DashboardControllerProvider.of(context);
+        final overlay = DashboardOverlayProvider.maybeOf(context);
+        final selectedIds = controller.selectedItemIds.peek();
+        final idsToDelete = selectedIds.contains(widget.item.id) ? selectedIds : {widget.item.id};
+
+        final itemsToDelete = controller.layout
+            .peek()
+            .where((i) => idsToDelete.contains(i.id) && (!i.isStatic || i.isSectionBarrier))
+            .toList();
+
+        if (itemsToDelete.isEmpty) return null;
+
+        void executeDeletion() {
+          controller.removeItems(itemsToDelete.map((e) => e.id).toList());
+          overlay?.onItemsDeleted?.call(itemsToDelete);
+          final guidance = controller.guidance ?? DashboardGuidance.byDefault;
+          _announce(guidance.a11yDelete(itemsToDelete.length));
+        }
+
+        final willDelete = overlay?.onWillDelete;
+        if (willDelete != null) {
+          unawaited(() async {
+            final approved = await willDelete(itemsToDelete);
+            if (approved) executeDeletion();
+          }());
+        } else {
+          executeDeletion();
+        }
+        return null;
+      },
+    ),
+    DashboardSelectAllIntent: CallbackAction<DashboardSelectAllIntent>(
+      onInvoke: (_) {
+        if (!widget.isEditing) return null;
+        final controller = DashboardControllerProvider.of(context);
+        final nonStaticIds = controller.layout
+            .peek()
+            .where((i) => !i.isStatic || i.isSectionBarrier)
+            .map((i) => i.id)
+            .toSet();
+        if (nonStaticIds.isEmpty) return null;
+        controller.selectedItemIds.value = nonStaticIds;
+        final guidance = controller.guidance ?? DashboardGuidance.byDefault;
+        _announce(guidance.a11ySelectAll(nonStaticIds.length));
+        return null;
+      },
+    ),
+    DashboardDuplicateItemIntent: CallbackAction<DashboardDuplicateItemIntent>(
+      onInvoke: (_) {
+        if (!widget.isEditing) return null;
+        final controller = DashboardControllerProvider.of(context);
+        final overlay = DashboardOverlayProvider.maybeOf(context);
+        final cloneCallback = overlay?.onCloneRequested;
+        if (cloneCallback == null) return null;
+
+        final selectedIds = controller.selectedItemIds.peek();
+        final idsToDuplicate =
+            selectedIds.contains(widget.item.id) ? selectedIds : {widget.item.id};
+
+        final itemsToDuplicate = controller.layout
+            .peek()
+            .where((i) => idsToDuplicate.contains(i.id) && (!i.isStatic || i.isSectionBarrier))
+            .toList();
+
+        if (itemsToDuplicate.isEmpty) return null;
+
+        final newItems = <LayoutItem>[];
+        for (final item in itemsToDuplicate) {
+          final clone = cloneCallback(item, controller);
+          if (clone != null && !controller.layout.peek().any((i) => i.id == clone.id)) {
+            newItems.add(clone.copyWith(x: item.x, y: item.y, moved: false));
+          }
+        }
+
+        if (newItems.isNotEmpty) {
+          controller.addItems(newItems);
+          controller.selectedItemIds.value = {for (final i in newItems) i.id};
+          final guidance = controller.guidance ?? DashboardGuidance.byDefault;
+          _announce(guidance.a11yDuplicate(newItems.length));
+        }
+        return null;
+      },
+    ),
+    DashboardUndoIntent: CallbackAction<DashboardUndoIntent>(
+      onInvoke: (_) {
+        final controller = DashboardControllerProvider.of(context);
+        if (controller.canUndo.peek()) {
+          controller.undo().ignore();
+        }
+        return null;
+      },
+    ),
+    DashboardRedoIntent: CallbackAction<DashboardRedoIntent>(
+      onInvoke: (_) {
+        final controller = DashboardControllerProvider.of(context);
+        if (controller.canRedo.peek()) {
+          controller.redo().ignore();
         }
         return null;
       },
@@ -292,6 +458,12 @@ class _DashboardItemState extends State<DashboardItem>
       };
       _idleShortcuts = <ShortcutActivator, Intent>{
         for (final key in config.grab) key: const DashboardGrabItemIntent(),
+        for (final key in config.delete) key: const DashboardDeleteItemIntent(),
+        for (final key in config.selectAll) key: const DashboardSelectAllIntent(),
+        for (final key in config.duplicate) key: const DashboardDuplicateItemIntent(),
+        for (final key in config.undo) key: const DashboardUndoIntent(),
+        for (final key in config.redo) key: const DashboardRedoIntent(),
+        for (final key in config.cancel) key: const DashboardCancelInteractionIntent(),
       };
     }
     return isActive ? _activeShortcuts : _idleShortcuts;
@@ -359,7 +531,15 @@ class _DashboardItemState extends State<DashboardItem>
     // shells; the heavy content stays cached behind its RepaintBoundary.
     final isNestHovered = controller.internal.hoveredNestTargetId.watch(context) == widget.item.id;
 
-    _updateKeepAlive(isDragging);
+    // Scoped keep-alive: retain only the dragged cluster and displaced tiles
+    // to prevent unmount thrashing during collision cascades.
+    _updateKeepAlive(isDragging && (isSelected || widget.item.moved));
+
+    // Release focus when transitioning from selected to an empty selection.
+    if (_wasSelected && !isSelected && selectedIds.isEmpty && _focusNode.hasPrimaryFocus) {
+      _releaseFocusAfterFrame();
+    }
+    _wasSelected = isSelected;
 
     final semanticLabel = 'Item ${widget.item.id}, Row ${widget.item.y}, Column ${widget.item.x}';
 
@@ -387,6 +567,7 @@ class _DashboardItemState extends State<DashboardItem>
     return FocusTraversalOrder(
       order: NumericFocusOrder(focusOrder),
       child: FocusableActionDetector(
+        focusNode: _focusNode,
         actions: _actions,
         shortcuts: widget.isEditing ? shortcuts : {},
         // Enable interaction if the item is dynamic OR if it is an interactive section barrier
@@ -406,21 +587,42 @@ class _DashboardItemState extends State<DashboardItem>
             setState(() => _isFocused = focused);
           }
         },
-        child: Semantics(
-          container: true,
-          label: semanticLabel,
-          hint: widget.isEditing
-              ? (isActive ? guidance.semanticsHintDrop : guidance.semanticsHintGrab)
-              : null,
-          selected: isSelected,
-          child: Opacity(
-            // Hide if dragged AND not the feedback
-            opacity: (isActive && !widget.isFeedback) ? 0.0 : 1.0,
-            child: Container(
-              decoration: decoration,
-              child: DashboardItemWrapper(
-                item: widget.item,
-                child: _cachedWidget!, // Use the cached heavy content
+        child: Listener(
+          onPointerDown: _handlePointerDownFocus,
+          child: Semantics(
+            container: true,
+            label: semanticLabel,
+            hint: widget.isEditing
+                ? (isActive ? guidance.semanticsHintDrop : guidance.semanticsHintGrab)
+                : null,
+            selected: isSelected,
+            // Cursor floor for the tile.
+            //
+            // Every MouseRegion between here and the pointer defers:
+            // `FocusableActionDetector` builds one with no cursor, and so does
+            // `GuidanceInteractor`. Flutter resolves the cursor from the
+            // innermost NON-deferring region on the hit path, so without this
+            // annotation the search walks straight past the tile and lands on
+            // the rubberband region that `DashboardOverlay` installs as an
+            // ancestor — every tile would show the lasso's `precise` cursor.
+            //
+            // `basic` is exactly what the tile resolved to before this existed
+            // (nothing set a cursor, so the framework fell back to it), and
+            // anything deeper — resize handles, application content — still
+            // wins by being closer to the pointer. It is a floor, not an
+            // override.
+            child: MouseRegion(
+              cursor: SystemMouseCursors.basic,
+              child: Opacity(
+                // Hide if dragged AND not the feedback
+                opacity: (isActive && !widget.isFeedback) ? 0.0 : 1.0,
+                child: Container(
+                  decoration: decoration,
+                  child: DashboardItemWrapper(
+                    item: widget.item,
+                    child: _cachedWidget!, // Use the cached heavy content
+                  ),
+                ),
               ),
             ),
           ),

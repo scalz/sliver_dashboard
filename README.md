@@ -46,7 +46,7 @@ Ideal for analytics platforms, IoT control panels, project management tools, no-
 - **Responsive Layouts:** Automatically adapt the number of columns (`slotCount`) based on the screen width using the built-in `breakpoints` property.
 - **Accessibility:** Full keyboard navigation support (Tab, Arrows, Space, Enter, customizable keys) and Screen Reader announcements (TalkBack/VoiceOver).
 - **Mini-Map:** A customizable widget to visualize the entire dashboard layout and current viewport, perfect for large grids. Supports **overlay markers** (status dots/badges per item) and **multiple viewport indicators** for multi-sliver scroll views.
-- **Multi-Selection:** Select and move multiple items at once using `Shift` + Click (customizable keys).
+- **Multi-Selection:** Select and move multiple items at once using `Shift` + Click (customizable keys), or by **dragging a selection rectangle** ("lasso") over empty grid space on desktop and web.
 - **Duplicate on Drag:** Hold `Alt` / `Option` (customizable) when you start dragging a tile to drag a *copy* of it out, leaving the original in place. The application mints the id and the business payload through `onCloneRequested`.
 - **Undo / Redo:** A native, transactional layout history with reactive `canUndo` / `canRedo` beacons and business-logic veto hooks (`onWillUndo` / `onWillRedo`). One entry per completed operation — a 100-frame drag records exactly one snapshot.
 - **Utilities**: Import/Export, find free cells, get last row, Auto Layout & Bulk Add.
@@ -76,11 +76,15 @@ The package is WebAssembly (WASM) compatible. Building your production applicati
   - [Undo / Redo (Layout History)](#undo--redo-layout-history)
 - [Drag & Drop](#drag--drop)
   - [Dragging From Outside](#dragging-from-outside)
+  - [Persisting Layout Changes](#persisting-layout-changes)
   - [Drag to Delete (Trash Bin)](#drag-to-delete-trash-bin)
   - [Custom Drag Handles & Mobile Gestures](#custom-drag-handles--mobile-gestures)
   - [Custom Drag Feedback](#custom-drag-feedback)
   - [Haptic Feedback](#haptic-feedback)
   - [Multi Selection and Cluster Drag](#multi-selection-and-cluster-drag)
+  - [Swap Mode (Direct Position Exchange)](#swap-mode-direct-position-exchange)
+  - [Per-Grid Drop Rules (`canAcceptItem`)](#per-grid-drop-rules-canacceptitem)
+  - [Rectangle / Lasso Selection](#rectangle--lasso-selection)
   - [Duplicate on Drag (Alt / Option)](#duplicate-on-drag-alt--option)
   - [Adaptive Neighbor Shrinking (Auto-Shrink on Drag)](#adaptive-neighbor-shrinking-auto-shrink-on-drag)
 - [Layout & Structure](#layout--structure)
@@ -302,7 +306,7 @@ controller.setMaxHistoryLength(50); // default: 30 (throws when negative)
 
 #### Opting out entirely
 
-Layout history is enabled by default (30 steps, negligible ~15KB memory footprint). 
+Layout history is enabled by default (30 steps, negligible memory footprint).
 Pass `maxHistoryLength: 0` if you wish to disable history tracking entirely for zero memory usage.
 
 ```dart
@@ -365,35 +369,250 @@ Everything about moving items: external sources, deletion, gestures, feedback, a
 
 ### Dragging From Outside
 
-You can drag items from another widget into the Dashboard. The Dashboard handles auto-scrolling and placement.
+You can drag items from an external source (palette, sidebar) directly into the Dashboard. The grid handles auto-scrolling, live collision pushes, and placement automatically.
+
+Use `externalTemplateBuilder` to define the intrinsic size, resize constraints, and metadata of each component type so the hover preview and the inserted tile match the component's true footprint:
 
 ```dart
 // 1. The Source
-Draggable<MyData>(
-  data: MyData(title: 'New Item'),
-  child: Text('Drag Me'),
-  feedback: Card(child: Text('Dragging...')),
+Draggable<ComponentSpec>(
+  data: const ComponentSpec(type: 'chart_sales', defaultW: 4, defaultH: 2, minW: 2),
+  feedback: const Card(child: Text('Dragging Chart (4x2)...')),
+  child: const Text('Sales Chart'),
 )
 
 // 2. The Target (Dashboard or DashboardOverlay)
-Dashboard<MyData>(
+Dashboard<ComponentSpec>(
   controller: controller,
-  // Called when the item is dropped.
-  // 'item' contains the target coordinates (x, y) calculated by the dashboard.
-  onDrop: (MyData data, LayoutItem item) {
-    final newId = 'new_${DateTime.now().millisecondsSinceEpoch}';
-
-    // Add your data
-    myData[newId] = data;
-
-    // Return the new ID to the controller to finalize the placement
-    return newId;
+  // Define template geometry and constraints per payload
+  externalTemplateBuilder: (spec) => LayoutItem(
+    id: '', // ignored — onDrop provides the real persistent id
+    x: 0, y: 0, // ignored — pointer decides
+    w: spec.defaultW,
+    h: spec.defaultH,
+    minW: spec.minW,
+    extra: {'type': spec.type},
+  ),
+  // Commit the drop and assign the persistent ID
+  onDrop: (spec, placeholder) async {
+    final saved = await api.createWidget(spec, x: placeholder.x, y: placeholder.y);
+    return saved.id; // null cancels the drop
   },
+  itemBuilder: (context, item) => MyWidget(item),
   // Optional: Customize the placeholder shown while hovering
   externalPlaceholderBuilder: (context, item) {
     return Container(color: Colors.blue.withOpacity(0.2));
   },
 )
+```
+
+| Field | On Drop | Behavior |
+|---|---|---|
+| `w`, `h` | **Honoured** | Sizes the hover placeholder and the final tile |
+| `minW`, `minH`, `maxW`, `maxH` | **Honoured** | Preserves component resize constraints |
+| `extra` | **Honoured** | Seeds business metadata immediately without a secondary write |
+| `isSectionBarrier`, `isStatic` | **Honoured** | Allows dragging section dividers or static cards directly from a palette |
+| `id`, `x`, `y`, `moved` | **Ignored** | `onDrop` assigns the ID; coordinates are resolved by pointer placement |
+
+#### The id `onDrop` returns
+
+`onDrop` is the single place where **your application, not the package, names the tile**. Returning `null` cancels the drop and leaves the layout untouched.
+
+This is important when dragging entities that **do not exist yet in your backend**: the payload carries an unsaved draft, the drop commits it, and the ID assigned by your database on insert becomes the tile's permanent ID.
+
+
+```dart
+onDrop: (WidgetDraft draft, LayoutItem placeholder) async {
+  try {
+    // `placeholder` contains the exact grid coordinates resolved by the engine
+    final saved = await api.createWidget(
+      draft,
+      x: placeholder.x,
+      y: placeholder.y,
+      w: placeholder.w,
+      h: placeholder.h,
+    );
+    cache[saved.id] = saved;
+    return saved.id; // One identity shared across DB and grid
+  } on ApiException catch (e) {
+    messenger.showSnackBar(SnackBar(content: Text('Could not add: $e')));
+    return null; // Cancel drop: placeholder disappears, layout untouched
+  }
+},
+```
+
+The same rule applies to [`onCloneRequested`](#duplicate-on-drag-alt--option): a duplicate tile needs a **new ID unique across the entire grid tree**.
+
+> **Carrying business data on the tile:** Do not subclass `LayoutItem`. The layout engine reconstructs items using `copyWith` during pushes and compaction, so custom subclasses would be lost. Use [`extra`](#layoutitem) for JSON-serializable metadata, and keep live controllers/widgets in an application-side map keyed by the tile ID.
+
+#### What the grid does while an async `onDrop` is awaited
+
+When `onDrop` performs an asynchronous operation (e.g. API request), be aware of the engine's concurrency contract:
+
+- **The grid is not locked:** No modal barrier is installed. The user can still drag other tiles, resize items, or hit undo while your request is in flight.
+- **The placeholder stays frozen:** The placeholder remains at its release position with neighbours pushed aside (rendering your `externalPlaceholderBuilder`).
+- **Concurrent drops can race:** If a second drop occurs before the first completes, the single placeholder is replaced by the newest one.
+
+Depending on your UX requirements, two architectural patterns are recommended:
+
+##### Option A: Optimistic Placement (Fastest UX)
+Mint a local ID immediately, return it synchronously to let the grid place the tile instantly, and sync with your backend in the background (with a rollback if the API fails).
+
+##### Option B: Guarded Drop (Safe & Synchronized)
+Keep the `await`, make the operation exclusive with an in-flight guard, and always bound the network call with a timeout:
+
+```dart
+bool _dropInFlight = false;
+
+onDrop: (draft, placeholder) async {
+  // Prevent concurrent drops from clashing while one is pending
+  if (_dropInFlight) return null;
+  _dropInFlight = true;
+  setState(() {}); // Show loading indicator in your palette if desired
+  
+  try {
+    final saved = await api.createWidget(
+    draft,
+    x: placeholder.x,
+    y: placeholder.y,
+    ).timeout(const Duration(seconds: 5));
+    
+    cache[saved.id] = saved;
+    return saved.id;
+  } on TimeoutException {
+    messenger.showSnackBar(const SnackBar(content: Text('Server timeout')));
+    return null; // Cancels drop, removes placeholder cleanly
+  } on ApiException catch (e) {
+    messenger.showSnackBar(SnackBar(content: Text('Failed: $e')));
+    return null;
+  } finally {
+    _dropInFlight = false;
+    if (mounted) setState(() {});
+  }
+},
+```
+
+Always bound the wait. Without a timeout, an unreachable server leaves the
+placeholder on the grid for as long as the request hangs, and the user has no
+way to dismiss it.
+
+Give `externalPlaceholderBuilder` a pending state so the frozen rectangle reads
+as "saving" rather than "stuck".
+
+### Persisting Layout Changes
+
+#### When `onLayoutChanged` fires — read this first
+
+`onLayoutChanged` is called **once per completed transaction, never per frame**. `onDragUpdate` runs at 60/120 Hz internally without notifying; `onDragEnd` and `onResizeEnd` emit exactly once when the gesture commits.
+
+It fires on: drag end, resize end, item add/remove/update, import, `optimizeLayout`, and **undo / redo**.
+
+```dart
+DashboardController(
+  initialSlotCount: 12,
+  onLayoutChanged: (items, slotCount) => repo.save(items, slotCount),
+);
+```
+
+#### Immutability and Debouncing
+
+The `items` list passed to `onLayoutChanged` is an **unmodifiable snapshot** (`List<LayoutItem>.unmodifiable`). Attempting to mutate it directly (`items.sort(...)`, `items.clear()`) will throw an `UnsupportedError`. If you need a mutable working copy, call `items.toList()`.
+
+If you debounce database writes to batch multiple rapid tile moves, map the snapshot immediately into lightweight DTOs:
+
+```dart
+List<({String id, int x, int y, int w, int h})>? _pending;
+Timer? _debounce;
+
+void _onLayoutChanged(List<LayoutItem> items, int slotCount) {
+  // 1. Capture data immediately
+  _pending = [
+    for (final i in items) (id: i.id, x: i.x, y: i.y, w: i.w, h: i.h),
+  ];
+  // 2. Coalesce rapid moves
+  _debounce?.cancel();
+  _debounce = Timer(const Duration(milliseconds: 300), _flush);
+}
+
+@override
+void dispose() {
+  _debounce?.cancel();
+  super.dispose();
+}
+```
+
+Similarly, candidate layouts passed to `onWillUndo` / `onWillRedo` are unmodifiable and must not be retained across async gaps expecting them to remain live.
+
+#### Write a diff in one transaction
+
+`onLayoutChanged` provides a complete layout snapshot. To optimize backend writes, diff against your last written state and batch in a single database transaction:
+
+```dart
+Future<void> _flush() async {
+  final snapshot = _pending;
+  if (snapshot == null) return;
+  _pending = null;
+
+  final changed = [
+    for (final row in snapshot)
+      if (_lastWritten[row.id] != row) row,
+  ];
+  if (changed.isEmpty) return;
+
+  await db.transaction(() async {
+    await db.widgets.putMany(changed);
+  });
+  for (final row in changed) {
+    _lastWritten[row.id] = row;
+  }
+
+  // Cleanup deleted entries from memory cache
+  final liveIds = {for (final row in snapshot) row.id};
+  _lastWritten.removeWhere((id, _) => !liveIds.contains(id));
+}
+```
+
+#### The persistence key includes the column count
+
+The callback signature is `(items, slotCount)`. With [responsive breakpoints](#responsive-layouts), key your persistence on **`(dashboardId, slotCount)`** so a mobile layout does not overwrite the desktop column arrangement.
+
+#### Guard against the remote sync feedback loop
+
+If your backend broadcasts updates that you feed back into `controller.importLayout()`, prevent recursive echo loops with a simple synchronous guard:
+
+```dart
+bool _applyingRemote = false;
+
+void _onRemoteDataReceived(List<LayoutItem> remoteItems) {
+  _applyingRemote = true;
+  try {
+    // importLayout triggers onLayoutChanged synchronously
+    controller.importLayout([for (final i in remoteItems) i.toMap()]);
+  } finally {
+    _applyingRemote = false;
+  }
+}
+
+void _onLayoutChanged(List<LayoutItem> items, int slotCount) {
+  if (_applyingRemote) return; // Ignore echo of our own remote sync
+  _saveToDatabase(items, slotCount);
+}
+```
+
+#### Undo / redo persist for free — but only the geometry
+
+`undo()` and `redo()` fire `onLayoutChanged` like any other change, so once the
+listener is wired the history is persisted with no extra work.
+
+However, **history restores positions, never database entities**. 
+If an item was permanently deleted from your database, undoing will put a ghost tile on the grid. 
+If your dashboard supports undo on delete, use **soft deletes** in your backend (`deleted_at` timestamp) so restored items remain valid.
+
+```dart
+onItemsDeleted: (items) async {
+  // Soft delete: recoverable by undo.
+  await db.widgets.markDeleted([for (final i in items) i.id]);
+},
 ```
 
 ### Drag to Delete (Trash Bin)
@@ -590,7 +809,9 @@ final controller = DashboardController(
 
 ### Multi Selection and Cluster Drag
 
-Users can select multiple items by holding `Shift` (or `Ctrl`/`Cmd`) while clicking.
+Users can select multiple items by holding `Shift` (or `Ctrl`/`Cmd`) while clicking,
+or by dragging a [selection rectangle](#rectangle--lasso-selection) over empty space
+on desktop and web.
 Dragging any item in the selection moves the entire group ("Cluster Drag").
 
 **Programmatic Selection:**
@@ -614,6 +835,176 @@ controller.shortcuts = DashboardShortcuts(
 > **Note:** `Alt` is also the default modifier for [Duplicate on Drag](#duplicate-on-drag-alt--option).
 > If you move multi-selection onto `Alt`, move `cloneKeys` elsewhere in the same
 > `DashboardShortcuts` — the two sets must stay disjoint.
+
+### Per-Grid Drop Rules (`canAcceptItem`)
+
+In a nested tree, a scope-wide predicate decides which items each grid accepts:
+
+```dart
+DashboardNestedScope(
+  canAcceptItem: (item, targetGrid, sourceGrid) {
+    // Only the sidebar grid takes notes; everything else takes anything.
+    if (identical(targetGrid, sidebarController)) {
+      return item.extra['type'] == 'note';
+    }
+    return true;
+  },
+  child: ...,
+)
+```
+
+**A refused grid is transparent, not a dead zone.** The drag passes straight
+through it to the enclosing grid, which becomes the target — so a note dropped
+over a chart-only sub-grid lands in the parent instead of being stuck. Refusing
+every grid resolves to no target at all and the drop cancels normally.
+
+| Rule | Behaviour |
+|---|---|
+| Signature | `(item, targetGrid, sourceGrid)`. `sourceGrid` is the grid the item was picked up from, so rules work in both directions ("only takes charts", "nothing leaves the archive"). For a same-grid drag both are the same controller. |
+| When it runs | On every pointer event, for the one or two grids actually under the pointer — evaluated after the cheap containment and `canAcceptCrossGridItems` checks. Keep it cheap and side-effect free. |
+| Memoization | None. A predicate may legitimately depend on live state, such as the target grid already being full. |
+| Exit sessions | A scope where every other grid refuses the item does not open one, so the tile never pops into a floating proxy it cannot land from. |
+| Per-grid override | None, by design. The predicate runs while resolving *which* grid is under the pointer, before any grid owns the interaction — branch on `targetGrid` instead. |
+
+**Two cases it cannot cover**, because both run before the target controller
+exists: dropping onto a **closed** host tile (`onItemDroppedOnHost` — the child
+grid is not mounted) and arming a **dynamic** nested grid (`subGridDynamic` —
+the grid is being requested, not entered). Both callbacks hand you the host
+item and the grids involved, which is where those rules belong.
+
+### Swap Mode (Direct Position Exchange)
+
+By default a dragged tile **pushes** the tiles it lands on (`DragMode.cascade`,
+the historical behaviour). Swap mode makes it **trade places** with them
+instead.
+
+```dart
+// Make swap the default for every drag:
+controller.setDragMode(DragMode.swap);
+
+// Or leave the default cascade and let the user reach swap with a modifier:
+controller.shortcuts = const DashboardShortcuts(
+  swapModeModifier: [LogicalKeyboardKey.shiftLeft, LogicalKeyboardKey.shiftRight],
+);
+```
+
+The modifier always selects the **opposite** of `dragMode`, so it works as a
+temporary toggle either way:
+
+| `dragMode` | Modifier released | Modifier held |
+|---|---|---|
+| `cascade` (default) | cascade | **swap** |
+| `swap` | swap | **cascade** |
+
+Pass `swapModeModifier: []` to remove the toggle entirely and leave `dragMode`
+in sole control. On platforms without a hardware keyboard the modifier is never
+held, so `dragMode` alone decides.
+
+**What the package guarantees:**
+
+| Rule | Behaviour |
+|---|---|
+| Default | `DragMode.cascade`. Nothing about existing drags changes unless you opt in. |
+| Qualification | The drag box must cover **more than 50% of the candidate's own area**. Measured against the candidate, not the mover, so a small tile dropped on a large one does not swap until it is genuinely on it. |
+| No candidate | The frame falls back to the cascade — a swap-mode drag over empty space, or one that merely clips a neighbour, still moves the tile. |
+| Where the partner goes | To the mover's **pre-drag** slot, clamped into the grid. |
+| Several candidates | Best coverage wins; ties break on absolute overlap, then on id. Deterministic and independent of layout order. |
+| Static tiles | Never swapped, and a static tile is never a valid partner. Section barriers follow the same rule as elsewhere. |
+| Policy | `canCollide` and `canMoveTo` are honoured for both items; a veto means no swap. |
+| 0-overlap | Collision resolution runs whenever the result actually collides — the partner reshaped into a different slot, or a bystander the drag box clipped without qualifying to swap with. A clean same-size swap collides with nothing and stays a pure coordinate exchange with no cascade. |
+| Multi-selection | Swap applies to **single-item drags only**. A cluster drag always cascades. |
+| Mid-drag toggle | Pressing or releasing the modifier re-runs the layout immediately, with no pointer movement required. |
+
+You can read the resolved mode at any time, which is handy for a UI indicator:
+
+```dart
+final mode = controller.getEffectiveDragMode(); // cascade or swap, right now
+```
+
+### Rectangle / Lasso Selection
+
+On desktop and web, dragging from **empty grid space** draws a selection
+rectangle; every tile it overlaps is selected live while you drag.
+
+It is configured on the **controller**, next to `shortcuts` and `guidance` —
+it is interaction policy, not grid painting, so it stays available on a
+dashboard that draws no background grid, and each grid of a nested tree
+carries its own policy:
+
+```dart
+controller.lassoStyle = const LassoStyle(
+  // emptySpace (default): an empty-space drag draws the rectangle.
+  // modifierRequired: only while DashboardShortcuts.lassoModifier is held.
+  // disabled: no rubberband at all.
+  mode: LassoSelectionMode.emptySpace,
+  fillColor: Color(0x332196F3),
+  borderColor: Colors.blue,
+  borderWidth: 1,
+);
+
+// Shorthands:
+controller.lassoStyle = LassoStyle.off;        // feature disabled
+controller.lassoStyle = LassoStyle.byDefault;  // back to the defaults
+```
+
+**What the package guarantees:**
+
+| Rule | Behaviour |
+|---|---|
+| Platform | Desktop and web only. Never armed on Android / iOS, where an empty-space drag scrolls the grid. |
+| Opt-out | `controller.lassoStyle = LassoStyle.off` restores the previous empty-space-drag behaviour exactly. |
+| Edit mode | Required, like every other interaction. |
+| Press on a tile | Never a lasso — it is a drag or a resize. |
+| Press on empty space with **no movement** | Nothing happens: no selection change, no announcement. Clicking the background does not clear the selection. |
+| Intersection | Pixel-precise: a rectangle drawn entirely inside the gutter between two tiles selects neither. |
+| Selection semantics | Replaces the current selection. **Additive** while a `multiSelectKeys` key is held. |
+| Static tiles | Never selected. Section barriers are (they are selectable by click too). |
+| Scrolling | Supported. The anchor is stored in grid-content space, so edge auto-scroll and the mouse wheel grow the rectangle over the content instead of shearing it. |
+| Nested grids | The innermost editing grid owns the gesture; the parent never drags its host tile underneath it. |
+
+**Requiring a modifier** — useful when the grid shares its `CustomScrollView`
+with other slivers, or when your app already binds empty-space drags:
+
+```dart
+controller
+  ..lassoStyle = const LassoStyle(mode: LassoSelectionMode.modifierRequired)
+  ..shortcuts = const DashboardShortcuts(
+    lassoModifier: [LogicalKeyboardKey.altLeft, LogicalKeyboardKey.altRight],
+  );
+```
+
+> **Note:** `lassoModifier` and `multiSelectKeys` both default to `Shift`, and
+> that overlap is legal (unlike `cloneKeys` vs `multiSelectKeys`). They answer
+> different questions: `multiSelectKeys` decides whether the lasso *adds to*
+> the selection, `lassoModifier` decides whether it *starts*. Under
+> `modifierRequired`, a key that is both counts as the trigger only — hold a
+> second, non-overlapping `multiSelectKeys` key for an additive lasso there.
+
+Both modifier states are published on the controller, so a mode indicator
+needs no key listener of its own:
+
+```dart
+final lassoArmed = controller.lassoModifierHeld.watch(context);
+final swapArmed = controller.swapModifierHeld.watch(context);
+```
+
+**Cursor and messages** — the `precise` cursor over empty space and the label
+drawn beside the rectangle follow the `guidance` opt-in; **screen-reader
+announcements do not** and fire with the built-in English defaults when
+`guidance` is null:
+
+```dart
+Dashboard(
+  guidance: DashboardGuidance(
+    lassoSelect: InteractionGuidance(
+      SystemMouseCursors.precise,
+      'Drag over empty space to select items',
+    ),
+    a11yLassoStart: 'Rectangle selection started.',
+    a11yLassoEnd: (count) => '$count items selected',
+  ),
+)
+```
 
 ### Duplicate on Drag (Alt / Option)
 
@@ -890,8 +1281,8 @@ Dashboard(
   controller: controller,
   scrollDirection: Axis.vertical, // or Axis.horizontal
   resizeBehavior: ResizeBehavior.push, // or ResizeBehavior.shrink
-  gridStyle: const GridStyle(
-    lineColor: Colors.black12, // Color of resize handles
+  gridStyle: GridStyle(
+    lineColor: Colors.black12, // Color of the background grid lines
     lineWidth: 1,
     fillColor: Colors.black12, // Highlight color for active item slot
     handleColor: Colors.indigo.shade400, // Color for handles
@@ -1007,11 +1398,15 @@ The dashboard is fully accessible out of the box. When **Edit Mode** is enabled,
 
 | Key | Action |
 | :--- | :--- |
-| **Tab** | Focus the next item. |
-| **Space** / **Enter** | **Grab** the focused item (arm dragging). |
+| **Tab** / **Shift + Tab** | Focus the next / previous item. |
+| **Space** / **Enter** | **Grab** the focused item (arm drag) or **Drop** the item. |
 | **Arrow Keys** | **Move** the grabbed item (Up, Down, Left, Right). |
-| **Space** / **Enter** | **Drop** the item at the new position. |
-| **Esc** | **Cancel** the move and return the item to its original position. |
+| **Delete** / **Backspace** | **Delete** the selected or focused item(s) (fires `onWillDelete` / `onItemsDeleted`). |
+| **Ctrl + A** / **Cmd + A** | **Select all** non-static items in the grid. |
+| **Ctrl + D** / **Cmd + D** | **Duplicate** the selected item(s) via `onCloneRequested`. |
+| **Ctrl + Z** / **Cmd + Z** | **Undo** the last layout change. |
+| **Ctrl + Y** / **Cmd + Shift + Z** | **Redo** the last undone layout change. |
+| **Escape** | **Cancel** current drag movement, or **Deselect all** when idle. |
 
 **Screen Readers:** The dashboard integrates with `SemanticsService` to announce:
 *   Item selection ("Item {id} grabbed").
@@ -1547,7 +1942,7 @@ The development of `sliver_dashboard` can be assisted using AI coding assistants
 
 *   **Strict Architectural Constraints:** All contributions must align with the State, Logic, and View layers detailed in [ARCHITECTURE.md](ARCHITECTURE.md). AI assistants are further guided by the rules in [AGENTS.md](AGENTS.md) file, which dictates core invariants (such as avoiding allocations during layout phases, enforcing proper tree isolation via `RepaintBoundary`, and maintaining row-index consistency).
 *   **Systematic Human Review:** No generated code is merged without manual review to verify algorithmic efficiency, readability, and overall design cohesion.
-*   **CI Test Verification:** The suite of 600+ regression tests running in CI serves as the final validator. Every contribution, whether handwritten or co-authored with an AI, must pass all tests and respect documented performance budgets.
+*   **CI Test Verification:** The suite of 800+ regression tests running in CI serves as the final validator. Every contribution, whether handwritten or co-authored with an AI, must pass all tests and respect documented performance budgets.
 
 #### How to Contribute:
 1. **Understand the System:** Read [ARCHITECTURE.md](ARCHITECTURE.md) to familiarize yourself with the declarative UI, reactive state management, and nested grids protocol.

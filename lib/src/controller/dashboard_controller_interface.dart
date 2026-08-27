@@ -6,6 +6,7 @@ import 'package:sliver_dashboard/src/engine/layout_engine.dart' as engine;
 import 'package:sliver_dashboard/src/models/dashboard_policy.dart';
 import 'package:sliver_dashboard/src/models/layout_item.dart';
 import 'package:sliver_dashboard/src/view/a11y/dashboard_shortcuts.dart';
+import 'package:sliver_dashboard/src/view/dashboard_configuration.dart';
 import 'package:sliver_dashboard/src/view/guidance/dashboard_guidance.dart';
 import 'package:state_beacon/state_beacon.dart';
 
@@ -17,13 +18,15 @@ typedef DashboardItemInteractionCallback = void Function(LayoutItem item);
 
 /// A callback that is fired when the layout of the dashboard changes.
 ///
-/// [items]: The new layout items.
+/// [items]: The new layout items as an **unmodifiable list** (`List<LayoutItem>.unmodifiable`).
+/// Attempting to mutate this list directly (e.g. `items.sort()`, `items.add()`) will throw
+/// an [UnsupportedError]. To obtain a mutable copy, call `items.toList()`.
 /// [slotCount]: The number of columns associated with this layout (useful for responsive persistence).
 typedef DashboardLayoutChangeListener = void Function(List<LayoutItem> items, int slotCount);
 
 /// A callback fired *after* an undo or a redo restored a layout.
 ///
-/// [restoredLayout]: the layout that is now live.
+/// [restoredLayout]: the layout that is now live, as an **unmodifiable list** (`List<LayoutItem>.unmodifiable`).
 /// [slotCount]: the column count that layout is expressed in.
 ///
 /// This fires in addition to [DashboardLayoutChangeListener], never instead of
@@ -35,14 +38,16 @@ typedef DashboardHistoryRestoreListener = void Function(
 
 /// A veto hook consulted *before* an undo or a redo is applied.
 ///
-/// [candidateLayout] is the layout that would become live. Returning `false`
-/// (or a future completing with `false`) cancels the operation: the layout,
+/// [candidateLayout] is the candidate layout that would become live, provided as
+/// an **unmodifiable list** (`List<LayoutItem>.unmodifiable`).
+/// Returning `false` (or a future completing with `false`) cancels the operation: the layout,
 /// the history cursor and the `canUndo` / `canRedo` beacons are all left
 /// untouched, and `undo()` / `redo()` return `false`.
 ///
 /// The hook may be asynchronous (e.g. to show a confirmation dialog). The
 /// controller re-validates the history cursor after awaiting it and aborts if
-/// anything moved in the meantime.
+/// anything moved in the meantime. The candidate layout must not be retained across
+/// async gaps expecting it to remain live.
 typedef DashboardHistoryVeto = FutureOr<bool> Function(
   List<LayoutItem> candidateLayout,
 );
@@ -300,6 +305,47 @@ abstract class DashboardController {
   /// If null, defaults to [DashboardShortcuts.defaultShortcuts].
   DashboardShortcuts? get shortcuts;
   set shortcuts(DashboardShortcuts? value);
+
+  /// How a dragged item interacts with the items it lands on.
+  ///
+  /// Defaults to [engine.DragMode.cascade] — the package's historical behaviour.
+  /// Set [engine.DragMode.swap] to make direct position exchange the default; either
+  /// way, `DashboardShortcuts.swapModeModifier` temporarily selects the other
+  /// mode while held.
+  WritableBeacon<engine.DragMode> get dragMode;
+
+  /// Sets the default drag mode. See [dragMode].
+  void setDragMode(engine.DragMode mode);
+
+  /// Whether the swap-mode modifier is currently held.
+  ///
+  /// **Driven by `DashboardOverlay`**, which is the only layer that sees key
+  /// events; applications read it (to show a mode indicator, for instance)
+  /// but should not write it. It is always `false` on platforms without a
+  /// hardware keyboard, where [dragMode] alone decides.
+  WritableBeacon<bool> get swapModifierHeld;
+
+  /// Whether the rubberband ("lasso") modifier is currently held.
+  ///
+  /// [LassoStyle.mode] is [LassoSelectionMode.modifierRequired], where it is
+  /// what makes the lasso cursor appear on a key press that moved no pointer.
+  WritableBeacon<bool> get lassoModifierHeld;
+
+  /// The mode that a drag starting right now would actually use.
+  ///
+  /// `modifierHeld ? opposite(dragMode) : dragMode`, with the modifier read
+  /// from [swapModifierHeld] when [modifierHeld] is omitted. Pure and
+  /// synchronous, so it can be unit-tested without a widget tree.
+  engine.DragMode getEffectiveDragMode({bool? modifierHeld});
+
+  /// Behaviour and appearance of the rubberband ("lasso") selection.
+  ///
+  /// Defaults to [LassoStyle.byDefault], which lets a drag over empty grid
+  /// space draw a selection rectangle on desktop and web. Assign
+  /// [LassoStyle.off] to disable the feature, or a custom [LassoStyle] to
+  /// require a modifier key and restyle the rectangle.
+  LassoStyle get lassoStyle;
+  set lassoStyle(LassoStyle value);
 
   /// Sets whether moving items can dynamically shrink their neighbors to avoid pushes.
   void setAllowAutoShrink({required bool allow});

@@ -999,4 +999,37 @@ void main() {
       );
     });
   });
+
+  test('onUndo, onRedo, onWillUndo, onWillRedo all receive unmodifiable lists', () async {
+    List<LayoutItem>? vetoCandidate;
+    List<LayoutItem>? undoReceived;
+    List<LayoutItem>? redoReceived;
+
+    final c = build(
+      onWillUndo: (candidate) {
+        vetoCandidate = candidate;
+        return true;
+      },
+      onWillRedo: (candidate) {
+        vetoCandidate = candidate;
+        return true;
+      },
+      onUndo: (items, _) => undoReceived = items,
+      onRedo: (items, _) => redoReceived = items,
+    )..addItem(tile('c', 4, 0));
+
+    // Undo pass
+    await c.undo();
+    expect(vetoCandidate, isNotNull);
+    expect(() => vetoCandidate!.clear(), throwsUnsupportedError);
+    expect(undoReceived, isNotNull);
+    expect(() => undoReceived!.clear(), throwsUnsupportedError);
+
+    // Redo pass
+    await c.redo();
+    expect(vetoCandidate, isNotNull);
+    expect(() => vetoCandidate!.clear(), throwsUnsupportedError);
+    expect(redoReceived, isNotNull);
+    expect(() => redoReceived!.clear(), throwsUnsupportedError);
+  });
 }

@@ -2439,6 +2439,134 @@ void main() {
     });
   });
 
+  group('onLayoutChanged unmodifiable list contract', () {
+    test('onLayoutChanged receives an unmodifiable list and throws on mutation', () {
+      List<LayoutItem>? receivedItems;
+      final c = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: const [
+          LayoutItem(id: 'a', x: 0, y: 0, w: 1, h: 1),
+          LayoutItem(id: 'b', x: 1, y: 0, w: 1, h: 1),
+        ],
+        onLayoutChanged: (items, _) => receivedItems = items,
+      );
+      addTearDown(c.dispose);
+
+      c.addItem(const LayoutItem(id: 'c', x: 2, y: 0, w: 1, h: 1));
+
+      expect(receivedItems, isNotNull);
+      expect(
+        () => receivedItems!.add(const LayoutItem(id: 'hack', x: 0, y: 0, w: 1, h: 1)),
+        throwsUnsupportedError,
+      );
+      expect(
+        () => receivedItems!.sort((a, b) => b.id.compareTo(a.id)),
+        throwsUnsupportedError,
+      );
+      expect(
+        () => receivedItems!.removeAt(0),
+        throwsUnsupportedError,
+      );
+
+      // Internal layout remains completely intact and ascending-ID ordered
+      expect(c.layout.value.map((i) => i.id).toList(), ['a', 'b', 'c']);
+    });
+
+    test('all mutator entry points notify onLayoutChanged exactly once with unmodifiable list', () {
+      var callCount = 0;
+      List<LayoutItem>? lastEmitted;
+
+      final c = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: const [LayoutItem(id: 'a', x: 0, y: 0, w: 1, h: 1)],
+        onLayoutChanged: (items, _) {
+          callCount++;
+          lastEmitted = items;
+        },
+      );
+      addTearDown(c.dispose);
+
+      void assertLastEmissionUnmodifiable(int expectedCount) {
+        expect(callCount, expectedCount);
+        expect(lastEmitted, isNotNull);
+        expect(() => lastEmitted!.clear(), throwsUnsupportedError);
+      }
+
+      // 1. addItem
+      c.addItem(const LayoutItem(id: 'b', x: 1, y: 0, w: 1, h: 1));
+      assertLastEmissionUnmodifiable(1);
+
+      // 2. addItems
+      c.addItems([const LayoutItem(id: 'c', x: 2, y: 0, w: 1, h: 1)]);
+      assertLastEmissionUnmodifiable(2);
+
+      // 3. updateItem (recompact: true)
+      c.updateItem('a', (i) => i.copyWith(w: 2));
+      assertLastEmissionUnmodifiable(3);
+
+      // 4. updateItem (recompact: false)
+      c.updateItem('a', (i) => i.copyWith(sectionTitle: 'Title'), recompact: false);
+      assertLastEmissionUnmodifiable(4);
+
+      // 5. replaceItem
+      c.replaceItem('c', const LayoutItem(id: 'c', x: 2, y: 0, w: 2, h: 1));
+      assertLastEmissionUnmodifiable(5);
+
+      // 6. removeItem
+      c.removeItem('c');
+      assertLastEmissionUnmodifiable(6);
+
+      // 7. removeItems
+      c.removeItems(['b']);
+      assertLastEmissionUnmodifiable(7);
+
+      // 8. optimizeLayout
+      c.optimizeLayout();
+      assertLastEmissionUnmodifiable(8);
+
+      // 9. setCompactionType
+      c.setCompactionType(CompactType.horizontal);
+      assertLastEmissionUnmodifiable(9);
+
+      // 10. importLayout
+      c.importLayout([const LayoutItem(id: 'z', x: 0, y: 0, w: 1, h: 1).toMap()]);
+      assertLastEmissionUnmodifiable(10);
+
+      // 11. Drag lifecycle (onDragEnd)
+      c.internal
+        ..onDragStart('z')
+        ..onDragUpdate(
+          'z',
+          const Offset(100, 0),
+          slotWidth: 100,
+          slotHeight: 100,
+          mainAxisSpacing: 0,
+          crossAxisSpacing: 0,
+        )
+        ..onDragEnd('z');
+      assertLastEmissionUnmodifiable(11);
+
+      // 12. Resize lifecycle (onResizeEnd)
+      c.internal
+        ..onResizeStart('z')
+        ..onResizeUpdate(
+          'z',
+          ResizeHandle.right,
+          const Offset(100, 0),
+          slotWidth: 100,
+          slotHeight: 100,
+          mainAxisSpacing: 0,
+          crossAxisSpacing: 0,
+        )
+        ..onResizeEnd('z');
+      assertLastEmissionUnmodifiable(12);
+
+      // 13. setItemSize
+      c.internal.setItemSize('z', w: 3);
+      assertLastEmissionUnmodifiable(13);
+    });
+  });
+
   test('updateItem preserves original itemId if transform function attempts to change it', () {
     final controller = DashboardController(
       initialLayout: const [LayoutItem(id: 'a', x: 0, y: 0, w: 1, h: 1)],

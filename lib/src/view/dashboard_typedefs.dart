@@ -97,8 +97,26 @@ typedef DashboardItemsDeletedCallback = void Function(List<LayoutItem> items);
 /// A builder function for rendering custom section headers.
 typedef DashboardSectionHeaderBuilder = Widget Function(BuildContext context, LayoutItem item);
 
+/// Resolves the template [LayoutItem] an external draggable payload of type [T] will become.
+///
+/// Called while the payload hovers the grid so the placeholder reflects the
+/// real footprint. `x` and `y` are ignored (the pointer decides those), and the
+/// returned `id` is ignored (`onDrop` names the tile).
+///
+/// Constraints (`minW`, `minH`, `maxW`, `maxH`), flags (`isDraggable`,
+/// `isResizable`, `isStatic`, `isSectionBarrier`, `hasNestedGrid`, `isDropTarget`),
+/// and [LayoutItem.extra] are preserved upon drop.
+///
+/// Returning `null` falls back to DashboardOverlay.placeholderWidth and
+/// DashboardOverlay.placeholderHeight.
+typedef DashboardExternalTemplateBuilder<T> = LayoutItem? Function(T data);
+
 /// Builder for accessibility messages related to an item ID.
 typedef A11yItemMessageBuilder = String Function(String itemId);
 
 /// Builder for accessibility messages related to a grid position.
 typedef A11yPositionMessageBuilder = String Function(int x, int y);
+
+/// Builder for accessibility messages carrying a plain count, such as the
+/// number of items a rubberband ("lasso") selection ended up covering.
+typedef A11yCountMessageBuilder = String Function(int count);

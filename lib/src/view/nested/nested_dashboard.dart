@@ -44,7 +44,7 @@ import 'package:state_beacon/state_beacon.dart';
 /// * Registration with the enclosing [DashboardNestedScope] happens
 ///   automatically; a layout stashed by `loadNestedTree` for [parentItemId]
 ///   is applied on first mount.
-class NestedDashboard extends StatefulWidget {
+class NestedDashboard<T extends Object> extends StatefulWidget {
   /// Creates a nested dashboard hosted by the parent item [parentItemId].
   const NestedDashboard({
     required this.controller,
@@ -78,6 +78,10 @@ class NestedDashboard extends StatefulWidget {
     this.crossGridDragOut = true,
     this.acceptCrossGridItems = true,
     this.onCloneRequested,
+    this.placeholderWidth = 1,
+    this.placeholderHeight = 1,
+    this.onDrop,
+    this.externalTemplateBuilder,
     super.key,
   }) : assert(
           (itemBuilder != null ? 1 : 0) +
@@ -216,11 +220,23 @@ class NestedDashboard extends StatefulWidget {
   /// controller and can branch on it. See [Dashboard.onCloneRequested].
   final DashboardCloneRequestCallback? onCloneRequested;
 
+  /// The width of the placeholder item in grid units when dragging from outside.
+  final int placeholderWidth;
+
+  /// The height of the placeholder item in grid units when dragging from outside.
+  final int placeholderHeight;
+
+  /// Callback when an external draggable is dropped onto the nested dashboard.
+  final DashboardDropCallback<T>? onDrop;
+
+  /// Optional builder to resolve the template [LayoutItem] for an external draggable payload.
+  final DashboardExternalTemplateBuilder<T>? externalTemplateBuilder;
+
   @override
-  State<NestedDashboard> createState() => _NestedDashboardState();
+  State<NestedDashboard<T>> createState() => _NestedDashboardState<T>();
 }
 
-class _NestedDashboardState extends State<NestedDashboard> {
+class _NestedDashboardState<T extends Object> extends State<NestedDashboard<T>> {
   DashboardNestedCoordinator? _coordinator;
   DashboardController? _parentController;
 
@@ -261,7 +277,7 @@ class _NestedDashboardState extends State<NestedDashboard> {
   }
 
   @override
-  void didUpdateWidget(covariant NestedDashboard oldWidget) {
+  void didUpdateWidget(covariant NestedDashboard<T> oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (!identical(widget.controller, oldWidget.controller) ||
         widget.parentItemId != oldWidget.parentItemId) {
@@ -423,7 +439,7 @@ class _NestedDashboardState extends State<NestedDashboard> {
           );
         }
 
-        return Dashboard<Object>(
+        return Dashboard<T>(
           controller: widget.controller,
           itemBuilder: widget.itemBuilder,
           itemLayoutBuilder: widget.itemLayoutBuilder,
@@ -460,6 +476,10 @@ class _NestedDashboardState extends State<NestedDashboard> {
           crossGridDragOut: widget.crossGridDragOut,
           acceptCrossGridItems: widget.acceptCrossGridItems,
           onCloneRequested: widget.onCloneRequested,
+          placeholderWidth: widget.placeholderWidth,
+          placeholderHeight: widget.placeholderHeight,
+          onDrop: widget.onDrop,
+          externalTemplateBuilder: widget.externalTemplateBuilder,
         );
       },
     );

@@ -20,6 +20,21 @@ enum CompactType {
   horizontal,
 }
 
+/// Defines how a dragged item interacts with the items it lands on.
+enum DragMode {
+  /// The historical behaviour: obstacles are pushed away in a cascade and the
+  /// compactor pulls the layout back together. This is the default.
+  cascade,
+
+  /// The dragged item and the item it lands on exchange positions directly.
+  ///
+  /// Opportunistic: a swap only happens when the drag box covers enough of a
+  /// single valid target (see [swapElements]). Any frame that finds no such
+  /// target falls back to [cascade], so the drag never feels stuck over empty
+  /// space or over an item it only clips.
+  swap,
+}
+
 /// Defines the behavior of items when a resize operation causes a collision.
 enum ResizeBehavior {
   /// Colliding items are pushed downwards to make space.
@@ -138,7 +153,7 @@ class VerticalCompactor extends CompactorDelegate {
 
   @override
   List<LayoutItem> resolveCollisions(List<LayoutItem> layout, int cols) {
-    return _resolveCollisionsDefault(layout, CompactType.vertical);
+    return _resolveCollisionsDefault(layout, CompactType.vertical, cols);
   }
 
   LayoutItem _compactItemVertical(
@@ -296,7 +311,7 @@ class HorizontalCompactor extends CompactorDelegate {
 
   @override
   List<LayoutItem> resolveCollisions(List<LayoutItem> layout, int cols) {
-    return _resolveCollisionsDefault(layout, CompactType.horizontal);
+    return _resolveCollisionsDefault(layout, CompactType.horizontal, cols);
   }
 
   LayoutItem _compactItemHorizontal(
@@ -403,7 +418,7 @@ class NoCompactor extends CompactorDelegate {
   @override
   List<LayoutItem> resolveCollisions(List<LayoutItem> layout, int cols) {
     // We use vertical resolution by default for "None" to prevent stacking
-    final resolved = _resolveCollisionsDefault(layout, CompactType.vertical);
+    final resolved = _resolveCollisionsDefault(layout, CompactType.vertical, cols);
 
     return [
       for (final item in resolved)
@@ -766,7 +781,21 @@ LayoutItem resolveCompactionCollision(
 // Row-indexed: each probe only visits rows that can plausibly overlap,
 // replacing the previous O(N^2) scan of the whole processed list
 // (499,500 collides() calls at N=1000) with O(N*k) work (~16k checks).
-List<LayoutItem> _resolveCollisionsDefault(List<LayoutItem> layout, CompactType compactType) {
+/// Pushes every colliding item along the compaction axis until the layout is
+/// overlap-free.
+///
+/// [cols] bounds the horizontal axis. Vertical resolution pushes down a
+/// **column count of rows that is unbounded**, so it can always find room;
+/// horizontal resolution pushes along a **finite** axis and must wrap to the
+/// next row when the push would leave the grid — the same rule
+/// [HorizontalCompactor._compactItemHorizontal] already applies. Callers with
+/// no meaningful column count pass a large sentinel, which reproduces the
+/// historical unbounded behaviour exactly.
+List<LayoutItem> _resolveCollisionsDefault(
+  List<LayoutItem> layout,
+  CompactType compactType,
+  int cols,
+) {
   final items = List<LayoutItem>.from(layout);
   final isHorizontal = compactType == CompactType.horizontal;
 
@@ -815,6 +844,26 @@ List<LayoutItem> _resolveCollisionsDefault(List<LayoutItem> layout, CompactType 
             : current.copyWith(y: obstacle.y + obstacle.h);
         hasCollision = true;
       }
+
+      // Overflow check, horizontal only, and checked even when nothing
+      // collided this round: the item may have arrived already outside the
+      // grid, and the push above may have just carried it out.
+      //
+      // Wrapping — not clamping — is the correct repair. Clamping to
+      // `cols - w` would put the item straight back onto the obstacle it was
+      // pushed off, trading a bounds violation for an OVERLAP violation, and
+      // overlap is the invariant everything downstream relies on. Wrapping
+      // mirrors `_compactItemHorizontal`, which has always resolved
+      // overflows this way; the two paths now agree.
+      //
+      // An item wider than the grid can never fit on any row, so wrapping it
+      // would spin until the safety counter. It is left where it is: an
+      // out-of-bounds item is a lesser failure than a hung layout pass.
+      if (isHorizontal && current.w <= cols && current.x + current.w > cols) {
+        current = current.copyWith(x: 0, y: current.y + 1);
+        hasCollision = true;
+      }
+
       safety++;
     }
     processed.add(current);
@@ -845,9 +894,19 @@ List<LayoutItem> compact(
 /// Resolves collisions.
 ///
 /// This function now delegates to the appropriate [CompactorDelegate].
-List<LayoutItem> resolveCollisions(List<LayoutItem> layout, CompactType compactType) {
+/// Resolves collisions.
+///
+/// [cols] is optional only for backward compatibility: omitting it keeps the
+/// historical `10000` sentinel, i.e. a horizontal resolution that is free to
+/// push items past the last column. Every in-package caller passes the real
+/// value; new callers should too.
+List<LayoutItem> resolveCollisions(
+  List<LayoutItem> layout,
+  CompactType compactType, {
+  int? cols,
+}) {
   final delegate = _getDelegate(compactType);
-  return delegate.resolveCollisions(layout, 10000);
+  return delegate.resolveCollisions(layout, cols ?? 10000);
 }
 
 CompactorDelegate _getDelegate(CompactType type) {
@@ -1076,10 +1135,12 @@ Layout moveElement(
   // The monotonic cascade is overlap-free by construction; keep the legacy
   // full resolution strictly as a fallback, gated behind a cheap O(N*k)
   // verification instead of running the O(N^2) pass on every drag frame.
-  if (preventCollision && _hasResidualOverlap(resultLayout, rowIndex)) {
+  if ((preventCollision || compactType == CompactType.horizontal) &&
+      _hasResidualOverlap(resultLayout, rowIndex)) {
     return resolveCollisions(
       resultLayout,
       compactType == CompactType.none ? CompactType.vertical : compactType,
+      cols: cols,
     );
   }
 
@@ -1552,7 +1613,7 @@ List<LayoutItem> optimizeLayout(List<LayoutItem> layout, int columns) {
   // If the optimizer accidentally placed an item on top of a static item (overlap),
   // this function will detect it and push the dynamic item down, ensuring
   // a valid layout with zero overlaps.
-  return resolveCollisions(placedItems, CompactType.vertical);
+  return resolveCollisions(placedItems, CompactType.vertical, cols: columns);
 }
 
 /// Calculates the bounding box of a group of items.
@@ -1582,6 +1643,159 @@ LayoutItem calculateBoundingBox(List<LayoutItem> items, {String? id}) {
     h: maxY - minY,
     isDraggable: true, // Virtual item is draggable
   );
+}
+
+/// Exchanges the position of [moving] with the item it is landing on.
+///
+/// Swap is **opportunistic and pure**: it returns `null` when the drop does
+/// not qualify, and the caller falls back to [moveCluster] / [moveElement]
+/// for that frame. That fallback is not a fallback in the "error" sense, it
+/// is the interaction design — a swap-mode drag over empty space, or one that
+/// merely clips a neighbour, must still move the item.
+///
+/// [moving] must be the item **as it exists in [layout]**, i.e. at its
+/// pre-drag coordinates: those coordinates are where the swap partner is sent.
+/// Passing the item already relocated to the target would swap it with
+/// itself. [targetX] / [targetY] are the coordinates the drag is requesting.
+///
+/// ### Qualification rules
+/// A candidate qualifies when the probe box (`moving` placed at the target)
+/// covers more than [coverageThreshold] of the candidate's **own area**. The
+/// ratio is relative to the candidate, not to the probe, so a small tile
+/// dropped onto a large one does not swap until it is genuinely "on" it,
+/// while a large tile dropped onto a small one swaps as soon as it engulfs
+/// it. Among several qualifying candidates the best coverage wins; ties break
+/// on the larger absolute overlap and then on the lower id, so the result is
+/// deterministic and does not depend on layout ordering.
+///
+/// A swap is refused (returns `null`) when the candidate is static and not a
+/// section barrier, or when [policy] forbids the two items to interact.
+///
+/// ### Restoring the 0-overlap invariant
+/// A swap can leave overlaps two ways: the partner lands on a slot of a
+/// different shape (a 1x1 sending a 2x2 into a quarter of its area), or the
+/// probe clips a bystander it did not qualify to swap with — which never
+/// moves, and which an EQUAL-size exchange can therefore land on top of.
+/// Collision resolution is run whenever the result actually collides, never
+/// on a size heuristic. A clean same-size swap collides with nothing and so
+/// stays a pure coordinate exchange with no cascade.
+///
+/// The result is sorted by [LayoutItem.id] like every other engine mutation,
+/// keeping sliver child indices immutable across drag frames.
+Layout? swapElements(
+  Layout layout,
+  LayoutItem moving,
+  int targetX,
+  int targetY, {
+  required int cols,
+  required CompactType compactType,
+  DashboardPolicy? policy,
+  double coverageThreshold = 0.5,
+}) {
+  if (moving.isStatic && !moving.isSectionBarrier) return null;
+
+  final live = layout.firstWhereOrNull((item) => item.id == moving.id);
+  if (live == null) return null;
+
+  final probe = live.copyWith(x: targetX, y: targetY);
+
+  LayoutItem? best;
+  double bestRatio = 0;
+  int bestOverlap = 0;
+
+  for (final other in layout) {
+    if (other.id == live.id) continue;
+
+    final probeRight = probe.x + probe.w;
+    final otherRight = other.x + other.w;
+    final overlapLeft = probe.x > other.x ? probe.x : other.x;
+    final overlapRight = probeRight < otherRight ? probeRight : otherRight;
+    final overlapW = overlapRight - overlapLeft;
+    if (overlapW <= 0) continue;
+
+    final probeBottom = probe.y + probe.h;
+    final otherBottom = other.y + other.h;
+    final overlapTop = probe.y > other.y ? probe.y : other.y;
+    final overlapBottom = probeBottom < otherBottom ? probeBottom : otherBottom;
+    final overlapH = overlapBottom - overlapTop;
+    if (overlapH <= 0) continue;
+
+    final overlap = overlapW * overlapH;
+    final area = other.w * other.h;
+    if (area <= 0) continue;
+    final ratio = overlap / area;
+    if (ratio <= coverageThreshold) continue;
+
+    // Deterministic ordering: coverage, then absolute overlap, then id.
+    if (best == null ||
+        ratio > bestRatio ||
+        (ratio == bestRatio && overlap > bestOverlap) ||
+        (ratio == bestRatio && overlap == bestOverlap && other.id.compareTo(best.id) < 0)) {
+      best = other;
+      bestRatio = ratio;
+      bestOverlap = overlap;
+    }
+  }
+
+  if (best == null) return null;
+
+  // Statics are immovable by definition; a section barrier is static but
+  // interactive, and `moveElement` already lets it be dragged.
+  if (best.isStatic && !best.isSectionBarrier) return null;
+
+  if (policy != null) {
+    if (!policy.canCollide(live, best)) return null;
+    if (!policy.canMoveTo(best, live.x, live.y, layout)) return null;
+    if (!policy.canMoveTo(live, targetX, targetY, layout)) return null;
+  }
+
+  // The partner takes the mover's ORIGINAL slot, clamped into the grid: the
+  // two items may have different widths, and `live.x` is only guaranteed
+  // valid for `live.w`.
+  final maxPartnerX = cols - best.w;
+  final clampedX = live.x < maxPartnerX ? live.x : maxPartnerX;
+  final partnerX = clampedX < 0 ? 0 : clampedX;
+  final partnerY = live.y < 0 ? 0 : live.y;
+
+  final swappedMover = live.copyWith(x: targetX, y: targetY, moved: true);
+  final swappedPartner = best.copyWith(x: partnerX, y: partnerY, moved: true);
+
+  final result = <LayoutItem>[];
+  for (final item in layout) {
+    if (item.id == swappedMover.id) {
+      result.add(swappedMover);
+    } else if (item.id == swappedPartner.id) {
+      result.add(swappedPartner);
+    } else {
+      result.add(item);
+    }
+  }
+
+  // Resolve on an ACTUAL collision, never on a size heuristic.
+  //
+  // Differing sizes are one way a swap leaves an overlap, but not the only
+  // one: the probe can cover a partner by more than the threshold while ALSO
+  // clipping a bystander it does not qualify to swap with. That bystander
+  // never moves, so an equal-size exchange can still land on top of it.
+  //
+  // Testing the result is both stricter and simpler, and it preserves the
+  // "a clean same-size swap is a pure coordinate exchange with no cascade"
+  // property for free: such a swap has no collision, so nothing runs.
+  //
+  // Probing the mover and the partner is sufficient. They are the only two
+  // items that moved, so any new overlap must involve one of them, and
+  // `collides` skips identity — a swap that resolves cleanly costs two O(N)
+  // scans and no relayout.
+  if (getFirstCollision(result, swappedMover) != null ||
+      getFirstCollision(result, swappedPartner) != null) {
+    return resolveCollisions(
+      result,
+      compactType == CompactType.none ? CompactType.vertical : compactType,
+      cols: cols,
+    )..sort((a, b) => a.id.compareTo(b.id));
+  }
+
+  return result..sort((a, b) => a.id.compareTo(b.id));
 }
 
 /// Moves a group of items (cluster) together.
