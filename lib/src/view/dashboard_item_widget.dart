@@ -16,6 +16,12 @@ import 'package:sliver_dashboard/src/view/dashboard_typedefs.dart';
 import 'package:sliver_dashboard/src/view/guidance/dashboard_guidance.dart';
 import 'package:state_beacon/state_beacon.dart';
 
+/// The pointer ID currently being handled by a focused tile.
+///
+/// Prevents ancestor host tiles in a NestedDashboard from stealing focus
+/// during deepest-first pointer event dispatch.
+int? _focusClaimedPointer;
+
 /// A widget that wraps a single dashboard item, handling caching, focus,
 /// edit mode interactions, and accessibility.
 ///
@@ -120,6 +126,22 @@ class _DashboardItemState extends State<DashboardItem>
 
   bool _isFocused = false;
 
+  /// Keyboard focus of the interaction shell.
+  ///
+  /// Owned here rather than left to [FocusableActionDetector]'s internal node,
+  /// because the tile must be able to TAKE focus on a pointer press.
+  late final FocusNode _focusNode = FocusNode(
+    debugLabel: 'DashboardItem(${widget.item.id})',
+  );
+
+  /// Tracks previous selection state to only release focus on the transition
+  /// from selected to empty (preserving keyboard Tab entry into untouched grids).
+  bool _wasSelected = false;
+
+  /// Guards [_releaseFocusAfterFrame] against scheduling several callbacks for
+  /// the same episode.
+  bool _focusReleaseScheduled = false;
+
   // The collision cascade in LayoutEngine.moveElement can shift
   // hundreds of items' `y` on every drag frame (see moveElement). Since
   // RenderSliverDashboard.performLayout recomputes its visible index range
@@ -150,6 +172,12 @@ class _DashboardItemState extends State<DashboardItem>
     _lastWidth = widget.itemWidth;
     _lastHeight = widget.itemHeight;
     _lastSlotCount = widget.slotCount;
+  }
+
+  @override
+  void dispose() {
+    _focusNode.dispose();
+    super.dispose();
   }
 
   @override
@@ -224,6 +252,35 @@ class _DashboardItemState extends State<DashboardItem>
     // Until we have no other choice to use sendAnnouncement
     // ignore: deprecated_member_use
     SemanticsService.announce(message, Directionality.of(context)).ignore();
+  }
+
+  /// Takes keyboard focus on pointer press.
+  ///
+  /// Deliberately avoids mutating selection, which is handled exclusively by DashboardOverlay.
+  /// Skips if a descendant (like an application TextField) already holds focus.
+  void _handlePointerDownFocus(PointerDownEvent event) {
+    if (_focusClaimedPointer == event.pointer) return;
+    if (!_focusNode.canRequestFocus) return;
+    _focusClaimedPointer = event.pointer;
+    if (_focusNode.hasFocus) return;
+    _focusNode.requestFocus();
+  }
+
+  /// Releases keyboard focus when the selection this item belonged to becomes empty.
+  ///
+  /// Deferred post-frame to avoid focus mutations during the build phase.
+  void _releaseFocusAfterFrame() {
+    if (_focusReleaseScheduled) return;
+    _focusReleaseScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _focusReleaseScheduled = false;
+      if (!mounted) return;
+      final controller = DashboardControllerProvider.of(context);
+      if (controller.selectedItemIds.peek().isNotEmpty) return;
+      // Only our own node: a descendant (an application text field) that holds
+      // the focus must keep it.
+      if (_focusNode.hasPrimaryFocus) _focusNode.unfocus();
+    });
   }
 
   late final Map<Type, Action<Intent>> _actions = <Type, Action<Intent>>{
@@ -474,7 +531,15 @@ class _DashboardItemState extends State<DashboardItem>
     // shells; the heavy content stays cached behind its RepaintBoundary.
     final isNestHovered = controller.internal.hoveredNestTargetId.watch(context) == widget.item.id;
 
-    _updateKeepAlive(isDragging);
+    // Scoped keep-alive: retain only the dragged cluster and displaced tiles
+    // to prevent unmount thrashing during collision cascades.
+    _updateKeepAlive(isDragging && (isSelected || widget.item.moved));
+
+    // Release focus when transitioning from selected to an empty selection.
+    if (_wasSelected && !isSelected && selectedIds.isEmpty && _focusNode.hasPrimaryFocus) {
+      _releaseFocusAfterFrame();
+    }
+    _wasSelected = isSelected;
 
     final semanticLabel = 'Item ${widget.item.id}, Row ${widget.item.y}, Column ${widget.item.x}';
 
@@ -502,6 +567,7 @@ class _DashboardItemState extends State<DashboardItem>
     return FocusTraversalOrder(
       order: NumericFocusOrder(focusOrder),
       child: FocusableActionDetector(
+        focusNode: _focusNode,
         actions: _actions,
         shortcuts: widget.isEditing ? shortcuts : {},
         // Enable interaction if the item is dynamic OR if it is an interactive section barrier
@@ -521,38 +587,41 @@ class _DashboardItemState extends State<DashboardItem>
             setState(() => _isFocused = focused);
           }
         },
-        child: Semantics(
-          container: true,
-          label: semanticLabel,
-          hint: widget.isEditing
-              ? (isActive ? guidance.semanticsHintDrop : guidance.semanticsHintGrab)
-              : null,
-          selected: isSelected,
-          // Cursor floor for the tile.
-          //
-          // Every MouseRegion between here and the pointer defers:
-          // `FocusableActionDetector` builds one with no cursor, and so does
-          // `GuidanceInteractor`. Flutter resolves the cursor from the
-          // innermost NON-deferring region on the hit path, so without this
-          // annotation the search walks straight past the tile and lands on
-          // the rubberband region that `DashboardOverlay` installs as an
-          // ancestor — every tile would show the lasso's `precise` cursor.
-          //
-          // `basic` is exactly what the tile resolved to before this existed
-          // (nothing set a cursor, so the framework fell back to it), and
-          // anything deeper — resize handles, application content — still
-          // wins by being closer to the pointer. It is a floor, not an
-          // override.
-          child: MouseRegion(
-            cursor: SystemMouseCursors.basic,
-            child: Opacity(
-              // Hide if dragged AND not the feedback
-              opacity: (isActive && !widget.isFeedback) ? 0.0 : 1.0,
-              child: Container(
-                decoration: decoration,
-                child: DashboardItemWrapper(
-                  item: widget.item,
-                  child: _cachedWidget!, // Use the cached heavy content
+        child: Listener(
+          onPointerDown: _handlePointerDownFocus,
+          child: Semantics(
+            container: true,
+            label: semanticLabel,
+            hint: widget.isEditing
+                ? (isActive ? guidance.semanticsHintDrop : guidance.semanticsHintGrab)
+                : null,
+            selected: isSelected,
+            // Cursor floor for the tile.
+            //
+            // Every MouseRegion between here and the pointer defers:
+            // `FocusableActionDetector` builds one with no cursor, and so does
+            // `GuidanceInteractor`. Flutter resolves the cursor from the
+            // innermost NON-deferring region on the hit path, so without this
+            // annotation the search walks straight past the tile and lands on
+            // the rubberband region that `DashboardOverlay` installs as an
+            // ancestor — every tile would show the lasso's `precise` cursor.
+            //
+            // `basic` is exactly what the tile resolved to before this existed
+            // (nothing set a cursor, so the framework fell back to it), and
+            // anything deeper — resize handles, application content — still
+            // wins by being closer to the pointer. It is a floor, not an
+            // override.
+            child: MouseRegion(
+              cursor: SystemMouseCursors.basic,
+              child: Opacity(
+                // Hide if dragged AND not the feedback
+                opacity: (isActive && !widget.isFeedback) ? 0.0 : 1.0,
+                child: Container(
+                  decoration: decoration,
+                  child: DashboardItemWrapper(
+                    item: widget.item,
+                    child: _cachedWidget!, // Use the cached heavy content
+                  ),
                 ),
               ),
             ),

@@ -3980,5 +3980,36 @@ void main() {
       expect(controller.layout.value.any((i) => i.id == 'A'), isFalse);
       expect(deletedCount, 1);
     });
+
+    testWidgets('Clicking item B after focusing item A moves focus and deletes B on Delete key',
+        (tester) async {
+      await tester.pumpWidget(buildTestHarness());
+      await tester.pumpAndSettle();
+
+      final itemAFinder =
+          find.ancestor(of: find.text('Card-A'), matching: find.byType(DashboardItem));
+      await _requestFocus(tester, itemAFinder);
+      await tester.pumpAndSettle();
+
+      final itemBFinder = find.text('Card-B');
+      await tester.tap(itemBFinder);
+      await tester.pumpAndSettle();
+
+      expect(controller.selectedItemIds.value, {'B'});
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.delete);
+      await tester.pumpAndSettle();
+
+      expect(
+        controller.layout.value.any((i) => i.id == 'B'),
+        isFalse,
+        reason: 'Item B should be deleted',
+      );
+      expect(
+        controller.layout.value.any((i) => i.id == 'A'),
+        isTrue,
+        reason: 'Item A should remain untouched',
+      );
+    });
   });
 }

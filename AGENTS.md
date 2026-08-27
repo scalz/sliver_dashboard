@@ -6,7 +6,9 @@ Since v2.0.0 the package supports **Nested Grids**: dashboards embedded inside g
 - **Performance First:** Always prioritize efficient widget builds (const, caching) over syntactic sugar.
 - **Strict Layering:** Never mix UI logic (Widgets) with Business logic (Engine).
 - **No Assumptions:** If context is missing, ask questions. Never hallucinate libraries not listed in `pubspec.yaml`.
-- **Explanatory:** When writing complex logic (especially in `LayoutEngine`), add an inline `// Reason: ...` comment explaining the *why*, not just the *what*.
+- **Explanatory, but Dense (High Signal-to-Noise):** When writing complex logic (especially in `LayoutEngine` or gesture dispatch), explain the *why*, not just the *what*, using concise inline `// Reason: ...` comments (target: 2–4 lines max).
+  - **No bug narratives:** Never write historical post-mortems, PR summaries, or "before this fix..." essays inside `.dart` files. Explain the *current invariant or constraint*.
+  - Defect post-mortems belong in `ARCHITECTURE.md § Known Defect Patterns` or Git commit messages, not inline.
 - **Budget-Driven:** Every change to a hot path must be justified against the performance budgets in §5bis. "It looks faster" is not an argument; op counts and rebuild counts are.
 - **Single-Holder Audit:** whenever you touch a single-holder state slot (a pending request, a safety cap, an iteration budget, a cached render-object reference), define explicitly *what fires when it is replaced, broken, or exhausted* — and who depends on that firing. Four shipped bugs came from silent transitions: the pending nest request (overwritten without abandoning → stranded conversions), the cascade safety cap (broken silently in release → overlapping layouts), the placement budget (exhausted into a silent fallback → single-column tails), and the background grid's sliver reference (stale forever behind a self-referential search guard → background painted one padding too high, permanently). Silence on a state transition is a bug until proven otherwise.
 - **Invariants Must Be Falsifiable:** an invariant that no test can break is documentation, not a guarantee. Before writing one down, name the test that fails when it is violated. Two failure modes to hunt for:
@@ -79,6 +81,31 @@ The project follows a strict separation of concerns. **Do not violate layer boun
   - **Rule — Edit-Mode Never Invalidates:** edit-mode toggles must NOT invalidate `_cachedWidget` (chrome lives outside the cache). Tiles reacting to edit state use `controller.isEditing.watch(context)` (state_beacon is re-exported by the barrel). Do not introduce a toggle invalidation to fix a "stale tile" report — the fix is the reactive read.
   - **Rule — Allocation-Free Shell:** `Actions` maps and shortcut maps are per-`State` cached (`late final` + config-keyed cache). Never build maps/closures inside `build()` of `DashboardItem`.
   - **Rule — Key Cache:** item `ValueKey`s are cached per item id (`_keyFor`) and the Key→Index map is updated **in place** on a pure reorder (same id set, new positions). The geometric view reorders the layout on **every collision push**, so the old "same ID sequence" fast path missed on exactly the busiest frames and rebuilt N `ValueKey`s + N interpolated strings + one N-entry map. The cache must be cleared when `itemGlobalKeySuffix` changes (the keys embed it) and pruned on structural changes.
+  - **Rule — The tile takes the FOCUS on a press, and nothing else:** keyboard
+    intents are dispatched from the primary focus while the overlay's
+    pointer-down writes `selectedItemIds`; a click that moved only the second one
+    left `Delete` acting on whichever tile the keyboard last visited. The tile
+    therefore owns a `FocusNode` and claims it in a `Listener`. It must NOT write
+    the selection there or on focus gain: the press already has a complete
+    selection semantics that this widget cannot see — an armed clone leaves the
+    selection deliberately untouched, `multiSelectKeys` toggles, and the mobile
+    tap path toggles at pointer-UP, so a focus-driven `toggleSelection` cancels
+    it out. Three shipped regressions came from exactly that (`Alt`+click
+    selecting, the mobile tap de-selecting what it had just selected).
+  - **Rule — The focus claim is deepest-first, like the pointer claim:** Flutter
+    dispatches a pointer-down to the whole hit path from the deepest target up,
+    and `FocusManager` applies focus in a microtask — so `hasFocus` cannot
+    arbitrate between a nested tile and its host, and the host, running last,
+    wins. `_focusClaimedPointer` (one file-scoped `int?`) is what keeps a tile
+    inside a `NestedDashboard` focusable at all. It cannot live on
+    `DashboardNestedCoordinator`: that one only exists under a
+    `DashboardNestedScope`, and the zero-cost-without-scope invariant forbids
+    making it mandatory.
+  - **Rule — Releasing the focus is a TRANSITION, not a state:** the focus is
+    dropped when the tile *was* selected and the selection *became* empty
+    (`Escape`, `clearSelection()`), never merely because nothing is selected —
+    that is the normal state of a grid a user is Tabbing into, and releasing
+    there makes the grid unreachable by keyboard.
 - **Minimap:** two-layer painting is mandatory: items layer (`RepaintBoundary`, batched `Path`, repaint only on layout instance change) + viewport painter bound via `super(repaint: scrollController)`. Never merge them back into one painter; never repaint items on scroll.
 - **Painters:** every `CustomPainter` parameter type must have value `==`/`hashCode` (see `SlotMetrics`) so `shouldRepaint` can short-circuit. `shouldRepaint => true` is forbidden.
   - **Corollary — never hand a painter a `RenderObject`.** A render-object reference is stable across mutations of its own `constraints`/`geometry`, so `shouldRepaint` cannot see them: the painted output would depend on state the comparison ignores. `GridBackgroundPainter` therefore takes `sliverLayoutStart` and `sliverContentExtent` as plain `double`s, resolved by `DashboardGrid`. This is what turned a permanent misalignment into, at worst, a one-frame one.
@@ -158,7 +185,10 @@ The project follows a strict separation of concerns. **Do not violate layer boun
 
 ### Dart & Flutter
 - **Style:** Follow official Dart style guidelines. Use `dart format`.
-- **Comments:** **English only**. Write docstrings (`///`) for all public members.
+- **Comments & Docstrings:**
+  - **English only.** Write docstrings (`///`) for all public members.
+  - **Density over volume:** Keep inline comments and docstrings tight and focused on the code contract (invariants, race conditions, platform constraints).
+  - **No redundant text:** Do not restate what readable Dart code already expresses.
 - **Trailing Commas:** Always use trailing commas for better diffs.
 - **Arrow Syntax:** Use `=>` for simple functions and getters.
 - **Widgets:**

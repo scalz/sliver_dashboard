@@ -70,6 +70,7 @@ return overlapping tiles due to bounded-axis wrapping.
 obstructed items beyond the grid boundary; items now correctly wrap to 
 the next row matching `_compactItemHorizontal`.
   - Layouts persisted with out-of-bound items are automatically pulled back within grid boundaries on load.
+- Keep keyboard focus and selection in sync
 
 ### Performance
 

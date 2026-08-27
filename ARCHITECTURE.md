@@ -191,6 +191,8 @@ The view layer has been refactored to support native Sliver composition. It is c
   - **Inner Core:** Cached User Content wrapped in `RepaintBoundary`.
 - **Allocation-Free Shell Rebuilds:** The `Actions` map (4 `CallbackAction` closures) is built once per `State` (`late final`); actions read live controller state at invoke time. Shortcut maps are cached per `DashboardShortcuts` config instance (active + idle variants). Shell rebuilds during drags allocate nothing.
 - **Keep-Alive Trade-off (documented):** `wantKeepAlive = isDragging` prevents unmount thrash at the cache edge, but during a long autoscroll drag the keep-alive bucket can grow toward N items, released in one `finalizeTree` burst after the drop. If profiling shows this, scope keep-alive to the dragged cluster + recently laid-out items (re-exposes flicker for non-cluster items; gate behind measurement).
+- **Focus Ownership & Deepest-First Pointer Claim:** `DashboardItem` owns its explicit `FocusNode` (rather than delegating to `FocusableActionDetector`'s internal node) and claims focus on `PointerDownEvent`. It does **not** touch `selectedItemIds` (selection is managed exclusively by `DashboardOverlay` and `DashboardController`). To resolve the race condition where both a nested tile and its parent host receive the pointer-down event during deepest-first dispatch, a file-scoped `_focusClaimedPointer` integer arbiter ensures only the innermost target claims focus.
+- **Transition-Based Focus Release:** A tile only releases its keyboard focus upon the *transition* from selected to empty (`_wasSelected && !isSelected && selectedIds.isEmpty`), rather than on the raw state of having an empty selection. This allows users to `Tab` into an untouched grid without being immediately unfocused.
 
 #### E. Internal Components
 - **`DashboardItemWrapper`:**
@@ -223,6 +225,15 @@ The package implements a comprehensive A11y strategy based on Flutter's `Actions
 - **Shortcuts:** A configurable map binding keys to Intents (e.g., `Space` -> `Grab`, `Arrows` -> `Move`). This is customizable via `DashboardShortcuts`.
 - **Actions:** The logic executed when an Intent is triggered. These call the Controller methods (`moveActiveItemBy`, `cancelInteraction`). **[AUDIT]** Action instances are per-`State` singletons; they must read live state at invoke time, never capture per-build state.
 - **Announcements:** Integration with `SemanticsService` to announce state changes (Selection, Movement coordinates, rubberband start and resulting count) to screen readers. Messages are customizable via `DashboardGuidance`. **They are not gated on `guidance != null`** — a null guidance disables the visual affordances (tooltips, cursors) only, and the built-in English defaults are announced instead.
+
+### Focus & Selection Synchronization
+
+Flutter dispatches keyboard `Shortcuts` from the **primary focus**, whereas mouse and touch gestures manipulate the controller's **`selectedItemIds`**.
+
+To prevent these two states from diverging:
+1. **Pointer Down claims focus:** Pressing a tile immediately takes the keyboard focus (unless a descendant, like an application `TextField`, already holds it).
+2. **Overlay owns selection:** `DashboardOverlay` decides selection semantics (single click, Shift-click, Alt-drag clone, mobile tap). `DashboardItem` does not compete as a selection writer.
+3. **Intent resolution:** Actions (such as `DashboardDeleteItemIntent`) operate on `selectedItemIds` if not empty, otherwise falling back to the focused tile.
 
 ## 5. Performance Optimization Strategy
 
@@ -942,4 +953,5 @@ suite. If a symptom below matches, start from the stated root cause.
 | Nested sub-page could not receive cross-grid items; links never unlinked | a second `DashboardNestedCoordinator` instantiated per widget state | one-coordinator-per-tree invariant (§7) |
 | Tiles shrink when dropped into a nested panel | `preserveVisualProportion` preserves the *container fraction*, and the panel's container is far narrower | `preservePixelSize` policy |
 | First `animateReflow` toggle does not animate | the `items` setter latched `_animateReflow`, and `updateRenderObject` assigned `items` first | latch only the instance change; read the flag in `performLayout` |
-| Minimap draws a viewport over an empty grid | `performLayout`'s empty-layout early return skipped `onLayoutMetrics` | metrics published on every exit path |_
+| Minimap draws a viewport over an empty grid | `performLayout`'s empty-layout early return skipped `onLayoutMetrics` | metrics published on every exit path |
+| Pressing `Delete` removes the previously focused tile instead of the clicked one; two tiles visually wear the border | `_onPointerDown` updated `selectedItemIds` without transferring Flutter's keyboard focus. The primary focus stayed on the previous tile, which received the shortcut and executed the deletion intent on itself. | `DashboardItem` owns its `FocusNode` and claims focus on pointer-down (leaving selection to the overlay); `_focusClaimedPointer` arbitrates deepest-first dispatch for nested grids; focus release is gated on the `_wasSelected` transition to empty. |_
