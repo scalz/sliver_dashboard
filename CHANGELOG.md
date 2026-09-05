@@ -1,4 +1,4 @@
-## [Unreleased]
+## 2.7.0
 
 ### Breaking Changes (Interface)
 
@@ -24,10 +24,6 @@ Configurable duration for the snap-to-slot release animation (defaults to 120 ms
 - Fixed incorrect stride calculations on horizontal grids when `mainAxisSpacing != crossAxisSpacing`.
 - Fixed `isResizing` state remaining latched after tapping a resize handle with `DragStartGesture.tap` without moving.
 - Fixed missing background snap-target highlight during the initial movement of a resize gesture.
-
-### Changed
-
-- `DashboardFeedbackItem` now handles both drag and resize ghosts (`isResizeGhost`), using unified `gridCellRect` geometry calculations.
 
 ## 2.6.0
 

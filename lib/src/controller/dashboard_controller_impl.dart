@@ -2176,7 +2176,7 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
       ),
     );
 
-    return completer.future;
+    return await completer.future;
   }
 }
 
