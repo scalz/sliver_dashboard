@@ -1,13 +1,20 @@
 import 'package:flutter/material.dart';
 import 'package:sliver_dashboard/src/controller/dashboard_controller_impl.dart';
 import 'package:sliver_dashboard/src/controller/dashboard_controller_interface.dart';
+import 'package:sliver_dashboard/src/controller/layout_metrics.dart';
 import 'package:sliver_dashboard/src/models/layout_item.dart';
 import 'package:sliver_dashboard/src/view/dashboard_configuration.dart' show DashboardItemStyle;
 import 'package:sliver_dashboard/src/view/dashboard_item_widget.dart';
 import 'package:sliver_dashboard/src/view/dashboard_typedefs.dart';
 import 'package:state_beacon/state_beacon.dart';
 
-/// A widget that renders the visual feedback for an item being dragged.
+/// A widget that renders the visual feedback for an item being dragged — or,
+/// with [isResizeGhost], for the item being resized.
+///
+/// Both gestures share this widget on purpose: the composition (grid hole +
+/// overlay copy + sliver clip band) is identical, only the source of the
+/// rectangle differs — `dragOffset` translates the tile's snapped rect for a
+/// drag, `resizeGhostRect` replaces it outright for a fluid resize.
 class DashboardFeedbackItem extends StatelessWidget {
   /// Creates a [DashboardFeedbackItem].
   const DashboardFeedbackItem({
@@ -20,6 +27,10 @@ class DashboardFeedbackItem extends StatelessWidget {
     required this.scrollDirection,
     required this.isEditing,
     required this.sliverStartPos,
+    this.isResizeGhost = false,
+    this.isSettling = false,
+    this.settleDuration = Duration.zero,
+    this.onSettleEnd,
     this.itemBuilder,
     this.itemLayoutBuilder,
     this.itemBreakpointBuilder,
@@ -99,35 +110,80 @@ class DashboardFeedbackItem extends StatelessWidget {
   /// The visual style of the item focus and active borders.
   final DashboardItemStyle itemStyle;
 
+  /// Whether this copy is the fluid-resize ghost rather than a drag feedback.
+  ///
+  /// The ghost reads its rectangle from `resizeGhostRect` (raw pixels,
+  /// already clamped by the controller) instead of deriving it from the
+  /// item's grid coordinates.
+  final bool isResizeGhost;
+
+  /// Whether the ghost is settling into its snapped slot after the release.
+  ///
+  /// Derived state, not stored anywhere: a ghost is settling exactly when it
+  /// is still armed while `isResizing` has gone false.
+  final bool isSettling;
+
+  /// Duration of the settle animation. Only read while [isSettling].
+  final Duration settleDuration;
+
+  /// Invoked once the settle animation lands, so the owner can drop the ghost.
+  final VoidCallback? onSettleEnd;
+
   @override
   Widget build(BuildContext context) {
-    // Watch the drag offset specifically here.
-    final dragOffset = (controller as DashboardControllerImpl).dragOffset.watch(context);
+    final impl = controller as DashboardControllerImpl;
 
-    double top;
-    double left;
-    double width;
-    double height;
+    // The tile's own slot, in content pixels. Single geometry site shared with
+    // the sliver, the background painter and the settle target.
+    final snapped = gridCellRect(
+      x: item.x,
+      y: item.y,
+      w: item.w,
+      h: item.h,
+      slotWidth: slotWidth,
+      slotHeight: slotHeight,
+      mainAxisSpacing: mainAxisSpacing,
+      crossAxisSpacing: crossAxisSpacing,
+      scrollDirection: scrollDirection,
+    );
 
-    if (scrollDirection == Axis.vertical) {
-      left = item.x * (slotWidth + crossAxisSpacing);
-      top = item.y * (slotHeight + mainAxisSpacing);
-      width = item.w * (slotWidth + crossAxisSpacing) - crossAxisSpacing;
-      height = item.h * (slotHeight + mainAxisSpacing) - mainAxisSpacing;
-    } else {
-      left = item.x * (slotWidth + mainAxisSpacing);
-      top = item.y * (slotHeight + crossAxisSpacing);
-      width = item.w * (slotWidth + mainAxisSpacing) - mainAxisSpacing;
-      height = item.h * (slotHeight + crossAxisSpacing) - crossAxisSpacing;
+    if (isResizeGhost) {
+      // Raw rect published by onResizeUpdate on every pointer event. Null
+      // until the first move: the ghost then sits exactly on the tile it
+      // replaced, so arming the preview is visually a no-op.
+      final raw = impl.resizeGhostRect.watch(context) ?? snapped;
+
+      if (isSettling) {
+        // Implicit animation rather than a ticker on the overlay: it retargets
+        // in flight for free (ImplicitlyAnimatedWidgetState restarts from the
+        // interpolated value when the end changes), it costs nothing while no
+        // resize is settling, and it writes no state — the drop already
+        // committed, this is pure paint.
+        return TweenAnimationBuilder<Rect?>(
+          tween: RectTween(begin: raw, end: snapped),
+          duration: settleDuration,
+          curve: Curves.easeOutCubic,
+          onEnd: onSettleEnd,
+          builder: (context, value, _) => _buildPositioned(context, value ?? snapped),
+        );
+      }
+
+      return _buildPositioned(context, raw);
     }
 
-    // Apply the sliver start position (which accounts for scroll, padding, appbars)
-    left += sliverStartPos.dx;
-    top += sliverStartPos.dy;
+    // Watch the drag offset specifically here.
+    final dragOffset = impl.dragOffset.watch(context);
+    return _buildPositioned(context, snapped.shift(dragOffset));
+  }
 
-    // Apply the drag offset (visual delta)
-    left += dragOffset.dx;
-    top += dragOffset.dy;
+  /// Places the tile at [contentRect], translated to overlay coordinates and
+  /// clipped to the sliver's visible band.
+  Widget _buildPositioned(BuildContext context, Rect contentRect) {
+    // Apply the sliver start position (which accounts for scroll, padding, appbars)
+    final left = contentRect.left + sliverStartPos.dx;
+    final top = contentRect.top + sliverStartPos.dy;
+    final width = contentRect.width;
+    final height = contentRect.height;
 
     // Use _DashboardItem to get the cached content widget
     final content = DashboardItem(

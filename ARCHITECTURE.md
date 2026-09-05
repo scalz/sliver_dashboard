@@ -399,6 +399,52 @@ When an item is being dragged:
 2.  **Overlay (Cluster):** The Overlay renders a `Stack` containing visual copies of **all selected items**. They are positioned relative to the **Pivot Item** (the one under the cursor) to maintain their formation.
 3.  **Synchronization:** The overlay follows the finger/mouse, while the grid placeholder snaps to the nearest valid slot.
 
+### Fluid Resize (`fluidResize`, opt-in)
+
+A resize uses the **same three-part composition as a drag**, which is the whole
+point of the feature: the two gestures had diverged into a fluid one and a
+quantised one for no architectural reason.
+
+1.  **Grid:** the resized tile is made invisible (`Opacity 0`, `resizeGhostId ==
+    item.id`) but stays in the tree — its slot IS the snap-target placeholder,
+    filled by `GridBackgroundPainter` (which already received resized items
+    through `draggedItems`; it just used to be hidden underneath an opaque tile).
+2.  **Overlay:** one `DashboardFeedbackItem` with `isResizeGhost: true`, drawn at
+    the raw pixel rect published in `resizeGhostRect`, clipped to the same sliver
+    band as a drag feedback and positioned through the same `_contentOriginOf`.
+3.  **Neighbours:** unchanged. `onResizeUpdate` still calls `engine.resizeItem`
+    with the **snapped** candidate, so the reflow preview (and `animateReflow`)
+    is exactly what it was before.
+4.  **Release:** `onResizeEnd` commits and drops the ghost; the overlay re-arms it
+    once with the frozen raw rect, and the ghost animates into its snapped slot
+    over `resizeSettleDuration` before clearing itself.
+
+Three properties worth internalising:
+
+- **The snapped path is the rounding of the fluid path, not a parallel
+  computation.** `onResizeUpdate` computes one continuous candidate in fractional
+  slot units; `newW = fw.round()` and friends derive the integer one from it, and
+  every clamp (min/max, `maxRows`, anchored static barriers, grid bounds) is
+  applied to both — the barriers being resolved **once**, against the integer
+  probe, since an obstacle is an integer cell. The ghost therefore cannot cross a
+  barrier the placeholder respects, and the two cannot drift apart.
+- **The raw rect is published BEFORE the boundary bypass.** The bypass exists to
+  skip the engine call, which is the only expensive part of the method; a ghost
+  gated on it would stutter at cell-crossing cadence. This mirrors the drag
+  bypass, which likewise keeps writing `dragOffset`.
+- **The settle phase is derived, not stored.** A ghost still armed while
+  `isResizing` has gone false IS a settling ghost. It is animated by a
+  `TweenAnimationBuilder` local to the widget — no ticker on the overlay, no
+  per-frame state write, and retargeting mid-flight comes free from
+  `ImplicitlyAnimatedWidgetState`. The animation is also what *clears* the ghost,
+  which is why the overlay refuses to arm one whose endpoints already coincide:
+  an implicit animation that does not run never reports an end, and the tile
+  would stay hidden forever.
+
+The beacon split is the same one drags use, for the same reason:
+`resizeGhostId` is coarse (watched by every item shell, transitions twice per
+gesture) and `resizeGhostRect` is per-event (watched only by the ghost).
+
 ### Minimap Rendering Strategy
 
 To efficiently render large grids (1000+ items) in a small widget:
@@ -411,6 +457,10 @@ To prevent counter-intuitive layout expansions during resize gestures (e.g., dra
 - **Top Resizes (`top`, `topLeft`, `topRight`):** The bottom edge of the item is treated as an absolute physical anchor (`originalBottom = originalY + originalH`). The candidate `newY` is clamped against static barriers (section headers, static cards above) and `minH`/`maxH` constraints, ensuring the height `newH` is derived directly as `originalBottom - newY`.
 - **Left Resizes (`left`, `topLeft`, `bottomLeft`):** The right edge of the item is treated as an absolute physical anchor (`originalRight = originalX + originalW`). The candidate `newX` is clamped against static barriers on its left, ensuring `newW` is derived as `originalRight - newX`.
 - **Bottom & Right Resizes:** These retain their behaviors, letting the layout engine's collision solver resolve overlaps via pushes or jumping below obstacles.
+
+These anchors are expressed once and applied to both the snapped and the fluid
+candidate (see *Fluid Resize* above), so turning `fluidResize` on cannot change
+where a resize lands — only how it is painted on the way there.
 
 #### Data Flow during a Drag Operation
 
@@ -954,4 +1004,7 @@ suite. If a symptom below matches, start from the stated root cause.
 | Tiles shrink when dropped into a nested panel | `preserveVisualProportion` preserves the *container fraction*, and the panel's container is far narrower | `preservePixelSize` policy |
 | First `animateReflow` toggle does not animate | the `items` setter latched `_animateReflow`, and `updateRenderObject` assigned `items` first | latch only the instance change; read the flag in `performLayout` |
 | Minimap draws a viewport over an empty grid | `performLayout`'s empty-layout early return skipped `onLayoutMetrics` | metrics published on every exit path |
+| Horizontal grid: drags and resizes shear by `(mainAxisSpacing - crossAxisSpacing) * x` | every RENDER site branched the two spacings on `scrollDirection`; the controller applied the vertical convention unconditionally (`slotWidth + crossAxisSpacing` for x, in both directions). Error is exactly **zero** on a vertical grid or with equal spacings — the only configurations the suite exercised | one geometry site, `gridCellRect` / `SlotMetrics.strideX,strideY`, used by the controller, the feedback layer and the settle target; horizontal + asymmetric-spacing cases added to the resize and drag suites |
+| `DragStartGesture.tap`: a tap on a resize handle latches `isResizing` forever | `_handleMobileTap` deliberately bypasses `_onPointerUp`, so a resize armed in `_onPointerDown` was never ended — same bypass hazard as the armed clone released three lines above it | the tap path cancels an armed resize explicitly (a tap resized nothing, so it is cancelled, not committed) |
+| Snap-target fill missing for the whole first cell of a resize | `DashboardGrid` read `isResizing` with `.value`, not `.watch`; a resize mutates no layout until the first cell crossing, so nothing rebuilt the background. Invisible while the opaque tile covered the fill | the background watches `isResizing` (two rebuilds per gesture, not per event) |
 | Pressing `Delete` removes the previously focused tile instead of the clicked one; two tiles visually wear the border | `_onPointerDown` updated `selectedItemIds` without transferring Flutter's keyboard focus. The primary focus stayed on the previous tile, which received the shortcut and executed the deletion intent on itself. | `DashboardItem` owns its `FocusNode` and claims focus on pointer-down (leaving selection to the overlay); `_focusClaimedPointer` arbitrates deepest-first dispatch for nested grids; focus release is gated on the `_wasSelected` transition to empty. |_

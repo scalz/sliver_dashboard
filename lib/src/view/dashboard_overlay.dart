@@ -143,6 +143,7 @@ class DashboardOverlay<T extends Object> extends StatefulWidget {
     this.onItemsDeleted,
     this.trashHoverDelay = const Duration(milliseconds: 800),
     this.resizeHandleSide = 20.0,
+    this.resizeSettleDuration = const Duration(milliseconds: 120),
     this.placeholderWidth = 1,
     this.placeholderHeight = 1,
     this.externalTemplateBuilder,
@@ -297,6 +298,13 @@ class DashboardOverlay<T extends Object> extends StatefulWidget {
   /// The size of the touch target for resizing handles.
   final double resizeHandleSide;
 
+  /// How long a fluid-resize ghost takes to settle into its snapped slot
+  /// after the pointer is released.
+  ///
+  /// [Duration.zero] releases without any animation (the ghost is dropped on
+  /// the same frame). Ignored entirely when `fluidResize` is off.
+  final Duration resizeSettleDuration;
+
   /// The width of the placeholder item in grid units when dragging from outside.
   final int placeholderWidth;
 
@@ -431,6 +439,10 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
   /// is.
   static const double _dragMoveTolerance = 2;
 
+  /// Sub-pixel tolerance below which a fluid-resize ghost is considered to be
+  /// already sitting on its snapped slot, so no settle animation is armed.
+  static const double _settleEpsilon = 0.5;
+
   // ===========================================================================
   // Rubberband ("lasso") selection — desktop / web only
   // ===========================================================================
@@ -562,6 +574,10 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
   LayoutItem? _activeItemInitialLayout;
   Offset _operationStartPosition = Offset.zero;
   ResizeHandle? _activeResizeHandle;
+
+  /// Set for exactly one pointer-up: the fluid ghost was handed to the settle
+  /// animation and must survive [_resetOperationState].
+  bool _resizeSettleArmed = false;
 
   // State variables for scroll-aware resizing
   double _initialScrollOffset = 0;
@@ -1068,6 +1084,17 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
       _nestedCoordinator?.releasePointer(this);
     }
 
+    // Same bypass hazard, one gesture further: with DragStartGesture.tap a
+    // press on a handle opens a resize in `_onPointerDown`, and a release
+    // that never moved lands HERE instead of in `_onPointerUp`. Left alone it
+    // latches `isResizing` — and, once a fluid preview is on, hides the tile
+    // behind a ghost nothing will ever clear. A tap resized nothing, so the
+    // interaction is cancelled rather than committed.
+    if (_activeResizeHandle != null) {
+      widget.controller.internal.cancelInteraction();
+      _resetOperationState();
+    }
+
     if (!widget.controller.isEditing.value) return;
 
     final hit = _hitTest(globalPosition);
@@ -1087,7 +1114,15 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
         widget.controller.layout.watch(context);
 
         final isDragging = widget.controller.isDragging.watch(context);
-        if (!isDragging) return const SizedBox.shrink();
+        // Fluid resize: the ghost lives in this same layer, so both gestures
+        // resolve their origin through [_contentOriginOf] and neither
+        // re-derives the transform. A drag always wins — a settling ghost can
+        // still be armed for a few frames when the next gesture starts.
+        final resizeGhostId = widget.controller.internal.resizeGhostId.watch(context);
+        if (!isDragging) {
+          if (resizeGhostId == null) return const SizedBox.shrink();
+          return _buildResizeGhost(context, resizeGhostId);
+        }
 
         // Get Selected Items
         final selectedIds = widget.controller.selectedItemIds.watch(context);
@@ -1104,27 +1139,16 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
         // Find All Cluster Items
         final clusterItems = layout.where((i) => selectedIds.contains(i.id)).toList();
 
-        final renderSliver = _findRenderSliver();
-        if (renderSliver != null) {
-          _activeSliverMetrics = _getMetricsFromSliver(renderSliver);
-        }
+        final frame = _resolveFeedbackFrame();
 
-        if (pivotItem == null ||
-            clusterItems.isEmpty ||
-            _activeSliverMetrics == null ||
-            renderSliver == null ||
-            !renderSliver.attached) {
+        if (pivotItem == null || clusterItems.isEmpty || frame == null) {
           return const SizedBox.shrink();
         }
 
         final isEditing = widget.controller.isEditing.watch(context);
-        final metrics = _activeSliverMetrics!;
-
-        // Position & Clipping. Resolved by the single content-origin site
-        // shared with the rubberband layer — see [_contentOriginOf].
-        final origin = _contentOriginOf(renderSliver, metrics);
-        final currentSliverStart = origin.sliverStart;
-        final sliverBounds = origin.bounds;
+        final metrics = frame.metrics;
+        final currentSliverStart = frame.sliverStart;
+        final sliverBounds = frame.bounds;
 
         // RENDER CLUSTER
         return Stack(
@@ -1153,6 +1177,93 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
         );
       },
     );
+  }
+
+  /// The single overlay-copy of the item being resized, drawn at the raw
+  /// pixel rect the controller publishes (or animating into its snapped slot
+  /// once the pointer is up).
+  ///
+  /// The tile itself is hidden in the grid, so its slot reads as the
+  /// snap-target placeholder — same three-part composition as a drag.
+  Widget _buildResizeGhost(BuildContext context, String ghostId) {
+    final item = widget.controller.layout.value.firstWhereOrNull((i) => i.id == ghostId);
+    final frame = _resolveFeedbackFrame();
+    if (item == null || frame == null) return const SizedBox.shrink();
+
+    // The settle phase is DERIVED, not stored: a ghost still armed while the
+    // resize is over is one that has been handed to the animation.
+    final isResizing = widget.controller.internal.isResizing.watch(context);
+    final isEditing = widget.controller.isEditing.watch(context);
+
+    return DashboardFeedbackItem(
+      key: ValueKey('resize_ghost_$ghostId'),
+      item: item,
+      itemBuilder: widget.itemBuilder,
+      itemLayoutBuilder: widget.itemLayoutBuilder,
+      itemBreakpointBuilder: widget.itemBreakpointBuilder,
+      breakpointResolver: widget.breakpointResolver,
+      feedbackBuilder: widget.itemFeedbackBuilder,
+      controller: widget.controller,
+      slotWidth: frame.metrics.slotWidth,
+      slotHeight: frame.metrics.slotHeight,
+      mainAxisSpacing: frame.metrics.mainAxisSpacing,
+      crossAxisSpacing: frame.metrics.crossAxisSpacing,
+      scrollDirection: frame.metrics.scrollDirection,
+      itemGlobalKeySuffix: widget.itemGlobalKeySuffix,
+      isEditing: isEditing,
+      sliverStartPos: frame.sliverStart,
+      sliverBounds: frame.bounds,
+      itemStyle: widget.itemStyle,
+      isResizeGhost: true,
+      isSettling: !isResizing,
+      settleDuration: widget.resizeSettleDuration,
+      onSettleEnd: _onResizeSettleEnd,
+    );
+  }
+
+  /// Live sliver, its metrics and the content origin, or null while any of
+  /// the three is momentarily unavailable (mount frame, detached sliver).
+  ///
+  /// Extracted so the drag feedback and the resize ghost cannot drift apart:
+  /// one lookup, one metrics refresh, one call to [_contentOriginOf].
+  ({SlotMetrics metrics, Offset sliverStart, Rect? bounds})? _resolveFeedbackFrame() {
+    final renderSliver = _findRenderSliver();
+    if (renderSliver != null) {
+      _activeSliverMetrics = _getMetricsFromSliver(renderSliver);
+    }
+
+    final metrics = _activeSliverMetrics;
+    if (metrics == null || renderSliver == null || !renderSliver.attached) return null;
+
+    final origin = _contentOriginOf(renderSliver, metrics);
+    return (metrics: metrics, sliverStart: origin.sliverStart, bounds: origin.bounds);
+  }
+
+  /// Drops the ghost once its settle animation has landed on the snapped slot.
+  void _onResizeSettleEnd() => widget.controller.internal.clearResizeGhost();
+
+  /// Hands the frozen raw rect over to the settle animation, re-arming the
+  /// ghost that `onResizeEnd` just dropped.
+  ///
+  /// Skipped — tile back on the same frame — whenever there is nothing to
+  /// animate: no fluid preview ([from] null), no settle configured, or a raw
+  /// rect already coincident with the slot the item landed in. The last case
+  /// is not an optimisation: the animation is what clears the ghost, and an
+  /// implicit animation with equal endpoints never reports an end, so arming
+  /// it there would hide the tile forever.
+  void _armResizeSettle(LayoutItem settled, Rect? from, SlotMetrics? metrics) {
+    if (from == null || metrics == null || widget.resizeSettleDuration <= Duration.zero) return;
+
+    final target = metrics.cellRect(settled.x, settled.y, settled.w, settled.h);
+    if ((target.left - from.left).abs() < _settleEpsilon &&
+        (target.top - from.top).abs() < _settleEpsilon &&
+        (target.width - from.width).abs() < _settleEpsilon &&
+        (target.height - from.height).abs() < _settleEpsilon) {
+      return;
+    }
+
+    widget.controller.internal.setResizeGhost(settled.id, from);
+    _resizeSettleArmed = true;
   }
 
   /// Resolves where this grid's content origin currently sits in
@@ -1335,9 +1446,12 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
     if (_nestedCoordinator?.isPointerClaimedByOther(this) ?? false) return;
 
     // A new press always supersedes a clone or a lasso armed by a previous
-    // one.
+    // one — and a fluid-resize ghost still settling, which would otherwise
+    // keep its tile hidden underneath the new gesture for up to one settle
+    // duration. Both writes dedupe when no ghost is armed.
     _pendingCloneSource = null;
     _pendingLasso = null;
+    widget.controller.internal.clearResizeGhost();
 
     final hit = _hitTest(position);
     final foundItem = hit.item;
@@ -1756,12 +1870,9 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
         final frozenSnapshot = impl.dragOriginSnapshot;
         final pivot = frozenSnapshot?.firstWhereOrNull((i) => i.id == _activeItemId);
         if (pivot != null) {
+          // Per-axis strides: the spacings swap with the scroll direction.
           impl.setDragOffset(
-            relativePos -
-                Offset(
-                  pivot.x * (metrics.slotWidth + metrics.crossAxisSpacing),
-                  pivot.y * (metrics.slotHeight + metrics.mainAxisSpacing),
-                ),
+            relativePos - Offset(pivot.x * metrics.strideX, pivot.y * metrics.strideY),
           );
         }
         _checkTrash(position);
@@ -1803,15 +1914,9 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
           // offset is relative to that.
           final pivot = snapshot!.firstWhereOrNull((i) => i.id == _activeItemId);
           if (pivot != null) {
-            // Mirrors onDragUpdate's own offset convention exactly
-            // (x stride uses crossAxisSpacing, y stride uses mainAxisSpacing,
-            // in both scroll directions).
+            // Reason: per-axis strides swap with scrollDirection (see [gridCellRect]).
             impl.setDragOffset(
-              relativePos -
-                  Offset(
-                    pivot.x * (metrics.slotWidth + metrics.crossAxisSpacing),
-                    pivot.y * (metrics.slotHeight + metrics.mainAxisSpacing),
-                  ),
+              relativePos - Offset(pivot.x * metrics.strideX, pivot.y * metrics.strideY),
             );
           }
           _checkTrash(position);
@@ -1973,7 +2078,18 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
       }
 
       if (_activeResizeHandle != null) {
+        // Peeked BEFORE the commit: onResizeEnd drops the ghost, and this is
+        // the rectangle the tile must animate FROM.
+        final rawRect = widget.controller.internal.resizeGhostRect.peek();
+        final metrics = _activeSliverMetrics;
         widget.controller.internal.onResizeEnd(_activeItemId!);
+        // Re-read AFTER the commit: onResizeEnd resolves collisions, so the
+        // slot the ghost must land in is not necessarily the one the pointer
+        // released over.
+        final settled =
+            widget.controller.layout.value.firstWhereOrNull((i) => i.id == currentItem.id) ??
+                currentItem;
+        _armResizeSettle(settled, rawRect, metrics);
         widget.onItemResizeEnd?.call(currentItem);
       } else {
         if (widget.trashBuilder != null && _isTrashActive.value) {
@@ -2046,6 +2162,13 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
     _throttleFlushScheduled?.cancel();
     _throttleFlushScheduled = null;
     _pendingThrottledPosition = null;
+    // A ghost still armed here belongs to no live gesture — unless the settle
+    // animation owns it, in which case the ghost widget clears it on landing.
+    if (_resizeSettleArmed) {
+      _resizeSettleArmed = false;
+    } else {
+      widget.controller.internal.clearResizeGhost();
+    }
     _clearLassoState();
     _cancelSameGridNest();
     // Cross-grid cleanup: release the pointer claim and, if a session we own

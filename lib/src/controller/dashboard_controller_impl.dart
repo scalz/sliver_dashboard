@@ -5,6 +5,7 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:sliver_dashboard/src/controller/dashboard_controller_interface.dart';
+import 'package:sliver_dashboard/src/controller/layout_metrics.dart';
 import 'package:sliver_dashboard/src/engine/layout_engine.dart' as engine;
 import 'package:sliver_dashboard/src/models/dashboard_policy.dart';
 import 'package:sliver_dashboard/src/models/layout_item.dart';
@@ -137,6 +138,9 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
   @override
   late final scrollDirection = B.writable(Axis.vertical);
 
+  /// Non-reactive read of [scrollDirection], for the pointer hot paths.
+  bool get _isVerticalScroll => scrollDirection.peek() == Axis.vertical;
+
   @override
   late final isEditing = B.writable<bool>(false);
 
@@ -170,6 +174,9 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
   late final resizeBehavior = B.writable<engine.ResizeBehavior>(
     engine.ResizeBehavior.push,
   );
+
+  @override
+  late final fluidResize = B.writable<bool>(false);
 
   @override
   late final selectedItemIds = B.writable<Set<String>>({});
@@ -581,6 +588,45 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
   /// Indicates if the current interaction is a resize operation.
   late final isResizing = B.writable(false);
 
+  /// Id of the tile currently rendered as a fluid-resize ghost, or null.
+  ///
+  /// **Coarse on purpose.** Every item shell watches this beacon to decide
+  /// whether it must render as a hole, so it may only transition when a
+  /// gesture starts or ends — never per pointer event. The per-event value is
+  /// [resizeGhostRect], which only the overlay's ghost reads. This is the
+  /// exact split `isDragging` / `dragOffset` already uses for drags.
+  ///
+  /// Non-null spans the whole preview, INCLUDING the settle animation that
+  /// outlives [isResizing]: `ghost armed && !isResizing` IS the settle phase,
+  /// which is why it needs no state of its own.
+  late final resizeGhostId = B.writable<String?>(null);
+
+  /// Raw, unsnapped pixel rect of the resizing tile, in grid-CONTENT pixels
+  /// (no padding, no scroll — see [gridCellRect]).
+  ///
+  /// Null while [resizeGhostId] is armed but no pointer movement has been
+  /// applied yet: the ghost then paints on the tile's own snapped rect, which
+  /// is what makes the first frame of a resize a no-op visually.
+  late final resizeGhostRect = B.writable<Rect?>(null);
+
+  /// Arms or updates the fluid-resize ghost.
+  ///
+  /// Called by the controller on gesture start/update, and by the view once
+  /// more at release to hand the frozen rect over to the settle animation.
+  void setResizeGhost(String itemId, Rect? rect) {
+    resizeGhostId.value = itemId;
+    resizeGhostRect.value = rect;
+  }
+
+  /// Drops the fluid-resize ghost: the tile becomes visible again in the grid.
+  ///
+  /// Idempotent and allocation-free when no ghost is armed (both beacons
+  /// dedupe on `==`), so callers on the pointer-up path need no guard.
+  void clearResizeGhost() {
+    resizeGhostId.value = null;
+    resizeGhostRect.value = null;
+  }
+
   /// Internal state to track the item being dragged or resized.
   @visibleForTesting
   late final activeItem = B.writable<LayoutItem?>(null);
@@ -614,6 +660,12 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
   @override
   void setResizeBehavior(engine.ResizeBehavior behavior) {
     resizeBehavior.value = behavior;
+  }
+
+  @override
+  void setFluidResize(bool value) {
+    fluidResize.value = value;
+    if (!value) clearResizeGhost();
   }
 
   @override
@@ -1534,9 +1586,15 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     final originalBBox = _dragOriginalBBox;
     if (pivotItem == null || originalBBox == null) return;
 
-    // 1. Calculate Pivot's new Grid Position
-    final newGridX = (contentPosition.dx / (slotWidth + crossAxisSpacing)).round();
-    final newGridY = (contentPosition.dy / (slotHeight + mainAxisSpacing)).round();
+    // 1. Calculate Pivot's new Grid Position.
+    // Reason: the two spacings swap with the scroll direction (see
+    // [gridCellRect]); using the vertical convention unconditionally shears
+    // every horizontal drag by (mainAxisSpacing - crossAxisSpacing) * x.
+    final strideX = slotWidth + (_isVerticalScroll ? crossAxisSpacing : mainAxisSpacing);
+    final strideY = slotHeight + (_isVerticalScroll ? mainAxisSpacing : crossAxisSpacing);
+
+    final newGridX = (contentPosition.dx / strideX).round();
+    final newGridY = (contentPosition.dy / strideY).round();
 
     if (policy != null &&
         !policy!.canMoveTo(pivotItem, newGridX, newGridY, originalLayoutOnStart.value)) {
@@ -1595,8 +1653,8 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     // box, so a modifier flip with a stationary pointer is not swallowed.
     if (_lastBBoxX == targetBBoxX && _lastBBoxY == targetBBoxY && _lastDragMode == effectiveMode) {
       final movedPivot = _lastMovedPivot ?? pivotItem;
-      final logicalItemPixelX = movedPivot.x * (slotWidth + crossAxisSpacing);
-      final logicalItemPixelY = movedPivot.y * (slotHeight + mainAxisSpacing);
+      final logicalItemPixelX = movedPivot.x * strideX;
+      final logicalItemPixelY = movedPivot.y * strideY;
 
       dragOffset.value = Offset(
         contentPosition.dx - logicalItemPixelX,
@@ -1646,8 +1704,8 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     final movedPivot = newLayout.firstWhere((i) => i.id == itemId);
     _lastMovedPivot = movedPivot;
 
-    final logicalItemPixelX = movedPivot.x * (slotWidth + crossAxisSpacing);
-    final logicalItemPixelY = movedPivot.y * (slotHeight + mainAxisSpacing);
+    final logicalItemPixelX = movedPivot.x * strideX;
+    final logicalItemPixelY = movedPivot.y * strideY;
 
     dragOffset.value = Offset(
       contentPosition.dx - logicalItemPixelX,
@@ -1704,6 +1762,13 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     _lastResizeX = null;
     _lastResizeY = null;
 
+    // Fluid preview: the tile leaves the grid (its slot becomes the
+    // snap-target placeholder) and the overlay draws it at raw pixel size
+    // from here on. The rect is deliberately left null until the first
+    // update, so a press that never moves paints the tile exactly where it
+    // already is.
+    if (fluidResize.peek()) setResizeGhost(itemId, null);
+
     originalLayoutOnStart.value = layout.value;
   }
 
@@ -1720,42 +1785,63 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     // Use originalLayoutOnStart to get the item state before resize began
     final originalItem = originalLayoutOnStart.value.firstWhere((i) => i.id == itemId);
 
-    final dW = delta.dx / (slotWidth + crossAxisSpacing);
-    final dH = delta.dy / (slotHeight + mainAxisSpacing);
+    // Per-axis strides: spacings swap with scrollDirection (see [gridCellRect]).
+    final axis = scrollDirection.peek();
+    final isVertical = axis == Axis.vertical;
+    final strideX = slotWidth + (isVertical ? crossAxisSpacing : mainAxisSpacing);
+    final strideY = slotHeight + (isVertical ? mainAxisSpacing : crossAxisSpacing);
 
-    var newX = originalItem.x;
-    var newY = originalItem.y;
-    var newW = originalItem.w;
-    var newH = originalItem.h;
+    final dW = delta.dx / strideX;
+    final dH = delta.dy / strideY;
+
+    // Continuous candidate, in FRACTIONAL slot units. The integer candidate is
+    // literally its rounding, so the ghost and the slot it snaps to describe
+    // the same gesture by construction — and every clamp below is applied to
+    // both, so the ghost can never cross a barrier the placeholder respects.
+    var fx = originalItem.x.toDouble();
+    var fy = originalItem.y.toDouble();
+    var fw = originalItem.w.toDouble();
+    var fh = originalItem.h.toDouble();
 
     switch (handle) {
       case ResizeHandle.bottomRight:
-        newW = (originalItem.w + dW).round();
-        newH = (originalItem.h + dH).round();
+        fw = originalItem.w + dW;
+        fh = originalItem.h + dH;
       case ResizeHandle.bottomLeft:
-        newW = (originalItem.w - dW).round();
-        newH = (originalItem.h + dH).round();
-        newX = (originalItem.x + dW).round();
+        fw = originalItem.w - dW;
+        fh = originalItem.h + dH;
+        fx = originalItem.x + dW;
       case ResizeHandle.topRight:
-        newW = (originalItem.w + dW).round();
-        newH = (originalItem.h - dH).round();
-        newY = (originalItem.y + dH).round();
+        fw = originalItem.w + dW;
+        fh = originalItem.h - dH;
+        fy = originalItem.y + dH;
       case ResizeHandle.topLeft:
-        newW = (originalItem.w - dW).round();
-        newH = (originalItem.h - dH).round();
-        newX = (originalItem.x + dW).round();
-        newY = (originalItem.y + dH).round();
+        fw = originalItem.w - dW;
+        fh = originalItem.h - dH;
+        fx = originalItem.x + dW;
+        fy = originalItem.y + dH;
       case ResizeHandle.top:
-        newH = (originalItem.h - dH).round();
-        newY = (originalItem.y + dH).round();
+        fh = originalItem.h - dH;
+        fy = originalItem.y + dH;
       case ResizeHandle.bottom:
-        newH = (originalItem.h + dH).round();
+        fh = originalItem.h + dH;
       case ResizeHandle.left:
-        newW = (originalItem.w - dW).round();
-        newX = (originalItem.x + dW).round();
+        fw = originalItem.w - dW;
+        fx = originalItem.x + dW;
       case ResizeHandle.right:
-        newW = (originalItem.w + dW).round();
+        fw = originalItem.w + dW;
     }
+
+    var newX = fx.round();
+    var newY = fy.round();
+    var newW = fw.round();
+    var newH = fh.round();
+
+    // Is this gesture painting a fluid ghost? Keyed on the ghost actually
+    // armed for THIS item (armed in onResizeStart when `fluidResize` is on),
+    // not on the flag, so toggling the feature mid-gesture cannot leave a
+    // rect behind with no ghost to consume it.
+    final fluid = resizeGhostId.peek() == itemId;
 
     // Anchored constraints resolver
     // Prevent counter-intuitive layout expansions when resizing top/left edges
@@ -1778,22 +1864,24 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     // are respected before applying geometric anchor boundaries.
     newW = newW.clamp(originalItem.minW, maxW);
     newH = newH.clamp(originalItem.minH, maxH);
+    if (fluid) {
+      fw = fw.clamp(originalItem.minW.toDouble(), maxW.toDouble());
+      fh = fh.clamp(originalItem.minH.toDouble(), maxH.toDouble());
+    }
 
     // maxRows: block interactive growth past the main-axis cap. Anchored
     // resizes (top/left) never extend the far edge, so clamping the size
     // against the ORIGINAL near edge is exact.
     final rowCap = maxRows.value;
     if (rowCap != null) {
-      if (scrollDirection.value == Axis.vertical && !isTopResize) {
-        newH = newH.clamp(
-          originalItem.minH,
-          max(originalItem.minH, rowCap - originalItem.y),
-        );
-      } else if (scrollDirection.value == Axis.horizontal && !isLeftResize) {
-        newW = newW.clamp(
-          originalItem.minW,
-          max(originalItem.minW, rowCap - originalItem.x),
-        );
+      if (isVertical && !isTopResize) {
+        final cap = max(originalItem.minH, rowCap - originalItem.y);
+        newH = newH.clamp(originalItem.minH, cap);
+        if (fluid) fh = fh.clamp(originalItem.minH.toDouble(), cap.toDouble());
+      } else if (!isVertical && !isLeftResize) {
+        final cap = max(originalItem.minW, rowCap - originalItem.x);
+        newW = newW.clamp(originalItem.minW, cap);
+        if (fluid) fw = fw.clamp(originalItem.minW.toDouble(), cap.toDouble());
       }
     }
 
@@ -1812,15 +1900,31 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
       final maxYClamp = originalBottom - originalItem.minH;
       newY = newY.clamp(minYClamp, maxYClamp);
       newH = originalBottom - newY;
+      if (fluid) {
+        // Same anchor, same barriers, continuous. The barriers are resolved
+        // once, against the snapped probe: an obstacle is an integer cell, and
+        // sharing the probe is what keeps ghost and placeholder in agreement.
+        fy = fy.clamp(minYClamp.toDouble(), maxYClamp.toDouble());
+        fh = originalBottom - fy;
+      }
     } else {
       // allows jumping/pushing obstacles below
       if (newY < 0) {
         newH += newY;
         newY = 0;
       }
-      if (scrollDirection.value == Axis.horizontal) {
+      if (!isVertical) {
         if (newY + newH > slotCount.value) {
           newH = slotCount.value - newY;
+        }
+      }
+      if (fluid) {
+        if (fy < 0) {
+          fh += fy;
+          fy = 0;
+        }
+        if (!isVertical && fy + fh > slotCount.value) {
+          fh = slotCount.value - fy;
         }
       }
     }
@@ -1840,17 +1944,51 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
       final maxXClamp = originalRight - originalItem.minW;
       newX = newX.clamp(minXClamp, maxXClamp);
       newW = originalRight - newX;
+      if (fluid) {
+        fx = fx.clamp(minXClamp.toDouble(), maxXClamp.toDouble());
+        fw = originalRight - fx;
+      }
     } else {
       // allows jumping/pushing obstacles on the right
       if (newX < 0) {
         newW += newX;
         newX = 0;
       }
-      if (scrollDirection.value == Axis.vertical) {
+      if (isVertical) {
         if (newX + newW > slotCount.value) {
           newW = slotCount.value - newX;
         }
       }
+      if (fluid) {
+        if (fx < 0) {
+          fw += fx;
+          fx = 0;
+        }
+        if (isVertical && fx + fw > slotCount.value) {
+          fw = slotCount.value - fx;
+        }
+      }
+    }
+
+    // Fluid preview, published on EVERY event — deliberately BEFORE the
+    // boundary bypass below. The bypass exists to skip the engine call, which
+    // is the only expensive part of this method; the ghost must keep tracking
+    // the pointer inside a cell or it degrades to a cell-crossing cadence,
+    // which is exactly the stutter this feature removes. Same shape as the
+    // drag bypass, which also keeps writing `dragOffset`. One Rect allocated
+    // per event, like the drag's Offset.
+    if (fluid && strideX > 0 && strideY > 0) {
+      resizeGhostRect.value = gridCellRect(
+        x: fx,
+        y: fy,
+        w: fw,
+        h: fh,
+        slotWidth: slotWidth,
+        slotHeight: slotHeight,
+        mainAxisSpacing: mainAxisSpacing,
+        crossAxisSpacing: crossAxisSpacing,
+        scrollDirection: axis,
+      );
     }
 
     // Boundary Bypass for resizing.
@@ -1898,6 +2036,11 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     _notifyLayoutChanged();
 
     isResizing.value = false;
+    // The ghost is dropped here, not left dangling: the view re-arms it for
+    // the settle animation (with the frozen rect it peeked before this call)
+    // only when a settle is actually configured. Any other caller — a11y, an
+    // application ending a resize by hand — gets the tile back immediately.
+    clearResizeGhost();
     _pivotItemId = null;
     activeItem.value = null;
     originalLayoutOnStart.value = [];
@@ -1969,6 +2112,7 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
 
     _isDraggingState.value = false;
     isResizing.value = false;
+    clearResizeGhost();
     _pivotItemId = null;
     originalLayoutOnStart.value = [];
     dragOffset.value = Offset.zero;

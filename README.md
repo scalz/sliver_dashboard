@@ -41,6 +41,7 @@ Ideal for analytics platforms, IoT control panels, project management tools, no-
 - **Built-in Trash:** Easy-to-implement drag-to-delete functionality. Or implement your own using available callbacks.
 - **Custom Feedback:** Customize the appearance of items while they are being dragged. Use onInteractionStart callback for haptic feedback...
 - **Reflow Animations:** pushed/compacted tiles slide to their new slot.
+- **Fluid Resize:** opt-in pixel-tracking resize. Tiles resize fluidly in raw pixels and smoothly animate into their snapped slot on release.
 - **Drag From Outside:** Drop new items from external sources directly into the grid with auto-scrolling support.
 - **Guidance:** Optional contextual tooltips/guidance messages.
 - **Responsive Layouts:** Automatically adapt the number of columns (`slotCount`) based on the screen width using the built-in `breakpoints` property.
@@ -105,6 +106,7 @@ The package is WebAssembly (WASM) compatible. Building your production applicati
   - [Nested Grids & Cross-Grid Drag](#nested-grids--cross-grid-drag)
   - [Minimap Markers & Multiple Viewports](#minimap-markers--multiple-viewports)
   - [Reflow Animations](#reflow-animations)
+  - [Fluid Resize](#fluid-resize)
   - [Custom Compaction Strategy](#custom-compaction-strategy)
   - [Interaction & Collision Policies (Custom Rules)](#interaction--collision-policies-custom-rules)
   - [Utilities](#utilities)
@@ -1816,6 +1818,53 @@ tile's content is cached behind a `RepaintBoundary`, so the slide is a GPU
 translation of the cached layer — no widget rebuilds, no re-rasterization.
 Hit-testing and screen-reader focus use the final position immediately, and a
 slot-metric change (window resize, breakpoint, slot count) snaps by design.
+
+### Fluid Resize
+
+By default a resize is quantised: the tile jumps one full slot at a time, because
+the tile you see is the one the sliver lays out from the snapped grid
+coordinates. `fluidResize` gives the gesture the same architecture a drag has
+had all along.
+
+```dart
+Dashboard(
+  fluidResize: true,                                        // default: false
+  resizeSettleDuration: const Duration(milliseconds: 120),  // Duration.zero = snap
+  // ...
+)
+```
+
+What changes while a handle is dragged:
+
+- the tile is lifted into the overlay and drawn at the **exact pixel size the
+  pointer describes**, clamped to `minW` / `minH` / `maxW` / `maxH`, to static
+  obstacles (the anchored top/left barriers) and to the grid bounds;
+- its slot stays behind as the **snap-target placeholder** — the hole plus the
+  `GridStyle.fillColor` highlight — showing the size and position the tile will
+  actually take;
+- **neighbours reflow against the projected slot**, exactly as before: the engine
+  still receives the snapped candidate, so collision, push/shrink behaviour and
+  `animateReflow` are unchanged;
+- on release the tile animates from its raw rect into the snapped slot over
+  `resizeSettleDuration`.
+
+Resize handles are rendered on the lifted tile, so the handle stays under the
+cursor for the whole gesture.
+
+Also available on `NestedDashboard` (per grid), and on the controller for raw
+`DashboardOverlay` compositions:
+
+```dart
+controller.setFluidResize(true);
+```
+
+**Why it is off by default.** The preview publishes one rectangle per pointer
+event instead of one per cell crossing. With `itemBuilder` or
+`itemBreakpointBuilder` that costs nothing — the content stays cached behind its
+`RepaintBoundary` — but with `itemLayoutBuilder`, whose contract is to rebuild on
+every pixel of the tile's live dimensions, it means a content rebuild at pointer
+frequency. On low-end web clients that is a cost worth opting into rather than
+inheriting.
 
 ### Custom Compaction Strategy
 
