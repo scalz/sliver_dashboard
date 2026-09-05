@@ -181,6 +181,7 @@ class _DashboardPageState extends State<DashboardPage> {
   final useDragHandlesOnly = ValueNotifier(false);
   final blockSectionCollision = ValueNotifier(true);
   final animateReflow = ValueNotifier(false);
+  final fluidResize = ValueNotifier(true);
   final autoShrink = ValueNotifier(false);
   final maxRows = ValueNotifier<int?>(null);
   final enableSlotTapToAdd = ValueNotifier<bool>(false);
@@ -314,6 +315,9 @@ class _DashboardPageState extends State<DashboardPage> {
 
     controller.setEditMode(isEditing.value);
     controller.setAllowAutoShrink(allow: autoShrink.value);
+    // Seeded here, not only through `Dashboard`: the raw-sliver demo composes
+    // a DashboardOverlay by hand and has no widget to push the flag down.
+    controller.setFluidResize(fluidResize.value);
     _updatePolicy();
     _syncJsonField();
 
@@ -577,6 +581,7 @@ class _DashboardPageState extends State<DashboardPage> {
     useDragHandlesOnly.dispose();
     blockSectionCollision.dispose();
     animateReflow.dispose();
+    fluidResize.dispose();
     autoShrink.dispose();
     maxRows.dispose();
     enableSlotTapToAdd.dispose();
@@ -607,6 +612,7 @@ class _DashboardPageState extends State<DashboardPage> {
       useDragHandlesOnly: useDragHandlesOnly,
       blockSectionCollision: blockSectionCollision,
       animateReflow: animateReflow,
+      fluidResize: fluidResize,
       autoShrink: autoShrink,
       maxRows: maxRows,
       enableSlotTapToAdd: enableSlotTapToAdd,
@@ -837,6 +843,7 @@ class _DashboardPageState extends State<DashboardPage> {
         useDragHandlesOnly,
         showMinimap,
         animateReflow,
+        fluidResize,
         enableLassoGuidance,
         lassoMode,
       ]),
@@ -848,6 +855,7 @@ class _DashboardPageState extends State<DashboardPage> {
         final handlesOnly = useDragHandlesOnly.value;
         final minimap = showMinimap.value;
         final reflow = animateReflow.value;
+        final fluid = fluidResize.value;
 
         _syncLassoStyle(theme);
 
@@ -858,6 +866,9 @@ class _DashboardPageState extends State<DashboardPage> {
               scrollController: standardScrollController,
               scrollDirection: controller.scrollDirection.value,
               animateReflow: reflow,
+              // The tile follows the handle in raw pixels while its slot
+              // stays behind as the snap target, then settles into it.
+              fluidResize: fluid,
               slotAspectRatio: 1.0,
               mainAxisSpacing: 8.0,
               crossAxisSpacing: 8.0,
@@ -918,6 +929,7 @@ class _DashboardPageState extends State<DashboardPage> {
         useDragHandlesOnly,
         enableImpactPreview,
         animateReflow,
+        fluidResize,
         enableLassoGuidance,
         lassoMode,
       ]),
@@ -1154,6 +1166,7 @@ class _ConfigPanel extends StatelessWidget {
     required this.useDragHandlesOnly,
     required this.blockSectionCollision,
     required this.animateReflow,
+    required this.fluidResize,
     required this.autoShrink,
     required this.maxRows,
     required this.enableSlotTapToAdd,
@@ -1181,6 +1194,9 @@ class _ConfigPanel extends StatelessWidget {
   final ValueNotifier<bool> useDragHandlesOnly;
   final ValueNotifier<bool> blockSectionCollision;
   final ValueNotifier<bool> animateReflow;
+
+  /// Fluid (pixel-tracking) resize preview.
+  final ValueNotifier<bool> fluidResize;
   final ValueNotifier<bool> autoShrink;
   final ValueNotifier<bool> enableSlotTapToAdd;
   final ValueNotifier<bool> enableAltDragClone;
@@ -1471,6 +1487,14 @@ class _ConfigPanel extends StatelessWidget {
           _SwitchTile(
             title: 'Enable Reflow Animations',
             notifier: animateReflow,
+          ),
+          _SwitchTile(
+            title: 'Fluid Resize (pixel preview)',
+            notifier: fluidResize,
+            // The raw-sliver demo builds a DashboardOverlay by hand, with no
+            // Dashboard to push the flag down: set it on the controller so
+            // both compositions react to the switch.
+            onChanged: (val) => controller.setFluidResize(val),
           ),
           const SizedBox(height: 10),
           Text(

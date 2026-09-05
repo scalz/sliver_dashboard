@@ -1,3 +1,34 @@
+## [Unreleased]
+
+### Breaking Changes (Interface)
+
+> **Note:** For 99% of users, this update is a seamless drop-in with zero code changes required.
+
+- **`DashboardController` Interface**: New members (`fluidResize`, `setFluidResize()`) were added to 
+the abstract interface. Only applications creating custom classes 
+with `class MyController implements DashboardController` (e.g. manual test mocks) need to declare the missing members.
+
+### Added
+
+- **Fluid resize** (`Dashboard.fluidResize`, `NestedDashboard.fluidResize`, `controller.setFluidResize()`): 
+Opt-in pixel-tracking resize preview. 
+Disabled by default to avoid pointer-frequency rebuilds with itemLayoutBuilder; cached builders are unaffected.
+The tile follows the handle in raw pixels, clamped to constraints and obstacles, while its slot displays 
+the snap-target placeholder, neighbors reflow against the projected slot, and the tile animates into position on release.
+- `Dashboard.resizeSettleDuration` / `DashboardOverlay.resizeSettleDuration`: 
+Configurable duration for the snap-to-slot release animation (defaults to 120 ms; `Duration.zero` to snap immediately).
+- `gridCellRect()` and `SlotMetrics.strideX` / `strideY` / `cellRect()`: Unified tile geometry helpers ensuring consistency across layout passes and feedback overlays.
+
+### Fixed
+
+- Fixed incorrect stride calculations on horizontal grids when `mainAxisSpacing != crossAxisSpacing`.
+- Fixed `isResizing` state remaining latched after tapping a resize handle with `DragStartGesture.tap` without moving.
+- Fixed missing background snap-target highlight during the initial movement of a resize gesture.
+
+### Changed
+
+- `DashboardFeedbackItem` now handles both drag and resize ghosts (`isResizeGhost`), using unified `gridCellRect` geometry calculations.
+
 ## 2.6.0
 
 ### Breaking Changes (Safety Hardening & Interface)
