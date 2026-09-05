@@ -2,6 +2,45 @@ import 'package:flutter/material.dart';
 
 /// layout_metrics
 
+/// The content-space pixel rectangle covered by the grid cell block
+/// ([x], [y], [w], [h]).
+///
+/// **Single implementation of the tile geometry convention.**
+///
+/// The stride of an axis is `slot + spacing of that axis`. The two spacings
+/// swap with [scrollDirection]: on a horizontal grid, `x` runs along the
+/// main axis and uses [mainAxisSpacing].
+///
+/// Accepts `num` on purpose: the snapped (int) and the fluid-resize (double)
+/// geometries must go through the same arithmetic, or the raw rect and the
+/// placeholder it snaps to can disagree.
+///
+/// The returned rect is in **grid-content** pixels: no padding, no scroll
+/// offset. Callers translate it through the Content-Origin Convention.
+Rect gridCellRect({
+  required num x,
+  required num y,
+  required num w,
+  required num h,
+  required double slotWidth,
+  required double slotHeight,
+  required double mainAxisSpacing,
+  required double crossAxisSpacing,
+  required Axis scrollDirection,
+}) {
+  final isVertical = scrollDirection == Axis.vertical;
+  final gapX = isVertical ? crossAxisSpacing : mainAxisSpacing;
+  final gapY = isVertical ? mainAxisSpacing : crossAxisSpacing;
+  final width = w * (slotWidth + gapX) - gapX;
+  final height = h * (slotHeight + gapY) - gapY;
+  return Rect.fromLTWH(
+    x * (slotWidth + gapX),
+    y * (slotHeight + gapY),
+    width > 0 ? width : 0,
+    height > 0 ? height : 0,
+  );
+}
+
 /// A utility class to calculate and hold layout metrics for the dashboard.
 ///
 /// This class encapsulates the logic for determining slot sizes based on
@@ -78,6 +117,29 @@ class SlotMetrics {
 
   /// The number of slots (columns or rows depending on direction).
   final int slotCount;
+
+  /// Distance between the left edges of two horizontally adjacent cells.
+  double get strideX =>
+      slotWidth + (scrollDirection == Axis.vertical ? crossAxisSpacing : mainAxisSpacing);
+
+  /// Distance between the top edges of two vertically adjacent cells.
+  double get strideY =>
+      slotHeight + (scrollDirection == Axis.vertical ? mainAxisSpacing : crossAxisSpacing);
+
+  /// The content-space pixel rectangle of the cell block ([x], [y], [w], [h]).
+  ///
+  /// See [gridCellRect] — this is the same convention, bound to these metrics.
+  Rect cellRect(num x, num y, num w, num h) => gridCellRect(
+        x: x,
+        y: y,
+        w: w,
+        h: h,
+        slotWidth: slotWidth,
+        slotHeight: slotHeight,
+        mainAxisSpacing: mainAxisSpacing,
+        crossAxisSpacing: crossAxisSpacing,
+        scrollDirection: scrollDirection,
+      );
 
   /// Converts a local pixel position to grid coordinates (x, y).
   ///

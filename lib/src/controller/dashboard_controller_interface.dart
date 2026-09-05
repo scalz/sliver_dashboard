@@ -129,6 +129,12 @@ abstract class DashboardController {
   /// A reactive property to control resize behavior.
   WritableBeacon<engine.ResizeBehavior> get resizeBehavior;
 
+  /// Whether an interactive resize previews the tile at raw pixel size
+  /// (fluid) instead of snapping it slot by slot.
+  ///
+  /// Off by default. See `Dashboard.fluidResize` for the full contract.
+  WritableBeacon<bool> get fluidResize;
+
   /// The set of IDs of the currently selected items.
   WritableBeacon<Set<String>> get selectedItemIds;
 
@@ -287,6 +293,13 @@ abstract class DashboardController {
 
   /// Sets the resize handle side length.
   void setResizeHandleSide(double side);
+
+  /// Enables or disables the fluid (pixel-tracking) resize preview.
+  ///
+  /// Turning it off mid-gesture drops any live preview, so the tile is never
+  /// left hidden behind a ghost that will no longer be updated.
+  // ignore: avoid_positional_boolean_parameters
+  void setFluidResize(bool value);
 
   /// Sets the default color of handles.
   void setHandleColor(Color? color);

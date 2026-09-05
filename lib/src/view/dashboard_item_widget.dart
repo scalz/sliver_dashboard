@@ -531,9 +531,20 @@ class _DashboardItemState extends State<DashboardItem>
     // shells; the heavy content stays cached behind its RepaintBoundary.
     final isNestHovered = controller.internal.hoveredNestTargetId.watch(context) == widget.item.id;
 
+    // Fluid resize: this tile is being previewed at raw pixel size by the
+    // overlay, so its slot must read as the snap-target placeholder — the
+    // hole plus the background painter's fill, exactly like a drag.
+    // Deliberately watching the COARSE beacon: it transitions twice per
+    // gesture, never per pointer event (that is `resizeGhostRect`, which only
+    // the ghost reads).
+    final isResizeGhost =
+        !widget.isFeedback && controller.internal.resizeGhostId.watch(context) == widget.item.id;
+
     // Scoped keep-alive: retain only the dragged cluster and displaced tiles
-    // to prevent unmount thrashing during collision cascades.
-    _updateKeepAlive(isDragging && (isSelected || widget.item.moved));
+    // to prevent unmount thrashing during collision cascades. The resized tile
+    // joins them: it must not be torn down mid-gesture, or it takes its
+    // FocusNode with it (see the Item Persistence rule).
+    _updateKeepAlive(isResizeGhost || (isDragging && (isSelected || widget.item.moved)));
 
     // Release focus when transitioning from selected to an empty selection.
     if (_wasSelected && !isSelected && selectedIds.isEmpty && _focusNode.hasPrimaryFocus) {
@@ -614,8 +625,8 @@ class _DashboardItemState extends State<DashboardItem>
             child: MouseRegion(
               cursor: SystemMouseCursors.basic,
               child: Opacity(
-                // Hide if dragged AND not the feedback
-                opacity: (isActive && !widget.isFeedback) ? 0.0 : 1.0,
+                // Hide if dragged or fluid-resized AND not the feedback
+                opacity: ((isActive && !widget.isFeedback) || isResizeGhost) ? 0.0 : 1.0,
                 child: Container(
                   decoration: decoration,
                   child: DashboardItemWrapper(

@@ -65,6 +65,8 @@ class NestedDashboard<T extends Object> extends StatefulWidget {
     this.gridStyle = const GridStyle(),
     this.itemStyle = DashboardItemStyle.defaultStyle,
     this.resizeBehavior = ResizeBehavior.push,
+    this.fluidResize = false,
+    this.resizeSettleDuration = const Duration(milliseconds: 120),
     this.guidance,
     this.itemGlobalKeySuffix = '',
     this.itemFeedbackBuilder,
@@ -170,6 +172,13 @@ class NestedDashboard<T extends Object> extends StatefulWidget {
 
   /// See [Dashboard.resizeBehavior].
   final ResizeBehavior resizeBehavior;
+
+  /// See [Dashboard.fluidResize]. Per-grid: a nested grid may preview its
+  /// resizes fluidly while its host does not, and vice versa.
+  final bool fluidResize;
+
+  /// See [Dashboard.resizeSettleDuration].
+  final Duration resizeSettleDuration;
 
   /// See [Dashboard.guidance].
   final DashboardGuidance? guidance;
@@ -453,6 +462,8 @@ class _NestedDashboardState<T extends Object> extends State<NestedDashboard<T>> 
           gridStyle: widget.gridStyle,
           itemStyle: widget.itemStyle,
           resizeBehavior: widget.resizeBehavior,
+          fluidResize: widget.fluidResize,
+          resizeSettleDuration: widget.resizeSettleDuration,
           // The parent scroll view owns scrolling when sizeToContent is on;
           // otherwise the nested grid scrolls internally like any Dashboard.
           physics: widget.sizeToContent ? const NeverScrollableScrollPhysics() : null,

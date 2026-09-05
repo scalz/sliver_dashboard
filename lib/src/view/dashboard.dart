@@ -45,6 +45,8 @@ class Dashboard<T extends Object> extends StatefulWidget {
     this.gridStyle = const GridStyle(),
     this.itemStyle = DashboardItemStyle.defaultStyle,
     this.resizeBehavior = ResizeBehavior.push,
+    this.fluidResize = false,
+    this.resizeSettleDuration = const Duration(milliseconds: 120),
     this.showScrollbar = true,
     this.cacheExtent,
     this.guidance,
@@ -164,6 +166,29 @@ class Dashboard<T extends Object> extends StatefulWidget {
 
   /// The behavior to use when an item is resized and collides with another.
   final ResizeBehavior resizeBehavior;
+
+  /// Makes an interactive resize track the pointer in RAW PIXELS instead of
+  /// snapping the tile slot by slot.
+  ///
+  /// The tile is lifted into the overlay and drawn at the exact size the
+  /// pointer describes (clamped to `minW`/`minH`/`maxW`/`maxH`, to static
+  /// obstacles and to the grid bounds), while its slot stays behind as the
+  /// snap-target placeholder and the neighbours reflow against the projected
+  /// slot size — the same three-part composition a drag already uses. On
+  /// release the tile animates into the snapped slot over
+  /// [resizeSettleDuration].
+  ///
+  /// **Off by default.** The preview publishes one rectangle per pointer
+  /// event instead of one per cell crossing, which with `itemLayoutBuilder`
+  /// means the tile's content is rebuilt at pointer frequency (the documented
+  /// contract of that builder, but a real cost on low-end web).
+  /// `itemBuilder` and `itemBreakpointBuilder` are unaffected — their content
+  /// stays cached behind its RepaintBoundary.
+  final bool fluidResize;
+
+  /// How long the tile takes to settle into its snapped slot when a
+  /// [fluidResize] gesture is released. [Duration.zero] snaps immediately.
+  final Duration resizeSettleDuration;
 
   /// Whether to show the scrollbar.
   final bool showScrollbar;
@@ -286,6 +311,7 @@ class _DashboardState<T extends Object> extends State<Dashboard<T>> {
 
     // Initialize controller settings based on widget parameters.
     widget.controller.setResizeBehavior(widget.resizeBehavior);
+    widget.controller.setFluidResize(widget.fluidResize);
     (widget.controller as DashboardControllerImpl).setScrollDirection(widget.scrollDirection);
     widget.controller.setHandleColor(widget.gridStyle.handleColor);
     widget.controller.setResizeHandleSide(widget.resizeHandleSide);
@@ -315,6 +341,9 @@ class _DashboardState<T extends Object> extends State<Dashboard<T>> {
     // Sync configuration changes to the controller
     if (widget.resizeBehavior != oldWidget.resizeBehavior) {
       widget.controller.setResizeBehavior(widget.resizeBehavior);
+    }
+    if (widget.fluidResize != oldWidget.fluidResize) {
+      widget.controller.setFluidResize(widget.fluidResize);
     }
     if (widget.scrollDirection != oldWidget.scrollDirection) {
       (widget.controller as DashboardControllerImpl).setScrollDirection(widget.scrollDirection);
@@ -356,6 +385,7 @@ class _DashboardState<T extends Object> extends State<Dashboard<T>> {
       externalTemplateBuilder: widget.externalTemplateBuilder,
       onDrop: widget.onDrop,
       resizeHandleSide: widget.resizeHandleSide,
+      resizeSettleDuration: widget.resizeSettleDuration,
       placeholderWidth: widget.placeholderWidth,
       placeholderHeight: widget.placeholderHeight,
       itemGlobalKeySuffix: widget.itemGlobalKeySuffix,

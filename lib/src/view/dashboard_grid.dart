@@ -129,10 +129,13 @@ class _DashboardGridState extends State<DashboardGrid> {
             );
 
             final isDragging = widget.controller.isDragging.watch(context);
+            // Reason: watched (not peeked) so the snap-target fill paints immediately on
+// resize start, before the first cell crossing (two rebuilds per gesture).
+            final isResizing = widget.controller.internal.isResizing.watch(context);
             final selectedIds = widget.controller.selectedItemIds.watch(context);
             var draggedItems = <LayoutItem>[];
 
-            if (isDragging || widget.controller.internal.isResizing.value) {
+            if (isDragging || isResizing) {
               draggedItems = layout.where((i) => selectedIds.contains(i.id)).toList();
             }
 
