@@ -32,6 +32,32 @@ class ExceptionThrowingScrollController extends ScrollController {
   }
 }
 
+/// Counts how many times its subtree is MOUNTED (not merely rebuilt).
+///
+/// A remount is invisible to a `find`-based expectation — the same widgets are
+/// on screen afterwards — so the only way to assert that an element survived a
+/// reconciliation is to count `initState` calls.
+class MountProbe extends StatefulWidget {
+  const MountProbe({required this.onMount, required this.child, super.key});
+
+  final VoidCallback onMount;
+  final Widget child;
+
+  @override
+  State<MountProbe> createState() => _MountProbeState();
+}
+
+class _MountProbeState extends State<MountProbe> {
+  @override
+  void initState() {
+    super.initState();
+    widget.onMount();
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
+}
+
 // Utility function to explicitly request focus on a widget
 Future<void> _requestFocus(WidgetTester tester, Finder itemFinder) async {
   // 1. Find the specific Semantics widget for our item.
@@ -4011,5 +4037,194 @@ void main() {
         reason: 'Item A should remain untouched',
       );
     });
+  });
+
+  group('Overlay Stack slot stability', () {
+    // The background slot is CONDITIONAL: `gridStyle` / `backgroundBuilder`
+    // are routinely wired to edit mode. An unkeyed Stack reconciles by
+    // position, so its appearance used to shift every following child one
+    // slot down — tearing down and rebuilding the caller's scroll view,
+    // losing the scroll offset, and attaching a second ScrollPosition to the
+    // same ScrollController for one frame.
+    late DashboardController controller;
+    late ScrollController scrollController;
+    late int mounts;
+
+    setUp(() {
+      controller = DashboardController(
+        initialSlotCount: 4,
+        initialLayout: List.generate(
+          12,
+          (i) => LayoutItem(id: 'i$i', x: i % 4, y: (i ~/ 4) * 2, w: 1, h: 2),
+        ),
+      );
+      scrollController = ScrollController();
+      mounts = 0;
+    });
+
+    tearDown(() {
+      controller.dispose();
+      scrollController.dispose();
+    });
+
+    Widget build({GridStyle? gridStyle, WidgetBuilder? backgroundBuilder}) {
+      return MaterialApp(
+        home: Scaffold(
+          body: DashboardOverlay<String>(
+            controller: controller,
+            scrollController: scrollController,
+            gridStyle: gridStyle,
+            backgroundBuilder: backgroundBuilder,
+            itemBuilder: (context, item) => Text('T-${item.id}'),
+            child: MountProbe(
+              onMount: () => mounts++,
+              child: CustomScrollView(
+                controller: scrollController,
+                slivers: [
+                  SliverDashboard(
+                    controller: controller,
+                    itemBuilder: (context, item) => Text('T-${item.id}'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    testWidgets('showing the grid background preserves the child scroll view', (tester) async {
+      await tester.pumpWidget(build());
+      await tester.pumpAndSettle();
+      expect(mounts, 1);
+
+      scrollController.jumpTo(300);
+      await tester.pumpAndSettle();
+
+      controller.setEditMode(true);
+      await tester.pumpWidget(build(gridStyle: const GridStyle()));
+      await tester.pumpAndSettle();
+
+      expect(mounts, 1, reason: 'the scroll view must not be remounted');
+      expect(scrollController.offset, 300, reason: 'the scroll offset must survive');
+      expect(find.byType(DashboardGrid), findsOneWidget);
+
+      // ...and symmetrically on the way back out of edit mode.
+      controller.setEditMode(false);
+      await tester.pumpWidget(build());
+      await tester.pumpAndSettle();
+
+      expect(mounts, 1);
+      expect(scrollController.offset, 300);
+    });
+
+    testWidgets('showing a custom background preserves the child scroll view', (tester) async {
+      await tester.pumpWidget(build());
+      await tester.pumpAndSettle();
+      expect(mounts, 1);
+
+      scrollController.jumpTo(200);
+      await tester.pumpAndSettle();
+
+      await tester.pumpWidget(
+        build(backgroundBuilder: (context) => const ColoredBox(color: Color(0xFF00FF00))),
+      );
+      await tester.pumpAndSettle();
+
+      expect(mounts, 1, reason: 'the scroll view must not be remounted');
+      expect(scrollController.offset, 200, reason: 'the scroll offset must survive');
+      expect(find.byType(ColoredBox), findsWidgets);
+    });
+  });
+
+  testWidgets('slot keys hold across two nested overlays sharing one scroll view',
+      (tester) async {
+    // The slot keys are LOCAL keys: they only have to be unique among the
+    // children of one Stack, so every overlay may reuse the same strings.
+    // This is the tightest composition that could break that — the shape of
+    // `example/lib/multi_sliver_crossdrag_example.dart`, where the inner
+    // overlay's Stack lives inside the outer overlay's content slot and both
+    // grids drive the SAME ScrollController.
+    final outer = DashboardController(
+      initialSlotCount: 4,
+      initialLayout: List.generate(
+        12,
+        (i) => LayoutItem(id: 'a$i', x: i % 4, y: (i ~/ 4) * 2, w: 1, h: 2),
+      ),
+    );
+    addTearDown(outer.dispose);
+    final inner = DashboardController(
+      initialSlotCount: 4,
+      initialLayout: List.generate(
+        12,
+        (i) => LayoutItem(id: 'b$i', x: i % 4, y: (i ~/ 4) * 2, w: 1, h: 2),
+      ),
+    );
+    addTearDown(inner.dispose);
+    final scrollController = ScrollController();
+    addTearDown(scrollController.dispose);
+    final outerSliverKey = GlobalKey();
+    final innerSliverKey = GlobalKey();
+
+    var mounts = 0;
+
+    Widget build({required bool editing}) {
+      return MaterialApp(
+        home: Scaffold(
+          body: DashboardOverlay<String>(
+            controller: outer,
+            scrollController: scrollController,
+            sliverKey: outerSliverKey,
+            gridStyle: editing ? const GridStyle() : null,
+            itemBuilder: (context, item) => Text('T-${item.id}'),
+            child: DashboardOverlay<String>(
+              controller: inner,
+              scrollController: scrollController,
+              sliverKey: innerSliverKey,
+              gridStyle: editing ? const GridStyle() : null,
+              itemBuilder: (context, item) => Text('T-${item.id}'),
+              child: MountProbe(
+                onMount: () => mounts++,
+                child: CustomScrollView(
+                  controller: scrollController,
+                  slivers: [
+                    SliverDashboard(
+                      key: outerSliverKey,
+                      controller: outer,
+                      itemBuilder: (context, item) => Text('T-${item.id}'),
+                    ),
+                    SliverDashboard(
+                      key: innerSliverKey,
+                      controller: inner,
+                      itemBuilder: (context, item) => Text('T-${item.id}'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    await tester.pumpWidget(build(editing: false));
+    await tester.pumpAndSettle();
+    expect(mounts, 1);
+
+    scrollController.jumpTo(300);
+    await tester.pumpAndSettle();
+
+    outer.setEditMode(true);
+    inner.setEditMode(true);
+    await tester.pumpWidget(build(editing: true));
+    await tester.pumpAndSettle();
+
+    expect(mounts, 1, reason: 'the shared scroll view must not be remounted');
+    expect(scrollController.offset, 300);
+    expect(
+      find.byType(DashboardGrid),
+      findsNWidgets(2),
+      reason: 'both overlays mount their own background under the same slot key',
+    );
   });
 }

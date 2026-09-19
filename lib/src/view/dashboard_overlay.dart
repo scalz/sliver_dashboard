@@ -367,6 +367,25 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
     implements DashboardOverlayController, CrossGridDragTarget {
   final GlobalKey _overlayStackKey = GlobalKey();
 
+  // ===========================================================================
+  // Overlay Stack slots
+  // ===========================================================================
+  //
+  // INVARIANT — every child of the overlay [Stack] carries a key.
+  //
+  // Reason: the background slot is CONDITIONAL (present only with a
+  // [backgroundBuilder] or a [gridStyle], which applications routinely wire to
+  // edit mode), and an unkeyed multi-child list is reconciled BY POSITION. The
+  // slots that follow are same-type `Positioned`s, so a one-index shift is
+  // matched against the neighbouring element instead of being recognised as an
+  // insertion — remounting the caller's scroll view, its scroll offset and its
+  // sliver state. Any layer added here needs its own key.
+  static const _backgroundSlotKey = ValueKey<String>('dashboardOverlay.background');
+  static const _contentSlotKey = ValueKey<String>('dashboardOverlay.content');
+  static const _lassoSlotKey = ValueKey<String>('dashboardOverlay.lasso');
+  static const _feedbackSlotKey = ValueKey<String>('dashboardOverlay.feedback');
+  static const _trashSlotKey = ValueKey<String>('dashboardOverlay.trash');
+
   // Cache target for the RenderObject to prevent expensive tree traversals on pointer moves
   RenderSliverDashboard? _renderSliver;
 
@@ -859,9 +878,13 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
               children: [
                 // 1. Background (Grid)
                 if (widget.backgroundBuilder != null)
-                  Positioned.fill(child: widget.backgroundBuilder!(context))
+                  Positioned.fill(
+                    key: _backgroundSlotKey,
+                    child: widget.backgroundBuilder!(context),
+                  )
                 else if (widget.gridStyle != null)
                   Positioned.fill(
+                    key: _backgroundSlotKey,
                     child: DashboardGrid(
                       controller: widget.controller,
                       scrollController: widget.scrollController,
@@ -878,6 +901,7 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
 
                 // 2. Content
                 Positioned.fill(
+                  key: _contentSlotKey,
                   // We use a Listener to handle raw pointer events.
                   // This is necessary for two reasons:
                   // 1. Desktop: To provide immediate feedback (selection) on pointer down,
@@ -936,6 +960,7 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
                 // IgnorePointer). Driven by a ValueNotifier, so a lasso drag
                 // rebuilds this subtree and nothing else.
                 Positioned.fill(
+                  key: _lassoSlotKey,
                   child: DashboardLassoLayer(state: _lassoOverlay),
                 ),
 
@@ -1109,6 +1134,7 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
 
   Widget _buildFeedbackLayer() {
     return AnimatedBuilder(
+      key: _feedbackSlotKey,
       animation: widget.scrollController,
       builder: (context, _) {
         widget.controller.layout.watch(context);
@@ -1311,9 +1337,12 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
   }
 
   Widget _buildTrashLayer() {
-    if (widget.trashBuilder == null) return const SizedBox.shrink();
+    if (widget.trashBuilder == null) {
+      return const SizedBox.shrink(key: _trashSlotKey);
+    }
 
     return Builder(
+      key: _trashSlotKey,
       builder: (context) {
         final activeItemId = widget.controller.activeItemId.watch(context);
         final isDragging = widget.controller.isDragging.watch(context);

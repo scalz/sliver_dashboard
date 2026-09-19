@@ -1,3 +1,12 @@
+## Unreleased
+
+### Fixed
+
+- Fixed `DashboardOverlay` remounting its `child` when the background appears or disappears
+(`gridStyle: isEditing ? const GridStyle() : null`), which reset the scroll offset and could throw
+`ScrollController attached to multiple scroll views`. Only direct `DashboardOverlay` users are affected:
+`Dashboard` and `NestedDashboard` always pass a non-null `gridStyle`.
+
 ## 2.7.0
 
 ### Breaking Changes (Interface)
