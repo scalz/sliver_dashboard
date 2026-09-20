@@ -690,23 +690,23 @@ void main() {
       await tester.sendKeyEvent(LogicalKeyboardKey.shiftLeft);
       await tester.pump();
 
-      // 3. Find the specific Container
+      // 3. Find the tile's chrome layer (unconditional DecoratedBox)
       final opacityFinder = find.descendant(
         of: itemAFinder,
         matching: find.byType(Opacity),
       );
 
-      final containerFinder = find
+      final chromeFinder = find
           .descendant(
             of: opacityFinder,
-            matching: find.byType(Container),
+            matching: find.byType(DecoratedBox),
           )
           .first;
 
-      final container = tester.widget<Container>(containerFinder);
+      final chrome = tester.widget<DecoratedBox>(chromeFinder);
 
       // 4. Verify decoration
-      final decoration = container.decoration as BoxDecoration?;
+      final decoration = chrome.decoration as BoxDecoration?;
       expect(decoration, isNotNull);
 
       // Verify against default style color (BlueAccent)

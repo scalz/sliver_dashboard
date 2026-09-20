@@ -1,6 +1,7 @@
 import 'dart:collection';
 import 'dart:math';
 
+import 'package:meta/meta.dart';
 import 'package:sliver_dashboard/src/models/dashboard_policy.dart';
 import 'package:sliver_dashboard/src/models/layout_item.dart';
 import 'package:sliver_dashboard/src/models/utility.dart';
@@ -811,6 +812,8 @@ List<LayoutItem> _resolveCollisionsDefault(
 
   final processed = <LayoutItem>[];
   final index = _RowIndex.empty();
+  // Hoisted out of both loops: one buffer for the whole pass (see queryInto).
+  final hits = <LayoutItem>[];
 
   for (var i = 0; i < items.length; i++) {
     var current = items[i];
@@ -825,7 +828,8 @@ List<LayoutItem> _resolveCollisionsDefault(
 
     while (hasCollision && safety < 1000) {
       hasCollision = false;
-      final hits = index.query(
+      index.queryInto(
+        hits,
         current,
         top: current.y,
         bottom: current.y + current.h,
@@ -870,7 +874,13 @@ List<LayoutItem> _resolveCollisionsDefault(
     index.insert(current);
   }
 
-  processed.sort((a, b) => a.id.compareTo(b.id));
+  // `processed` is appended in input order, so it is already id-sorted
+  // whenever the input was — which Index Stability guarantees for every
+  // layout this package produces. Checking costs O(N) against the sort's
+  // O(N log N) string comparisons; an unsorted input still gets sorted.
+  if (!_isSortedById(processed)) {
+    processed.sort((a, b) => a.id.compareTo(b.id));
+  }
   return processed;
 }
 
@@ -1049,6 +1059,10 @@ Layout moveElement(
   // ~N * (N / cols) pops (125k at N=1000, cols=8). Each pop is a
   // cheap row-indexed query, so the bound stays a few ms.
   final maxLoops = max(10000, layout.length * layout.length ~/ max(cols, 1));
+  // Hoisted out of the cascade: one buffer for the whole call (see
+  // queryInto). Safe to reuse because the pop below fully consumes it before
+  // the next probe — no nested query runs inside the collision loop.
+  final collisions = <LayoutItem>[];
 
   while (queue.isNotEmpty) {
     if (safetyLoop++ > maxLoops) {
@@ -1073,15 +1087,16 @@ Layout moveElement(
     final top = currentItem.y;
     final bottom = currentItem.y + currentItem.h;
 
-    final collisions = rowIndex.query(
+    rowIndex.queryInto(
+      collisions,
       currentItem,
       top: top,
       bottom: bottom,
       left: left,
       right: right,
-    )
-      // Sort required for stability (pushed from top to bottom).
-      ..sort((a, b) => a.y.compareTo(b.y));
+    );
+    // Sort required for stability (pushed from top to bottom).
+    collisions.sort((a, b) => a.y.compareTo(b.y));
 
     var currentItemJumped = false;
 
@@ -1128,9 +1143,30 @@ Layout moveElement(
     if (currentItemJumped) continue;
   }
 
-  final resultLayout = layoutMap.values.toList()
-    // ID-based Index Stability (see doc comment).
-    ..sort((a, b) => a.id.compareTo(b.id));
+  // ID-based Index Stability (see doc comment), without the O(N log N) string
+  // sort on the hot path. The cascade rewrites `y` only — never an id, never
+  // the id SET — so walking the input yields the result in the input's own
+  // order, which is already ascending for every layout this package produces.
+  //
+  // `moveElement` is public API, so both assumptions are CHECKED rather than
+  // trusted: the map holding exactly as many entries as the input rules out a
+  // duplicate id (which `Map` would have collapsed) and a moved item that was
+  // not in the layout (which adds one), and the order is verified in O(N).
+  // Either check failing falls back to the sort, so a foreign caller is never
+  // handed an unsorted layout. The list stays growable — callers received a
+  // `toList()` before and may still mutate it.
+  final Layout resultLayout;
+  if (layoutMap.length == layout.length) {
+    resultLayout = List<LayoutItem>.generate(
+      layout.length,
+      (i) => layoutMap[layout[i].id]!,
+    );
+    if (!_isSortedById(resultLayout)) {
+      resultLayout.sort((a, b) => a.id.compareTo(b.id));
+    }
+  } else {
+    resultLayout = layoutMap.values.toList()..sort((a, b) => a.id.compareTo(b.id));
+  }
 
   // The monotonic cascade is overlap-free by construction; keep the legacy
   // full resolution strictly as a fallback, gated behind a cheap O(N*k)
@@ -1147,6 +1183,20 @@ Layout moveElement(
   return resultLayout;
 }
 
+/// Whether [items] is already in ascending id order.
+///
+/// N-1 string comparisons, against the ~N·log2(N) of the sort it lets us
+/// skip — 4,000 against ~48,000 at N=4000, where that sort measures ~4 ms on
+/// dart2js, i.e. half of a cell crossing. It is only ever used to avoid
+/// re-sorting a list that is already sorted; an unsorted one still falls
+/// through to the real sort, so the Index Stability invariant is unchanged.
+bool _isSortedById(List<LayoutItem> items) {
+  for (var i = 1; i < items.length; i++) {
+    if (items[i - 1].id.compareTo(items[i].id) > 0) return false;
+  }
+  return true;
+}
+
 /// AABB overlap check (identical semantics to [collides]).
 bool _overlaps(LayoutItem a, LayoutItem b) {
   if (a.id == b.id) return false;
@@ -1160,14 +1210,14 @@ bool _overlaps(LayoutItem a, LayoutItem b) {
 /// O(N*k) overlap verification using the row index maintained by the cascade.
 bool _hasResidualOverlap(Layout layout, _RowIndex rowIndex) {
   for (final item in layout) {
-    final hits = rowIndex.query(
+    final overlaps = rowIndex.hasAny(
       item,
       top: item.y,
       bottom: item.y + item.h,
       left: item.x,
       right: item.x + item.w,
     );
-    if (hits.isNotEmpty) return true;
+    if (overlaps) return true;
   }
   return false;
 }
@@ -1896,76 +1946,220 @@ Layout moveCluster(
   return finalLayout;
 }
 
-/// A minimal spatial index that groups [LayoutItem]s by their top row
-/// (`y`), used internally by [moveElement] to avoid scanning the whole
-/// layout on every collision check.
+/// Number of `_RowIndex` probes issued since the last reset (benchmark hook).
 ///
-/// It only exists to make the cascade-push
-/// resolution in [moveElement] scale with the number of items actually
-/// affected by a move, instead of with the total size of the layout.
+/// Paired with [debugRowIndexRowVisits]: the RATIO of the two is the scan
+/// range of an average probe, which is the single number a change to the
+/// index's bucketing strategy moves, and which no timing assertion can
+/// isolate — a faster run may simply have had a shorter cascade. The range
+/// must stay ~2 rows on EVERY fixture; a ratio that grows with the tallest
+/// tile present means the bucketing has regressed to top-row indexing, and
+/// only a fixture containing a tall tile can expose that. Reset in `setUp`,
+/// not only in `tearDown` (§1).
+///
+/// Maintained inside `assert`s: live under `dart run` and the test binding,
+/// stripped from AOT and `dart compile js -O2`, so the timing runs are never
+/// charged for them.
+@visibleForTesting
+int debugRowIndexQueries = 0;
+
+/// Row buckets walked by those probes. See [debugRowIndexQueries].
+@visibleForTesting
+int debugRowIndexRowVisits = 0;
+
+/// Clears both probe counters.
+@visibleForTesting
+void debugResetRowIndexCounters() {
+  debugRowIndexQueries = 0;
+  debugRowIndexRowVisits = 0;
+}
+
+/// A minimal spatial index that buckets [LayoutItem]s by every row (`y`) they
+/// SPAN, used internally by [moveElement] and [_resolveCollisionsDefault] to
+/// avoid scanning the whole layout on every collision check.
+///
+/// It exists to make the cascade-push resolution scale with the number of
+/// items actually affected by a move, instead of with the total size of the
+/// layout.
+///
+/// **Span indexing, not top-row indexing.** Bucketing an item only at
+/// `item.y` forces every probe to start `maxHeight - 1` rows above its own
+/// box, in case the tallest item of the layout reaches down into it: the scan
+/// range becomes a property of the LAYOUT rather than of the probe, so a
+/// single 16-row banner widens every probe everywhere (measured: 2.1
+/// rows/probe on a uniform grid against 6.7 with banners, and a cell crossing
+/// costing 2.2 ms against 8.9 ms on dart2js at N=1000 — time tracks row
+/// visits at a near-constant ~0.95 µs each). Indexing an item in each row it
+/// covers makes the range exactly the probe's own height, at the cost of `h`
+/// bucket entries per item and an `update` in O(h_old + h_new).
+///
+/// **A match is emitted exactly ONCE** even though a tall obstacle sits in
+/// several scanned buckets: it is emitted on the first row of the
+/// intersection, `max(other.y, top)`, which the ascending walk reaches
+/// exactly once. No `Set`, no allocation. Dropping that guard pushes an
+/// obstacle once per spanned row and lands it `h` rows too low.
 class _RowIndex {
-  _RowIndex._(this._rows, this._maxHeight);
+  _RowIndex._(this._rows);
 
   factory _RowIndex.fromItems(Iterable<LayoutItem> items) {
-    final rows = SplayTreeMap<int, List<LayoutItem>>();
-    var maxHeight = 1;
-    for (final item in items) {
-      rows.putIfAbsent(item.y, () => <LayoutItem>[]).add(item);
-      if (item.h > maxHeight) maxHeight = item.h;
-    }
-    return _RowIndex._(rows, maxHeight);
+    final index = _RowIndex._(HashMap<int, List<LayoutItem>>());
+    items.forEach(index.insert);
+    return index;
   }
 
   /// An empty index for incremental construction (see _resolveCollisionsDefault).
-  factory _RowIndex.empty() => _RowIndex._(SplayTreeMap<int, List<LayoutItem>>(), 1);
+  factory _RowIndex.empty() => _RowIndex._(HashMap<int, List<LayoutItem>>());
 
-  final SplayTreeMap<int, List<LayoutItem>> _rows;
+  /// Rows are walked by INTEGER over the probe's own span, so nothing needs
+  /// the keys ordered. A `SplayTreeMap` was what made the old unbounded scan
+  /// range survivable — `firstKeyAfter` skipped the empty rows between the
+  /// probe and the tallest item in the layout — but every step of that walk
+  /// was a tree descent plus a splay, i.e. rotations that MUTATE the tree on
+  /// a READ, and dart2js pays for that pointer chasing. With the range down
+  /// to the probe's 2-3 rows, skipping empties saves at most one lookup and
+  /// costs a descent on every other one.
+  final HashMap<int, List<LayoutItem>> _rows;
 
-  // Incremental inserts may raise the tallest known item.
-  // moveElement's cascade never mutates heights (only `y`), so for that
-  // caller the value is still effectively constant.
-  int _maxHeight;
-
-  /// Adds a new item to the index (incremental construction).
-  void insert(LayoutItem item) {
-    _rows.putIfAbsent(item.y, () => <LayoutItem>[]).add(item);
-    if (item.h > _maxHeight) _maxHeight = item.h;
+  /// Last row an item occupies, exclusive.
+  ///
+  /// Clamped to at least one row: a degenerate `h <= 0` would otherwise be
+  /// indexed nowhere and become invisible to every collision check — a
+  /// silent correctness hole, where the old top-row indexing at least kept
+  /// one bucket.
+  static int _spanEnd(LayoutItem item) {
+    final end = item.y + item.h;
+    return end > item.y ? end : item.y + 1;
   }
 
-  /// Returns every indexed item whose box overlaps
+  /// Adds an item to every row it spans (also used for incremental
+  /// construction).
+  void insert(LayoutItem item) {
+    final end = _spanEnd(item);
+    for (var y = item.y; y < end; y++) {
+      _rows.putIfAbsent(y, () => <LayoutItem>[]).add(item);
+    }
+  }
+
+  /// Fills [out] with every indexed item whose box overlaps
   /// `[left, right) x [top, bottom)`, excluding [currentItem].
-  List<LayoutItem> query(
+  ///
+  /// [out] is cleared first and belongs to the CALLER, which hoists it out of
+  /// its own loop. The probe runs ~1,100 times per cell crossing at N=1000
+  /// and ~6,100 at N=4000, so a fresh `List` per probe is pure allocation
+  /// churn — what dart2js charges 2-5x for (§2). A buffer owned by the index
+  /// instead would be a single-holder slot with nothing firing when a caller
+  /// kept it across a second probe (§1); a caller-owned buffer cannot alias.
+  void queryInto(
+    List<LayoutItem> out,
     LayoutItem currentItem, {
     required int top,
     required int bottom,
     required int left,
     required int right,
   }) {
-    final result = <LayoutItem>[];
-    final lowerBound = top - _maxHeight + 1;
+    final result = out..clear();
+    assert(
+      () {
+        debugRowIndexQueries++;
+        return true;
+      }(),
+      'Probe counter; see debugRowIndexQueries.',
+    );
 
-    var key = _rows.containsKey(lowerBound) ? lowerBound : _rows.firstKeyAfter(lowerBound);
-
-    while (key != null && key < bottom) {
-      for (final other in _rows[key]!) {
+    for (var key = top; key < bottom; key++) {
+      final bucket = _rows[key];
+      if (bucket == null) continue;
+      assert(
+        () {
+          debugRowIndexRowVisits++;
+          return true;
+        }(),
+        'Row-visit counter; see debugRowIndexRowVisits.',
+      );
+      for (final other in bucket) {
+        // Emit-once, tested FIRST: span indexing puts a tall obstacle in
+        // several scanned buckets, so a large share of the entries walked are
+        // repeats of one already emitted. One comparison rejects them before
+        // the overlap tests instead of after.
+        if (key != (other.y > top ? other.y : top)) continue;
         if (other.id == currentItem.id) continue;
         if (right <= other.x || left >= other.x + other.w) continue;
-        if (bottom <= other.y || top >= other.y + other.h) continue;
+        // Vertical overlap is IMPLIED by the bucketing: `other` occupies row
+        // `key` and `top <= key < bottom`, so `bottom <= other.y` cannot
+        // hold. Only a degenerate `h <= 0` — which [_spanEnd] still indexes
+        // on one row — can fail the other half, so that half remains.
+        if (top >= other.y + other.h) continue;
         result.add(other);
       }
-      key = _rows.firstKeyAfter(key);
     }
-    return result;
+  }
+
+  /// Whether ANY indexed item overlaps the box, excluding [currentItem].
+  ///
+  /// Exits on the first hit and allocates nothing. The residual-overlap
+  /// verification only ever asked this question, yet collected every hit of
+  /// the whole row range before testing `isNotEmpty` — for every item of the
+  /// layout. The walk is duplicated rather than shared through a callback on
+  /// purpose: a closure per probe is the allocation this method exists to
+  /// remove.
+  bool hasAny(
+    LayoutItem currentItem, {
+    required int top,
+    required int bottom,
+    required int left,
+    required int right,
+  }) {
+    assert(
+      () {
+        debugRowIndexQueries++;
+        return true;
+      }(),
+      'Probe counter; see debugRowIndexQueries.',
+    );
+
+    for (var key = top; key < bottom; key++) {
+      final bucket = _rows[key];
+      if (bucket == null) continue;
+      assert(
+        () {
+          debugRowIndexRowVisits++;
+          return true;
+        }(),
+        'Row-visit counter; see debugRowIndexRowVisits.',
+      );
+      for (final other in bucket) {
+        // No emit-once guard here: the first hit answers the question, so a
+        // duplicate is harmless. The vertical half of the overlap test is
+        // implied by the bucketing (see queryInto).
+        if (other.id == currentItem.id) continue;
+        if (right <= other.x || left >= other.x + other.w) continue;
+        if (top >= other.y + other.h) continue;
+        return true;
+      }
+    }
+    return false;
   }
 
   /// Must be called every time an item's position changes so later
   /// queries in the same cascade see up-to-date rows.
+  ///
+  /// O(h_old + h_new): the item leaves every row it used to span and joins
+  /// every row it now spans. The removal is an explicit scan rather than
+  /// `removeWhere`, which would allocate a capturing closure per row on the
+  /// cascade's hot path.
   void update(LayoutItem oldItem, LayoutItem newItem) {
-    final bucket = _rows[oldItem.y];
-    if (bucket != null) {
-      bucket.removeWhere((item) => item.id == oldItem.id);
-      if (bucket.isEmpty) _rows.remove(oldItem.y);
+    final oldEnd = _spanEnd(oldItem);
+    for (var y = oldItem.y; y < oldEnd; y++) {
+      final bucket = _rows[y];
+      if (bucket == null) continue;
+      for (var i = 0; i < bucket.length; i++) {
+        if (bucket[i].id == oldItem.id) {
+          bucket.removeAt(i);
+          break;
+        }
+      }
+      if (bucket.isEmpty) _rows.remove(y);
     }
-    _rows.putIfAbsent(newItem.y, () => <LayoutItem>[]).add(newItem);
+    insert(newItem);
   }
 }

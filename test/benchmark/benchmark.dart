@@ -1,6 +1,7 @@
 // Dart only benchmark
 // ignore_for_file: avoid_print
 import 'dart:math';
+import 'dart:typed_data';
 
 // Import your package files
 import 'package:sliver_dashboard/src/engine/layout_engine.dart';
@@ -55,6 +56,80 @@ List<LayoutItem> generateCompactLayout(int n, int cols) {
   return compact(generateMessyLayout(n, cols), CompactType.vertical, cols);
 }
 
+/// A deterministic dense grid of uniform tiles — no RNG, so the collision
+/// structure a probe meets is a known function of `n`.
+///
+/// The randomized generators above are fine for throughput of a whole
+/// compaction, but NOT as a baseline to compare two revisions of the
+/// collision index: which tile ends up where, and whether a given move even
+/// collides, changes with `n`. That is why `resizeItem push at top` reads
+/// 987 µs at n=500 and 106 µs at n=2000 — the shape, not the algorithm.
+List<LayoutItem> generateUniformLayout(int n, int cols, {int w = 2, int h = 2}) {
+  final perRow = cols ~/ w;
+  return List<LayoutItem>.generate(
+    n,
+    (i) => LayoutItem(
+      id: 'i${i.toString().padLeft(6, '0')}',
+      x: (i % perRow) * w,
+      y: (i ~/ perRow) * h,
+      w: w,
+      h: h,
+    ),
+  );
+}
+
+/// The same dense grid with full-width banners interleaved.
+///
+/// This is the shape the CURRENT index is worst at, and the only shape on
+/// which the `_maxHeight` lower bound is observable: every probe, anywhere in
+/// the layout, starts its walk `bannerH - 1` rows above its own box because
+/// one tall tile exists somewhere. A uniform fixture cannot show it, so a
+/// baseline built only on `generateUniformLayout` would rate a span-indexed
+/// rewrite as worthless by construction.
+List<LayoutItem> generateBannerLayout(
+  int n,
+  int cols, {
+  int bannerEvery = 100,
+  int bannerH = 16,
+}) {
+  const w = 2;
+  const h = 2;
+  final items = <LayoutItem>[];
+  var y = 0;
+  var x = 0;
+  for (var i = 0; i < n; i++) {
+    if (i > 0 && i % bannerEvery == 0) {
+      if (x != 0) {
+        y += h;
+        x = 0;
+      }
+      items.add(
+        LayoutItem(
+          id: 'ban${i.toString().padLeft(6, '0')}',
+          x: 0,
+          y: y,
+          w: cols,
+          h: bannerH,
+        ),
+      );
+      y += bannerH;
+    }
+    if (x + w > cols) {
+      x = 0;
+      y += h;
+    }
+    items.add(LayoutItem(id: 'i${i.toString().padLeft(6, '0')}', x: x, y: y, w: w, h: h));
+    x += w;
+  }
+  // Id-sorted, because the Index Stability invariant means the engine never
+  // receives anything else: every layout it returns is id-sorted, and that is
+  // what the controller feeds back on the next call. A fixture interleaving
+  // `ban...` and `i...` ids measures the engine's unsorted-input fallback —
+  // a path production never takes — and hides any work that only the sorted
+  // path can skip.
+  return items..sort((a, b) => a.id.compareTo(b.id));
+}
+
 /// The resize-freeze shape: a compacted grid whose TOP item just grew,
 /// pushing everything below (what resizeItem feeds to compact on every
 /// pointer event of a top-of-grid resize).
@@ -67,6 +142,65 @@ List<LayoutItem> generateCompactLayout(int n, int cols) {
     (a, b) => (a.y < b.y || (a.y == b.y && a.x < b.x)) ? a : b,
   );
   return (layout: base, grownTop: top.copyWith(h: top.h + 2));
+}
+
+// ============================================================================
+// SLIVER LAYOUT PASS (replica)
+// ============================================================================
+// Steps 3 and 5 of `RenderSliverDashboard.performLayout`, copied verbatim so
+// the pass can be timed on dart2js without a Flutter binding. This is the
+// entire scope of the "geometry memo + binary window" proposal: the memo
+// would skip [sliverGeometryPass] on a scroll pass, and the binary search
+// would replace [sliverWindowPass]. Measuring them tells us what that
+// proposal is worth BEFORE touching a render object flagged DANGER ZONE.
+
+/// Step 3: fill the reusable geometry buffer, accumulate the scroll extent.
+double sliverGeometryPass(
+  List<LayoutItem> items,
+  Float64List geom, {
+  required double slotWidth,
+  required double slotHeight,
+  required double mainAxisSpacing,
+  required double crossAxisSpacing,
+}) {
+  var maxScrollExtent = 0.0;
+  for (var i = 0; i < items.length; i++) {
+    final item = items[i];
+    final x = item.x * (slotWidth + crossAxisSpacing);
+    final y = item.y * (slotHeight + mainAxisSpacing);
+    final w = item.w * (slotWidth + crossAxisSpacing) - crossAxisSpacing;
+    final h = item.h * (slotHeight + mainAxisSpacing) - mainAxisSpacing;
+    final bottom = y + h;
+    if (bottom > maxScrollExtent) maxScrollExtent = bottom;
+
+    final base = i * 4;
+    geom[base] = x;
+    geom[base + 1] = y;
+    geom[base + 2] = w > 0 ? w : 0;
+    geom[base + 3] = h > 0 ? h : 0;
+  }
+  return maxScrollExtent;
+}
+
+/// Step 5: linear scan for the visible index range.
+int sliverWindowPass(
+  int itemCount,
+  Float64List geom, {
+  required double targetStart,
+  required double targetEnd,
+}) {
+  var minVisibleIndex = itemCount;
+  var maxVisibleIndex = -1;
+  for (var i = 0; i < itemCount; i++) {
+    final base = i * 4;
+    final itemStart = geom[base + 1];
+    final itemEnd = itemStart + geom[base + 3];
+    if (itemEnd >= targetStart && itemStart <= targetEnd) {
+      if (i < minVisibleIndex) minVisibleIndex = i;
+      if (i > maxVisibleIndex) maxVisibleIndex = i;
+    }
+  }
+  return maxVisibleIndex - minVisibleIndex;
 }
 
 // ============================================================================
@@ -126,6 +260,15 @@ int layoutHash(List<LayoutItem> layout) {
 
 final integrity = <String, int>{};
 
+/// Collision-probe counts per fixture, for ONE `moveElement` call.
+///
+/// Timings alone cannot tell a cheaper probe from a shorter cascade; the
+/// `rowVisits / queries` ratio isolates the scan range, which is exactly what
+/// a change to the index's bucketing moves. Populated only when asserts are
+/// live (`dart run`); a `-O2` JS or AOT build reports zeros, which is the
+/// point — those runs measure time, this one measures work.
+final probeCounts = <String, ({int queries, int rowVisits})>{};
+
 // ============================================================================
 // RESULTS TABLE
 // ============================================================================
@@ -168,6 +311,19 @@ void printReport() {
   }
   print('└──────────────────────────────────────────────────┴─────────────┴─────────────┘');
   print('');
+  if (probeCounts.values.any((c) => c.queries > 0)) {
+    print('Collision probes per moveElement call (asserts on; 0 in -O2/AOT):');
+    print('  fixture              queries   rowVisits   rows/probe');
+    probeCounts.forEach((k, c) {
+      final ratio = c.queries == 0 ? 0.0 : c.rowVisits / c.queries;
+      print(
+        '  ${k.padRight(20)} ${c.queries.toString().padLeft(7)} '
+        '${c.rowVisits.toString().padLeft(11)} ${ratio.toStringAsFixed(2).padLeft(12)}',
+      );
+    });
+    print('');
+  }
+
   print('Integrity hashes (change = algorithm output changed; identical across');
   print('a run you expected to differ = STALE BINARY, rebuild your AOT exe):');
   integrity.forEach((k, v) => print('  $k: ${v.toRadixString(16)}'));
@@ -297,6 +453,112 @@ void main() {
           force: true,
         ),
         iterations: size > 2000 ? 5 : (size > 500 ? 15 : 50),
+      ),
+    );
+  }
+
+  // 2bis. CELL CROSSING — the drag hot path, and the `_RowIndex` baseline.
+  //
+  // `moveElement` runs once per CELL CROSSING, not per pointer event, and the
+  // real gesture moves a tile by ONE row into an already-compacted grid. The
+  // "Move Element" section above moves the middle tile to (0,0) with
+  // `force: true`, i.e. the worst case; this is the common one, and the two
+  // fixtures differ only by the presence of tall tiles.
+  for (final size in [500, 1000, 4000]) {
+    for (final shape in ['uniform', 'banner']) {
+      final layout =
+          shape == 'uniform' ? generateUniformLayout(size, cols) : generateBannerLayout(size, cols);
+      final item = layout[layout.length ~/ 2];
+
+      record(
+        'Cell crossing (drag hot path)',
+        'moveElement +1 row, $shape ($size items)',
+        measure(
+          'CellCrossing',
+          () => moveElement(
+            layout,
+            item,
+            item.x,
+            item.y + 1,
+            cols: cols,
+            compactType: CompactType.vertical,
+            preventCollision: true,
+            force: true,
+          ),
+          iterations: size > 2000 ? 5 : (size > 500 ? 15 : 50),
+        ),
+      );
+      integrity['cellCross_${shape}_$size'] = layoutHash(
+        moveElement(
+          layout,
+          item,
+          item.x,
+          item.y + 1,
+          cols: cols,
+          compactType: CompactType.vertical,
+          preventCollision: true,
+          force: true,
+        ),
+      );
+
+      // Probe counts for ONE call, outside any timed region. Only meaningful
+      // when asserts are on (`dart run`); a release/JS build reports 0.
+      debugResetRowIndexCounters();
+      moveElement(
+        layout,
+        item,
+        item.x,
+        item.y + 1,
+        cols: cols,
+        compactType: CompactType.vertical,
+        preventCollision: true,
+        force: true,
+      );
+      probeCounts['$shape/$size'] = (
+        queries: debugRowIndexQueries,
+        rowVisits: debugRowIndexRowVisits,
+      );
+    }
+  }
+
+  // 2ter. SLIVER LAYOUT PASS — what a geometry memo + binary window would save.
+  for (final size in [1000, 4000, 10000]) {
+    final layout = generateUniformLayout(size, cols);
+    final geom = Float64List(size * 4);
+    const slotW = 90.0;
+    const slotH = 90.0;
+
+    record(
+      'Sliver layout pass',
+      'geometry loop, N=$size (step 3)',
+      measure(
+        'Geom',
+        () => sliverGeometryPass(
+          layout,
+          geom,
+          slotWidth: slotW,
+          slotHeight: slotH,
+          mainAxisSpacing: 8,
+          crossAxisSpacing: 8,
+        ),
+        iterations: 200,
+      ),
+    );
+    sliverGeometryPass(
+      layout,
+      geom,
+      slotWidth: slotW,
+      slotHeight: slotH,
+      mainAxisSpacing: 8,
+      crossAxisSpacing: 8,
+    );
+    record(
+      'Sliver layout pass',
+      'window scan, N=$size (step 5)',
+      measure(
+        'Window',
+        () => sliverWindowPass(size, geom, targetStart: 4000, targetEnd: 4800),
+        iterations: 200,
       ),
     );
   }

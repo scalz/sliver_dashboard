@@ -1183,5 +1183,51 @@ void main() {
       final item10010 = result.firstWhere((i) => i.id == 'item_10010');
       expect(item10010.y, equals(10010)); // Original y: 10010 -> remains untouched at 10010
     });
+
+    // The result is built by walking the INPUT rather than sorting, which is
+    // only valid while the id set is unchanged. `moveElement` is public API,
+    // so both ways of breaking that have to keep producing an id-sorted
+    // layout — these are the falsifiable gates for that fast path.
+    test('an item absent from the layout is inserted, and the result stays id-sorted', () {
+      const layout = [
+        LayoutItem(id: 'b', x: 0, y: 0, w: 1, h: 1),
+        LayoutItem(id: 'd', x: 1, y: 0, w: 1, h: 1),
+      ];
+      const foreign = LayoutItem(id: 'a', x: 0, y: 0, w: 1, h: 1);
+
+      final result = moveElement(
+        layout,
+        foreign,
+        0,
+        0,
+        cols: 4,
+        compactType: CompactType.vertical,
+        force: true,
+      );
+
+      expect(result.map((i) => i.id), ['a', 'b', 'd']);
+      expect(result.length, 3, reason: 'the foreign item is added, nothing is dropped');
+    });
+
+    test('an unsorted input is still returned id-sorted', () {
+      const layout = [
+        LayoutItem(id: 'c', x: 0, y: 0, w: 1, h: 1),
+        LayoutItem(id: 'a', x: 1, y: 0, w: 1, h: 1),
+        LayoutItem(id: 'b', x: 2, y: 0, w: 1, h: 1),
+      ];
+
+      final result = moveElement(
+        layout,
+        layout[0],
+        1,
+        0,
+        cols: 4,
+        compactType: CompactType.vertical,
+        preventCollision: true,
+        force: true,
+      );
+
+      expect(result.map((i) => i.id), ['a', 'b', 'c']);
+    });
   });
 }

@@ -47,6 +47,18 @@ Duration Function()? debugThrottleClock;
 @visibleForTesting
 bool debugBypassCloneIdAssert = false;
 
+/// Test hook: number of [DashboardOverlay] states disposed while they were
+/// driving a live interaction (`_activeItemId != null`).
+///
+/// `GestureBinding` freezes the hit-test path at pointer-DOWN and replays it
+/// for every later event of that pointer without revalidating the targets, so
+/// an overlay destroyed mid-gesture keeps receiving the rest of the gesture on
+/// a defunct `State` — silently, until something touches `context`. Nothing
+/// observable distinguishes that from a healthy drag (§1, Debug Hooks), hence
+/// this counter. Reset it in `setUp`, not only `tearDown`.
+@visibleForTesting
+int debugOverlayDisposedDuringInteraction = 0;
+
 /// The gesture used to trigger a drag operation on mobile platforms.
 enum DragStartGesture {
   /// Dragging is initiated by holding/long-pressing an item.
@@ -786,6 +798,9 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
 
   @override
   void dispose() {
+    if (kDebugMode && _activeItemId != null) {
+      debugOverlayDisposedDuringInteraction++;
+    }
     if (!_isMobile) {
       HardwareKeyboard.instance.removeHandler(_handleModifierKey);
     }

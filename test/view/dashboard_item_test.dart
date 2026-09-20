@@ -110,14 +110,16 @@ void main() {
         ),
       );
 
-      // The ring is the decoration of the item's own Container (the nearest
-      // Container ancestor of the cached content). Scoping the check there
-      // makes it immune to any other Container in the app scaffolding.
+      // The ring is the decoration of the item's own chrome layer (the
+      // nearest DecoratedBox ancestor of the cached content). Scoping the
+      // check there makes it immune to any other decoration in the app
+      // scaffolding. The layer is unconditional, so "no ring" is an empty
+      // BoxDecoration rather than an absent widget.
       BoxDecoration? itemDecoration() {
-        final container = tester.widget<Container>(
-          find.ancestor(of: find.text('content'), matching: find.byType(Container)).first,
+        final box = tester.widget<DecoratedBox>(
+          find.ancestor(of: find.text('content'), matching: find.byType(DecoratedBox)).first,
         );
-        return container.decoration as BoxDecoration?;
+        return box.decoration as BoxDecoration?;
       }
 
       bool hasRing() {
@@ -579,9 +581,9 @@ void main() {
         final displacedItemB = controller.layout.value.firstWhere((i) => i.id == 'item_b');
         expect(displacedItemB.moved, true);
 
-        final containers = tester.widgetList<Container>(find.byType(Container));
-        final hasDisplacedBorder = containers.any((container) {
-          final decoration = container.decoration;
+        final chromeLayers = tester.widgetList<DecoratedBox>(find.byType(DecoratedBox));
+        final hasDisplacedBorder = chromeLayers.any((box) {
+          final decoration = box.decoration;
           if (decoration is BoxDecoration && decoration.border is Border) {
             final border = decoration.border as Border?;
             return border?.top.color == displacedBorderColor && border?.top.width == 3;

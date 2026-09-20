@@ -150,8 +150,13 @@ class _DashboardItemState extends State<DashboardItem>
   // and index never change during a single drag. Without keepAlive, each
   // flicker tears the widget down and rebuilds it from scratch
   // (Element.inflateWidget), which is what dominates the CPU profile during
-  // a top-of-grid drag. Keeping items alive only while a drag is active
-  // avoids this thrash without disabling virtualization the rest of the time.
+  // a top-of-grid drag.
+  //
+  // Scope: only the tiles that can actually flicker — the dragged cluster and
+  // the ones the cascade is moving (plus a resize ghost's own tile). Retaining
+  // every tile mounted during the gesture instead makes the bucket grow with
+  // the SCROLL DISTANCE of an autoscroll drag and releases it in one
+  // `finalizeTree` at drop; scoped to the cascade, it drains incrementally.
   bool _keepAlive = false;
 
   @override
@@ -627,11 +632,27 @@ class _DashboardItemState extends State<DashboardItem>
               child: Opacity(
                 // Hide if dragged or fluid-resized AND not the feedback
                 opacity: ((isActive && !widget.isFeedback) || isResizeGhost) ? 0.0 : 1.0,
-                child: Container(
-                  decoration: decoration,
-                  child: DashboardItemWrapper(
-                    item: widget.item,
-                    child: _cachedWidget!, // Use the cached heavy content
+                // The two chrome layers are UNCONDITIONAL, and that is the
+                // whole point: `Container(decoration: null)` emits neither a
+                // DecoratedBox nor the border's padding, so every selection,
+                // focus, displaced or nest-hover transition used to RE-PARENT
+                // the cached content — destroying the application subtree
+                // inside the tile and, with it, a NestedDashboard's overlay
+                // in the middle of the gesture that overlay was driving.
+                // `const BoxDecoration()` paints nothing and zero padding
+                // lays out identically, so the shape is fixed at the cost of
+                // two no-op render objects. Keep any new chrome layer here
+                // unconditional too.
+                child: DecoratedBox(
+                  decoration: decoration ?? const BoxDecoration(),
+                  child: Padding(
+                    // What Container derives from `decoration.padding`: a
+                    // border insets the content by its own width.
+                    padding: decoration?.padding ?? EdgeInsets.zero,
+                    child: DashboardItemWrapper(
+                      item: widget.item,
+                      child: _cachedWidget!, // Use the cached heavy content
+                    ),
                   ),
                 ),
               ),
