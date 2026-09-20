@@ -4137,8 +4137,7 @@ void main() {
     });
   });
 
-  testWidgets('slot keys hold across two nested overlays sharing one scroll view',
-      (tester) async {
+  testWidgets('slot keys hold across two nested overlays sharing one scroll view', (tester) async {
     // The slot keys are LOCAL keys: they only have to be unique among the
     // children of one Stack, so every overlay may reuse the same strings.
     // This is the tightest composition that could break that — the shape of

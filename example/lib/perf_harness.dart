@@ -47,7 +47,13 @@ List<LayoutItem> buildLayout({required bool withBanners}) {
       y += h;
     }
     items.add(
-      LayoutItem(id: 'i${i.toString().padLeft(6, '0')}', x: x, y: y, w: w, h: h),
+      LayoutItem(
+        id: 'i${i.toString().padLeft(6, '0')}',
+        x: x,
+        y: y,
+        w: w,
+        h: h,
+      ),
     );
     x += w;
   }

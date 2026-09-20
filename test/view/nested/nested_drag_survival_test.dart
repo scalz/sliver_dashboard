@@ -119,8 +119,7 @@ void main() {
       });
     });
 
-    testWidgets('a nested drag survives the host tile losing the focus highlight',
-        (tester) async {
+    testWidgets('a nested drag survives the host tile losing the focus highlight', (tester) async {
       await runOnDesktop(() async {
         await tester.pumpWidget(buildNested());
         await tester.pumpAndSettle();
@@ -186,6 +185,37 @@ void main() {
         parent.clearSelection();
         await tester.pumpAndSettle();
         expect(hostMounts, 1, reason: 'dropping the decoration re-parented the content');
+      });
+    });
+
+    // Every gate above asserts the counter is 0, so a counter that can no
+    // longer increment would make all of them pass for no reason. This is the
+    // positive half: the only legitimate way an overlay is disposed with an
+    // interaction in flight is the application removing the grid mid-gesture.
+    testWidgets('the disposal counter fires when an overlay really is torn down mid-gesture',
+        (tester) async {
+      await runOnDesktop(() async {
+        await tester.pumpWidget(buildNested());
+        await tester.pumpAndSettle();
+
+        final start = tester.getCenter(find.text('C-c1'));
+        final gesture = await tester.startGesture(start);
+        await tester.pump();
+        await gesture.moveBy(const Offset(30, 0));
+        await tester.pump();
+        expect(child.isDragging.value, isTrue);
+
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pumpAndSettle();
+
+        // Exactly one: the root overlay bails out of `_onPointerDown` on the
+        // nested grid's pointer claim, so it never had an active item.
+        expect(debugOverlayDisposedDuringInteraction, 1);
+
+        // The gesture is deliberately left dangling. Releasing it now would
+        // replay the frozen hit path onto the disposed State — the very defect
+        // this counter exists to detect.
+        await gesture.removePointer();
       });
     });
   });
