@@ -17,9 +17,11 @@ This document provides a comprehensive performance breakdown of the `sliver_dash
   already-compacted** grids, because that is what a gesture actually hands the
   engine, and because a randomized fixture makes two revisions incomparable.
 - **Grid width:** 12 columns throughout.
-- **Revision:** the unreleased engine. Against 2.7.0 on this same machine, the
-  drag and resize paths are 1.9× to 2.9× faster and the rest is unchanged; the
-  `CHANGELOG` has the per-operation before/after.
+- **Revision:** 2.8.0. Against 2.7.0 on this same machine the drag and resize
+  paths are **1.9× to 2.9× faster in AOT** and the rest is unchanged. The web
+  targets gain more — 2.2× to 6× on dart2js — because part of what 2.8.0
+  removed is constant-factor cost that AOT already absorbed; see
+  [§4](#4-what-280-changed) for the per-operation before/after.
 
 ---
 
@@ -204,6 +206,67 @@ dart2js costs roughly **2.5×** AOT on this workload; **WebAssembly closes that
 gap almost entirely** and matches AOT within noise. If you ship a large grid to
 the web, `flutter build web --wasm` is the single highest-leverage change
 available to you — it needs no code change on your side.
+
+### 4. What 2.8.0 changed
+
+The row index now buckets each item in **every row it spans** and walks those
+rows over a flat hash map, so a collision probe scans its own 2-3 rows instead
+of starting `maxHeight - 1` rows higher "in case" — a single tall tile no
+longer widens every probe in the grid. Layout output is byte-identical.
+
+All four columns come from `test/benchmark/benchmark.dart` on a 12-column grid,
+run in one browser so they are directly comparable. Reproduce the two "after"
+columns with `dart compile js -O2` and `dart compile wasm -O2` on that file;
+the "before" columns additionally need the engine reverted and the
+probe-counter lines removed from the benchmark, since those counters do not
+exist in 2.7.0.
+
+| Engine operation | dart2js before | dart2js after | wasm before | wasm after |
+|---|---|---|---|---|
+| Drag cell crossing, uniform, N = 1000 | 1.98 ms | 0.89 ms | 0.71 ms | **0.36 ms** |
+| Drag cell crossing, 16-row banners, N = 1000 | 4.89 ms | 0.82 ms | 1.95 ms | **0.34 ms** |
+| Drag cell crossing, uniform, N = 4000 | 7.79 ms | 3.33 ms | 2.85 ms | **1.46 ms** |
+| Drag cell crossing, 16-row banners, N = 4000 | 31.9 ms | 6.00 ms | 13.0 ms | **2.28 ms** |
+| Resize pushing from the top, N = 1000 | 2.42 ms | 0.97 ms | 0.83 ms | **0.26 ms** |
+| Resize pushing from the top, N = 10000 | 69.2 ms | 24.0 ms | 29.0 ms | **8.31 ms** |
+| Move onto an occupied slot, full cascade, N = 1000 | 2.04 ms | 0.90 ms | 0.74 ms | **0.38 ms** |
+
+**2.8.0 accounts for the first two columns only: 2.2× to 6×**, the largest
+factors on grids that contain a tall tile. The last two columns are the same
+two revisions compiled to WebAssembly — that gain is a compiler choice
+available on any version, not something this release delivers. Whole-layout
+compaction and `optimizeLayout` are **unchanged**: they do not go through the
+collision index. Neither are small grids or gestures with short cascades —
+they were never the cost.
+
+The two effects do not simply multiply. 2.8.0 is worth 2.2× on a uniform grid
+in dart2js but only 2.0× in wasm, because part of what it removed was
+constant-factor cost that wasm already makes cheap; on a grid with tall tiles
+it is worth 6.0× in dart2js and 5.8× in wasm, because there the work was
+removed algorithmically rather than made faster. End to end, the worst case of
+the table — a cell crossing on a 4000-tile grid containing banners — goes from
+31.9 ms on 2.7.0 in dart2js to **2.28 ms** on 2.8.0 in wasm, 14×.
+
+#### End-to-end frame times
+
+Engine microbenchmarks are not frames. In a release Flutter web build
+(`example/lib/perf_harness.dart`) driving the same resize-push gesture on a
+4000-tile grid with banners, on a 100 Hz display (10 ms budget), 600 frames per
+build:
+
+| 4000 tiles with banners | Frames > 20 ms | > 33 ms | Median p90 |
+|---|---|---|---|
+| dart2js, 2.7.0 | 42 | 3 | 15.2 ms |
+| dart2js, 2.8.0 | 12 | 2 | 13.0 ms |
+| **wasm, 2.8.0** | **3** | **0** | **10.09 ms** |
+
+The worst frame of a gesture went from 30.9 ms to 20.6 ms on dart2js. A p90 of
+10.09 ms on a 100 Hz display is the refresh interval itself: nine frames out of
+ten during the gesture cost no more than an idle one. On a 1000-tile grid
+neither build dropped a frame on this machine — the gain there is headroom, not
+a visible fix. Measured on a single desktop machine with skwasm and
+cross-origin isolation; your numbers will differ, but the harness is in the
+repository so you can produce your own.
 
 ---
 

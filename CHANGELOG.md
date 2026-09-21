@@ -1,11 +1,40 @@
-## Unreleased
+## 2.8.0
+
+### Performance
+
+- **Collision resolution is 2.2× to 6× faster** on the drag and resize paths, the largest factors on
+grids containing a tall tile. Layout output is byte-identical; this changes speed only. 
+On a "small" 1000-tile grid, the gain is headroom.
+- Collision probes no longer allocate.
+- Whole-layout compaction and `optimizeLayout` are unchanged: they do not go through the collision
+index, and neither do small grids nor gestures with short cascades; they were never an important cost.
+
+Per-operation before/after, end-to-end frame times and the WebAssembly comparison are in
+[BENCHMARK.md](BENCHMARK.md).
 
 ### Fixed
 
+- Fixed a tile destroying the state of its content whenever its chrome changed. Most visible
+with nested grids, where it tore down the embedded `NestedDashboard` mid-gesture.
+
 - Fixed `DashboardOverlay` remounting its `child` when the background appears or disappears
 (`gridStyle: isEditing ? const GridStyle() : null`), which reset the scroll offset and could throw
-`ScrollController attached to multiple scroll views`. Only direct `DashboardOverlay` users are affected:
-`Dashboard` and `NestedDashboard` always pass a non-null `gridStyle`.
+`ScrollController attached to multiple scroll views`. `Dashboard` and `NestedDashboard` are not
+affected — their `gridStyle` is never null.
+
+### Breaking Changes Notes for integrators
+
+> For 99% of users, this update is a seamless drop-in with zero code changes required.
+
+- A tile's chrome is now emitted unconditionally: the `Container` that carried the decoration is
+replaced by a `DecoratedBox` and a `Padding` that are always present. Nothing changes visually, but
+a widget or golden test matching on a tile's internal structure may need updating — in particular,
+that `Container` no longer exists.
+- Three `@visibleForTesting` counters and a reset helper are now exported, for applications that
+want to assert these invariants in their own suites: `debugRowIndexQueries`,
+`debugRowIndexRowVisits` and `debugResetRowIndexCounters()` (collision-probe scan range — see
+[BENCHMARK.md](BENCHMARK.md)), and `debugOverlayDisposedDuringInteraction` (an overlay destroyed
+while it was driving a gesture).
 
 ## 2.7.0
 
