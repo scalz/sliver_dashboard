@@ -1,0 +1,33 @@
+# Pub uses this file INSTEAD of .gitignore for this directory:
+# the first block mirrors .gitignore and must be kept in sync with it.
+
+# --- Mirror of .gitignore ---------------------------------------------------
+*.class
+*.log
+*.pyc
+*.swp
+.DS_Store
+.atom/
+.buildlog/
+.history
+.svn/
+migrate_working_dir/
+*.iml
+*.ipr
+*.iws
+.idea/
+.serena/cache/
+.serena/memories/
+/pubspec.lock
+**/doc/api/
+.dart_tool/
+.flutter-plugins-dependencies
+/build/
+/internal_doc/
+/coverage/
+
+# --- Not part of the published package --------------------------------------
+# README demo GIFs (7.9 MB): the README loads them from raw.githubusercontent.com.
+/img/
+# Coverage badge: also loaded from GitHub by the README.
+/coverage_badge.svg
