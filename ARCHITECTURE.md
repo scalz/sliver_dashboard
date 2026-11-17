@@ -18,6 +18,7 @@ The architecture is built on a foundation of modern, idiomatic Flutter principle
 *   **`LayoutItem.extra`**: shallow-equality map (`mapEquals` + `Object.hashAllUnordered` in signature/hash); mutating the map in place is invisible to change detection by design.
 6.  **Accessibility (A11y):** The dashboard is designed to be fully usable via keyboard and screen readers, treating accessibility as a first-class citizen, not an afterthought.
 7.  **One Rule Per Transform:** any coordinate conversion, projection or resolution that appears at more than one call site must be stated once as an invariant and reused. Duplicated derivations drift silently — see the Content-Origin Convention in §6, which two of five sites had drifted away from by exactly one padding.
+8.  **Design-Library Agnostic (INVARIANT):** `lib/` imports `package:flutter/widgets.dart` only — never `material.dart` / `cupertino.dart` (deprecated since Flutter 3.50) nor the standalone `material_ui` / `cupertino_ui` packages. Either choice splits the user base: the in-SDK libraries are on their way out, and the packages require Flutter ≥ 3.47. Consequences: built-in colors are constants (`DefaultColors`, the former Material swatches); nothing reads a design `Theme` — ambient styling comes from `DefaultTextStyle`; the root-overlay cross-grid proxy captures the source grid's themes with `InheritedTheme.captureAll`, and a `Material` ancestor for ink widgets is the application's to add through `itemFeedbackBuilder`. Gate: `test/meta/no_design_library_test.dart`.
 
 ## Core Layers
 
@@ -546,7 +547,11 @@ and a drag can travel continuously between any grids sharing a
     removal from the source grid, a live push-preview placeholder in the hovered grid,
     and the final drop or cancel (see the sequence below).
     Includes the floating proxy (`OverlayEntry` + `ValueNotifier<Offset>`; requires
-    a Flutter `Overlay` ancestor, gracefully skipped otherwise).
+    a Flutter `Overlay` ancestor, gracefully skipped otherwise). The proxy is mounted
+    in the ROOT overlay, outside the source grid's subtree: its content is wrapped in
+    `InheritedTheme.captureAll(sourceContext, …)` so the tile keeps its text style and
+    themes (whichever design library provides them). Without it, the tile renders in
+    `WidgetsApp`'s debug error text style.
   - **Tree links & stash:** `NestedDashboard` declares parent links
     (`linkChildGrid`); links are recorded in a pending map because a
     `NestedDashboard` mounts *before* the overlay of the grid it hosts, and

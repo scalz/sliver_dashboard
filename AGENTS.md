@@ -21,6 +21,7 @@ Since v2.0.0 the package supports **Nested Grids**: dashboards embedded inside g
 - **Language:** Dart (Strong mode).
 - **Framework:** Flutter (Sliver Protocol).
 - **State Management:** `state_beacon` only. Do not introduce Provider, Riverpod, or Bloc. Only use `state_beacon` APIs already exercised in this repo (`.value`, `.peek()`, `.watch(context)`, `Beacon.writable`, `B.writable`); do not introduce `subscribe`-based patterns without a dedicated review.
+- **Design library: none in `lib/` (INVARIANT).** `lib/` imports `package:flutter/widgets.dart`, never `material.dart` / `cupertino.dart` (deprecated in Flutter 3.50) nor `material_ui` / `cupertino_ui` (Flutter ≥ 3.47 only): this is what lets one release serve both old SDKs and migrated apps. Colors are constants in `DefaultColors`; never read a design `Theme` — use `DefaultTextStyle` / `MediaQuery`; anything mounted in an `Overlay` outside the grid's subtree gets `InheritedTheme.captureAll`. Gate: `test/meta/no_design_library_test.dart`. `test/` and `example/` import `package:material_ui/material_ui.dart` (a dev / example dependency only, never in `dependencies`): running the suite needs Flutter ≥ 3.47, consumers are unaffected.
 - **Testing:** `flutter_test`, `mocktail`.
 - **Linter:** `very_good_analysis` or strict `flutter_lints`.
 - **Target:** Flutter Mobile, Desktop, and Web. **Web (dart2js) is the performance-critical target**: allocation churn and megamorphic calls cost 2-5× more than on AOT.

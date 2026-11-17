@@ -1,8 +1,9 @@
 import 'dart:math';
 
-import 'package:flutter/material.dart';
+import 'package:flutter/widgets.dart';
 import 'package:sliver_dashboard/src/controller/layout_metrics.dart';
 import 'package:sliver_dashboard/src/models/layout_item.dart';
+import 'package:sliver_dashboard/src/view/default_colors.dart';
 
 /// A custom painter that draws the background grid lines and the highlight
 /// for the currently active item (or placeholder) within a Sliver context.
@@ -28,9 +29,9 @@ class GridBackgroundPainter extends CustomPainter {
     required this.sliverContentExtent,
     this.draggedItems = const [],
     this.placeholder,
-    this.lineColor = Colors.black12,
+    this.lineColor = DefaultColors.gridLine,
     this.lineWidth = 1.0,
-    this.fillColor = Colors.black12,
+    this.fillColor = DefaultColors.gridLine,
     this.fillViewport = false,
   });
 

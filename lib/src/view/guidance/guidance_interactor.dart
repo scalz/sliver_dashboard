@@ -1,6 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
-import 'package:flutter/material.dart';
+import 'package:flutter/widgets.dart';
 import 'package:sliver_dashboard/src/controller/dashboard_controller_interface.dart';
 import 'package:sliver_dashboard/src/controller/dashboard_controller_provider.dart';
 import 'package:sliver_dashboard/src/models/layout_item.dart';
@@ -78,12 +78,13 @@ class _GuidanceInteractorState extends State<GuidanceInteractor> {
                   alignment == Alignment.center ? Alignment.center : Alignment.bottomCenter,
               // Offset: Add slight padding (e.g., 10px above)
               offset: alignment == Alignment.center ? Offset.zero : const Offset(0, -10),
-              child: Material(
-                type: MaterialType.transparency,
-                // Align ensures the child doesn't stretch to fill the overlay constraints
-                child: Align(
-                  alignment: Alignment.center,
-                  child: GuidanceBubble(message: message),
+              // Align ensures the child doesn't stretch to fill the overlay constraints
+              child: Align(
+                alignment: Alignment.center,
+                child: GuidanceBubble(
+                  message: message,
+                  color: _messages?.bubbleColor,
+                  textColor: _messages?.bubbleTextColor,
                 ),
               ),
             ),

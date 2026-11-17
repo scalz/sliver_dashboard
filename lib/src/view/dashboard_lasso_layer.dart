@@ -1,7 +1,7 @@
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter/material.dart';
+import 'package:flutter/widgets.dart';
 import 'package:sliver_dashboard/src/view/guidance/guidance_bubble.dart';
 
 /// Everything needed to paint one frame of the rubberband ("lasso")
@@ -20,6 +20,8 @@ class LassoOverlayState {
     required this.borderWidth,
     this.clipRect,
     this.message,
+    this.bubbleColor,
+    this.bubbleTextColor,
   });
 
   /// The rubberband rectangle, in overlay-local pixels.
@@ -44,6 +46,12 @@ class LassoOverlayState {
   /// disabled (`DashboardController.guidance == null`).
   final String? message;
 
+  /// Bubble background override (`DashboardGuidance.bubbleColor`).
+  final Color? bubbleColor;
+
+  /// Bubble text color override (`DashboardGuidance.bubbleTextColor`).
+  final Color? bubbleTextColor;
+
   @override
   bool operator ==(Object other) {
     if (identical(this, other)) return true;
@@ -53,11 +61,22 @@ class LassoOverlayState {
         other.fillColor == fillColor &&
         other.borderColor == borderColor &&
         other.borderWidth == borderWidth &&
-        other.message == message;
+        other.message == message &&
+        other.bubbleColor == bubbleColor &&
+        other.bubbleTextColor == bubbleTextColor;
   }
 
   @override
-  int get hashCode => Object.hash(rect, clipRect, fillColor, borderColor, borderWidth, message);
+  int get hashCode => Object.hash(
+        rect,
+        clipRect,
+        fillColor,
+        borderColor,
+        borderWidth,
+        message,
+        bubbleColor,
+        bubbleTextColor,
+      );
 }
 
 /// Paints the rubberband rectangle.
@@ -165,7 +184,11 @@ class DashboardLassoLayer extends StatelessWidget {
           constraints: const BoxConstraints(maxWidth: _labelMaxWidth),
           // Same bubble the hover / long-press guidance uses, so the lasso
           // label is not a second tooltip style.
-          child: GuidanceBubble(message: message),
+          child: GuidanceBubble(
+            message: message,
+            color: value.bubbleColor,
+            textColor: value.bubbleTextColor,
+          ),
         ),
       ),
     ];

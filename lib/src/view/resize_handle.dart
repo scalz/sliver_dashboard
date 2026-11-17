@@ -1,5 +1,6 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/widgets.dart';
 import 'package:sliver_dashboard/src/controller/dashboard_controller_provider.dart';
+import 'package:sliver_dashboard/src/view/default_colors.dart';
 import 'package:sliver_dashboard/src/view/guidance/dashboard_guidance.dart';
 
 /// An enum representing the different types of resize handles.
@@ -60,7 +61,7 @@ class ResizeHandleWidget extends StatefulWidget {
   /// The size of the handle's touch target and visual indicator.
   final double size;
 
-  /// The color of the handle. Defaults to the theme's primary color.
+  /// The color of the handle. Defaults to the package's focus color (blue accent).
   final Color? color;
 
   /// The thickness of the "L" shape lines.
@@ -128,7 +129,7 @@ class _ResizeHandleWidgetState extends State<ResizeHandleWidget> {
         child: CustomPaint(
           painter: _HandlePainter(
             handle: widget.handle,
-            color: widget.color ?? Theme.of(context).primaryColor,
+            color: widget.color ?? DefaultColors.focus,
             strokeWidth: widget.strokeWidth,
           ),
         ),

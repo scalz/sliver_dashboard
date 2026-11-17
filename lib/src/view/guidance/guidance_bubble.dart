@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
-import 'package:flutter/material.dart';
+import 'package:flutter/widgets.dart';
+import 'package:sliver_dashboard/src/view/default_colors.dart';
 
 /// The visual shell of every guidance message in the package.
 ///
@@ -11,10 +12,21 @@ import 'package:flutter/material.dart';
 /// anchor to and is painted in-tree, so only the appearance is shared.
 class GuidanceBubble extends StatelessWidget {
   /// Creates a [GuidanceBubble].
-  const GuidanceBubble({required this.message, super.key});
+  const GuidanceBubble({
+    required this.message,
+    this.color,
+    this.textColor,
+    super.key,
+  });
 
   /// The text to display.
   final String message;
+
+  /// Background override; see `DashboardGuidance.bubbleColor`.
+  final Color? color;
+
+  /// Text color override; see `DashboardGuidance.bubbleTextColor`.
+  final Color? textColor;
 
   static bool get _isMobile =>
       defaultTargetPlatform == TargetPlatform.android ||
@@ -22,8 +34,9 @@ class GuidanceBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
+    // Reason: no design-library Theme is readable from `widgets.dart`; the
+    // platform brightness is the design-agnostic signal that remains.
+    final isDark = MediaQuery.maybeOf(context)?.platformBrightness == Brightness.dark;
     final fontSize = _isMobile ? 16.0 : 14.0;
     final padding = _isMobile
         ? const EdgeInsets.symmetric(horizontal: 16, vertical: 10)
@@ -31,16 +44,19 @@ class GuidanceBubble extends StatelessWidget {
 
     return Directionality(
       textDirection: TextDirection.ltr,
-      child: Material(
-        color: Colors.transparent,
+      // Reason: the bubble lives in an OverlayEntry, whose ambient text style
+      // is WidgetsApp's debug error style (red, underlined). A fresh
+      // DefaultTextStyle replaces it instead of merging into it.
+      child: DefaultTextStyle(
+        style: const TextStyle(decoration: TextDecoration.none),
         child: Container(
           padding: padding,
           decoration: BoxDecoration(
-            color: isDark ? Colors.grey[300] : Colors.grey[800],
+            color: color ?? (isDark ? DefaultColors.bubbleDark : DefaultColors.bubbleLight),
             borderRadius: BorderRadius.circular(8),
             boxShadow: const [
               BoxShadow(
-                color: Colors.black26,
+                color: DefaultColors.bubbleShadow,
                 blurRadius: 8,
                 offset: Offset(0, 2),
               ),
@@ -49,7 +65,7 @@ class GuidanceBubble extends StatelessWidget {
           child: Text(
             message,
             style: TextStyle(
-              color: isDark ? Colors.black : Colors.white,
+              color: textColor ?? (isDark ? const Color(0xFF000000) : const Color(0xFFFFFFFF)),
               fontSize: fontSize,
               fontWeight: FontWeight.w500,
             ),

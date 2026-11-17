@@ -1,3 +1,68 @@
+## 2.9.0
+
+### Flutter 3.50 compatibility
+
+- **No dependency on Material anymore.** The package only imports `package:flutter/widgets.dart`:
+it works with the in-SDK `material.dart` (deprecated in 3.50) and with `material_ui` /
+`cupertino_ui`, no compatibility bridge needed. Older Flutter versions remain supported.
+- `material_ui` is a dev dependency only (tests, example): your app does not get it.
+
+### Added
+
+- `DashboardGuidance.bubbleColor` / `bubbleTextColor` to style the guidance bubble (hover,
+long-press and lasso label).
+
+### Fixed
+
+- The cross-grid drag proxy keeps the source grid's text style and themes.
+
+### Breaking changes (visual defaults only)
+
+No code change is required. Defaults that read the Material `Theme` are now fixed:
+
+- **Focus ring and resize handles** default to blue accent instead of `primaryColor`
+when unset. To keep your theme color:
+
+  ```dart
+  final primary = ColorScheme.of(context).primary;
+
+  Dashboard(
+    itemStyle: DashboardItemStyle.defaultStyle.copyWith(focusColor: primary),
+    gridStyle: GridStyle(handleColor: primary),
+    // ...
+  )
+  ```
+
+- **Section header**: bold 16 px in the ambient text style, instead of `titleMedium` in the
+primary color. Restore it with `sectionHeaderBuilder`:
+
+  ```dart
+  sectionHeaderBuilder: (context, item) => Text(
+    item.sectionTitle ?? '',
+    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+          color: Theme.of(context).colorScheme.primary,
+        ),
+  ),
+  ```
+
+- **Cross-grid proxy** is no longer wrapped in a `Material`. Tiles using `InkWell`, `ListTile` or
+`TextField` without their own `Card` / `Material` need one while carried between grids:
+
+  ```dart
+  itemFeedbackBuilder: (context, item, child) =>
+      Material(type: MaterialType.transparency, child: child),
+  ```
+
+- **Guidance bubble** follows the platform brightness instead of `Theme.brightness`. To follow
+your theme instead:
+
+  ```dart
+  guidance: DashboardGuidance(
+    bubbleColor: Theme.of(context).colorScheme.inverseSurface,
+    bubbleTextColor: Theme.of(context).colorScheme.onInverseSurface,
+  ),
+  ```
+
 ## 2.8.0
 
 ### Performance

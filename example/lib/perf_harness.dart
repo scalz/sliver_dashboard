@@ -11,7 +11,7 @@
 // timestamps recorded by the page).
 // ignore_for_file: avoid_print
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:sliver_dashboard/sliver_dashboard.dart';
 
 const int kItemCount = 4000;

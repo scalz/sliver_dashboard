@@ -1,7 +1,7 @@
 import 'dart:async' show unawaited;
 
-import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
+import 'package:flutter/widgets.dart';
 import 'package:sliver_dashboard/src/controller/dashboard_controller_interface.dart'
     show DashboardController;
 import 'package:sliver_dashboard/src/controller/dashboard_controller_provider.dart';
@@ -13,6 +13,7 @@ import 'package:sliver_dashboard/src/view/dashboard_configuration.dart';
 import 'package:sliver_dashboard/src/view/dashboard_item_wrapper.dart';
 import 'package:sliver_dashboard/src/view/dashboard_overlay.dart' show DashboardOverlayProvider;
 import 'package:sliver_dashboard/src/view/dashboard_typedefs.dart';
+import 'package:sliver_dashboard/src/view/default_colors.dart';
 import 'package:sliver_dashboard/src/view/guidance/dashboard_guidance.dart';
 import 'package:state_beacon/state_beacon.dart';
 
@@ -573,7 +574,6 @@ class _DashboardItemState extends State<DashboardItem>
       isFocused: _isFocused,
       isSelected: isSelected,
       isActive: isActive,
-      context: context,
     );
 
     // Build the Interaction Shell
@@ -671,13 +671,12 @@ class _DashboardItemState extends State<DashboardItem>
     required bool isFocused,
     required bool isSelected,
     required bool isActive,
-    required BuildContext context,
   }) {
     if (isNestHovered) {
       return style.nestTargetDecoration ??
           BoxDecoration(
             border: Border.all(
-              color: style.nestTargetColor ?? style.activeColor ?? Colors.deepOrange,
+              color: style.nestTargetColor ?? style.activeColor ?? DefaultColors.active,
               width: 4,
             ),
             borderRadius: style.borderRadius,
@@ -700,8 +699,8 @@ class _DashboardItemState extends State<DashboardItem>
           BoxDecoration(
             border: Border.all(
               color: isActive
-                  ? (style.activeColor ?? Colors.deepOrange)
-                  : (style.focusColor ?? Theme.of(context).primaryColor),
+                  ? (style.activeColor ?? DefaultColors.active)
+                  : (style.focusColor ?? DefaultColors.focus),
               width: (isActive || isFocused) ? 4 : 3,
             ),
             borderRadius: style.borderRadius,

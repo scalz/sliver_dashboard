@@ -1,6 +1,6 @@
 // coverage:ignore-file
 
-import 'package:flutter/material.dart';
+import 'package:flutter/widgets.dart';
 import 'package:sliver_dashboard/src/view/dashboard_typedefs.dart';
 
 /// A class that holds both a [MouseCursor] and a [String] message,
@@ -58,6 +58,8 @@ class DashboardGuidance {
       SystemMouseCursors.precise,
       'Drag over empty space to select items',
     ),
+    this.bubbleColor,
+    this.bubbleTextColor,
 
     // Accessibility (Screen Readers)
     this.a11yGrab = _defaultA11yGrab,
@@ -132,6 +134,18 @@ class DashboardGuidance {
 
   /// Cursor and message used for the rubberband ("lasso") selection.
   final InteractionGuidance lassoSelect;
+
+  /// Background of the guidance bubble (hover, long-press and lasso label).
+  ///
+  /// When null, a dark grey on a light platform and a light grey on a dark
+  /// one ([MediaQueryData.platformBrightness]). The package reads no design
+  /// library, so pass your theme's color here to follow it, e.g.
+  /// `colorScheme.inverseSurface`.
+  final Color? bubbleColor;
+
+  /// Text color of the guidance bubble. When null, white on a light platform
+  /// and black on a dark one, matching the default [bubbleColor].
+  final Color? bubbleTextColor;
 
   // --- Accessibility Properties ---
 

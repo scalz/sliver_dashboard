@@ -2,9 +2,9 @@ import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/widgets.dart';
 import 'package:sliver_dashboard/src/controller/dashboard_controller_impl.dart'
     show DashboardControllerImpl, ScrollRequest;
 import 'package:sliver_dashboard/src/controller/dashboard_controller_interface.dart';
@@ -2431,6 +2431,8 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
       // The tooltip follows the guidance opt-in; the announcements above do
       // not (a11y is not opt-in).
       message: widget.controller.guidance?.lassoSelect.message,
+      bubbleColor: widget.controller.guidance?.bubbleColor,
+      bubbleTextColor: widget.controller.guidance?.bubbleTextColor,
     );
   }
 
@@ -3245,27 +3247,29 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
   /// grids. Honors [DashboardOverlay.itemFeedbackBuilder] like the in-grid
   /// drag feedback does.
   Widget _buildCrossGridProxy(LayoutItem item, Size itemPixelSize, int slotCount) {
-    final base = Material(
-      type: MaterialType.transparency,
-      child: DashboardControllerProvider(
-        controller: widget.controller,
-        child: DashboardItem(
-          item: item,
-          isEditing: false,
-          isFeedback: true,
-          itemBuilder: widget.itemBuilder,
-          itemLayoutBuilder: widget.itemLayoutBuilder,
-          itemBreakpointBuilder: widget.itemBreakpointBuilder,
-          breakpointResolver: widget.breakpointResolver,
-          itemWidth: itemPixelSize.width,
-          itemHeight: itemPixelSize.height,
-          slotCount: slotCount,
-        ),
+    final base = DashboardControllerProvider(
+      controller: widget.controller,
+      child: DashboardItem(
+        item: item,
+        isEditing: false,
+        isFeedback: true,
+        itemBuilder: widget.itemBuilder,
+        itemLayoutBuilder: widget.itemLayoutBuilder,
+        itemBreakpointBuilder: widget.itemBreakpointBuilder,
+        breakpointResolver: widget.breakpointResolver,
+        itemWidth: itemPixelSize.width,
+        itemHeight: itemPixelSize.height,
+        slotCount: slotCount,
       ),
     );
     final feedbackBuilder = widget.itemFeedbackBuilder;
-    if (feedbackBuilder == null) return base;
-    return feedbackBuilder(context, item, base);
+    final content = feedbackBuilder == null ? base : feedbackBuilder(context, item, base);
+    // Reason: the proxy is mounted in the ROOT overlay, outside this grid's
+    // subtree. Capturing the inherited themes (DefaultTextStyle, IconTheme and
+    // the app's design-library Theme, whichever library it comes from) makes
+    // the tile render as it does in the grid. A Material ancestor for ink
+    // widgets is the app's to provide, through `itemFeedbackBuilder`.
+    return InheritedTheme.captureAll(context, content);
   }
 
   SlotMetrics _getMetricsFromSliver(RenderSliverDashboard sliver) {

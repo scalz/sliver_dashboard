@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:sliver_dashboard/sliver_dashboard.dart';
 
 /// Interactive showcase demonstrating physical transformation math during multi-sliver
@@ -405,9 +405,11 @@ class _PolicyCard extends StatelessWidget {
                   color: theme.colorScheme.primary,
                 ),
                 const SizedBox(width: 8),
-                const Text(
-                  'Active Policy Logic',
-                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                const Expanded(
+                  child: Text(
+                    'Active Policy Logic',
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                  ),
                 ),
               ],
             ),

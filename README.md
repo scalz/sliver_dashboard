@@ -794,6 +794,11 @@ Dashboard(
 )
 ```
 
+The floating proxy that carries an item between nested grids is mounted in the root `Overlay`. It
+inherits the source grid's themes and text style, but not a `Material` ancestor: if your tiles use
+ink widgets (`InkWell`, `ListTile`, `TextField`) without their own `Card` / `Material`, wrap
+`child` in a `Material` here, as above.
+
 ### Haptic Feedback
 
 On mobile platforms, you may want to use haptic feedback for drag and resize start events.
@@ -1130,7 +1135,7 @@ final controller = DashboardController(
 
 ### Custom Section Headers
 
-By default, the package renders a clean text header using your active Theme's primary color . You can fully customize this using the sectionHeaderBuilder callback
+By default, the package renders a clean bold text header in the ambient text style. You can fully customize this using the sectionHeaderBuilder callback
 
 ```dart
 Dashboard(
@@ -1342,6 +1347,16 @@ Dashboard(
   ),
   itemBuilder: (context, item) { /* ... */ },
 )
+```
+
+The bubble is dark grey on a light platform and light grey on a dark one. To match your theme, set
+its colors (they apply to the hover, long-press and lasso bubbles):
+
+```dart
+guidance: DashboardGuidance(
+  bubbleColor: Theme.of(context).colorScheme.inverseSurface,
+  bubbleTextColor: Theme.of(context).colorScheme.onInverseSurface,
+),
 ```
 
 ### Mini Map

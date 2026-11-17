@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter/material.dart';
+import 'package:flutter/widgets.dart';
 import 'package:sliver_dashboard/src/controller/dashboard_controller_impl.dart';
 import 'package:sliver_dashboard/src/engine/layout_engine.dart' as engine;
 import 'package:sliver_dashboard/src/models/dashboard_policy.dart';
@@ -269,7 +269,6 @@ abstract class DashboardController {
   void toggleEditing();
 
   /// Sets the edit mode for the dashboard.
-  // ignore: avoid_positional_boolean_parameters
   void setEditMode(bool editing);
 
   /// Sets the number of columns for the grid and triggers a relayout.
@@ -282,7 +281,6 @@ abstract class DashboardController {
   void setMaxRows(int? value);
 
   /// Sets the collision behavior for the dashboard.
-  // ignore: avoid_positional_boolean_parameters
   void setPreventCollision(bool prevent);
 
   /// Sets the compaction behavior for the dashboard.
@@ -298,7 +296,6 @@ abstract class DashboardController {
   ///
   /// Turning it off mid-gesture drops any live preview, so the tile is never
   /// left hidden behind a ghost that will no longer be updated.
-  // ignore: avoid_positional_boolean_parameters
   void setFluidResize(bool value);
 
   /// Sets the default color of handles.

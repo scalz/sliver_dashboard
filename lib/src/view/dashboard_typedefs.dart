@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter/material.dart';
+import 'package:flutter/widgets.dart';
 import 'package:sliver_dashboard/src/controller/dashboard_controller_interface.dart';
 import 'package:sliver_dashboard/src/models/layout_item.dart';
 
@@ -80,9 +80,9 @@ typedef DashboardItemFeedbackBuilder = Widget Function(
 /// [isActive] is true if the item has been hovered long enough to trigger deletion on drop.
 typedef DashboardTrashBuilder = Widget Function(
   BuildContext context,
-// never mind
-// ignore: avoid_positional_boolean_parameters
   bool isHovered,
+  // Public typedef: naming these parameters would break every builder.
+  // ignore: avoid_positional_boolean_parameters
   bool isActive,
   String? activeItemId,
 );

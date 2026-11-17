@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/widgets.dart';
 import 'package:sliver_dashboard/src/controller/dashboard_controller_impl.dart';
 import 'package:sliver_dashboard/src/controller/dashboard_controller_interface.dart';
 import 'package:sliver_dashboard/src/engine/layout_engine.dart' show ResizeBehavior;
@@ -18,7 +18,7 @@ import 'package:sliver_dashboard/src/view/sliver_dashboard.dart';
 /// and manages the scrolling environment.
 ///
 /// If you need to integrate the dashboard into an existing [CustomScrollView] (e.g.,
-/// to use with [SliverAppBar]), use [DashboardOverlay] and [SliverDashboard] directly
+/// to use with `SliverAppBar`), use [DashboardOverlay] and [SliverDashboard] directly
 /// instead of this widget.
 class Dashboard<T extends Object> extends StatefulWidget {
   /// Creates a new Dashboard.

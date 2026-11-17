@@ -1,4 +1,5 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/widgets.dart';
+import 'package:sliver_dashboard/src/view/default_colors.dart';
 
 /// Defines what arms a rubberband ("lasso") selection on desktop and web.
 ///
@@ -36,7 +37,7 @@ class LassoStyle {
   const LassoStyle({
     this.mode = LassoSelectionMode.emptySpace,
     this.fillColor = const Color(0x332196F3),
-    this.borderColor = Colors.blue,
+    this.borderColor = DefaultColors.lassoBorder,
     this.borderWidth = 1.0,
   });
 
@@ -98,9 +99,9 @@ class LassoStyle {
 class GridStyle {
   /// Creates a [GridStyle].
   const GridStyle({
-    this.lineColor = Colors.black12,
+    this.lineColor = DefaultColors.gridLine,
     this.lineWidth = 1.0,
-    this.fillColor = Colors.black12,
+    this.fillColor = DefaultColors.gridLine,
     this.handleColor,
   });
 
@@ -114,7 +115,7 @@ class GridStyle {
   final Color fillColor;
 
   /// The color of the "L" shaped resize handles.
-  /// If null, defaults to `Theme.of(context).primaryColor`.
+  /// If null, defaults to the [DashboardItemStyle.defaultStyle] focus color (blue accent).
   final Color? handleColor;
 
   /// Creates a copy of this [GridStyle] with the given fields replaced.
@@ -170,7 +171,7 @@ class DashboardItemStyle {
   final Color? focusColor;
 
   /// A convenience color for the focus border when the item is being actively dragged.
-  /// If null, defaults to [Colors.deepOrange].
+  /// If null, defaults to the [defaultStyle] active color (deep orange).
   final Color? activeColor;
 
   /// Border radius for the focus highlight.
@@ -178,7 +179,7 @@ class DashboardItemStyle {
 
   /// Ring color used while this item is the hovered nest / drop target.
   /// Ignored if [nestTargetDecoration] is provided. Defaults to
-  /// [activeColor], then to [Colors.deepOrange].
+  /// [activeColor], then to the [defaultStyle] active color (deep orange).
   final Color? nestTargetColor;
 
   /// Full decoration used while this item is the hovered nest / drop
@@ -195,8 +196,8 @@ class DashboardItemStyle {
 
   /// Default style
   static const DashboardItemStyle defaultStyle = DashboardItemStyle(
-    focusColor: Colors.blueAccent,
-    activeColor: Colors.deepOrange,
+    focusColor: DefaultColors.focus,
+    activeColor: DefaultColors.active,
     borderRadius: BorderRadius.all(Radius.circular(8)),
   );
 

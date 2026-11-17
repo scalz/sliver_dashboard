@@ -1,30 +1,37 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
-
-import 'package:flutter/material.dart';
-import 'package:flutter_test/flutter_test.dart';
-
 import 'package:example/main.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:material_ui/material_ui.dart';
+import 'package:sliver_dashboard/sliver_dashboard.dart';
 
+/// Startup smoke test: the launcher renders and every demo page mounts at
+/// least one dashboard without throwing.
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
+  final anyDashboard = find.byWidgetPredicate((w) => w is DashboardOverlay);
+
+  Future<void> openDemo(WidgetTester tester, String title) async {
+    await tester.tap(find.text(title));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(anyDashboard, findsWidgets, reason: '"$title" mounted no dashboard');
+
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    expect(find.text('Sliver Dashboard — Examples'), findsOneWidget);
+  }
+
+  testWidgets('launcher lists the demos and each one starts', (tester) async {
+    tester.view.physicalSize = const Size(1600, 1200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
     await tester.pumpWidget(const MyApp());
+    await tester.pumpAndSettle();
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
+    expect(find.text('Sliver Dashboard — Examples'), findsOneWidget);
+    expect(find.byType(ListTile), findsNWidgets(3));
 
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
-
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+    await openDemo(tester, 'Playground');
+    await openDemo(tester, 'Nested grids');
+    await openDemo(tester, 'Multi-Sliver Drag & Drop');
   });
 }
