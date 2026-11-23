@@ -12,6 +12,7 @@ import 'package:sliver_dashboard/src/models/layout_item.dart';
 import 'package:sliver_dashboard/src/models/utility.dart';
 import 'package:sliver_dashboard/src/view/a11y/dashboard_shortcuts.dart';
 import 'package:sliver_dashboard/src/view/dashboard_configuration.dart';
+import 'package:sliver_dashboard/src/view/dashboard_typedefs.dart';
 import 'package:sliver_dashboard/src/view/guidance/dashboard_guidance.dart';
 import 'package:sliver_dashboard/src/view/resize_handle.dart';
 import 'package:state_beacon/state_beacon.dart';
@@ -100,6 +101,11 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
 
   @override
   DashboardGuidance? guidance;
+
+  /// Per-item resize-zone resolver, mirrored from `Dashboard` for the
+  /// guidance hover and the drawn handles (the overlay reads its own widget
+  /// parameter). It is read on demand and nothing rebuilds on it.
+  ResizeZoneResolver? resizeZoneResolver;
 
   @override
   DashboardShortcuts? shortcuts;

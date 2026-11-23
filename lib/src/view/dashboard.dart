@@ -9,6 +9,7 @@ import 'package:sliver_dashboard/src/view/dashboard_typedefs.dart';
 import 'package:sliver_dashboard/src/view/guidance/dashboard_guidance.dart';
 import 'package:sliver_dashboard/src/view/nested/dashboard_nested_scope.dart'
     show DashboardItemDroppedOnHostCallback;
+import 'package:sliver_dashboard/src/view/resize_handle.dart' show kMinResizeHandleSide;
 import 'package:sliver_dashboard/src/view/sliver_dashboard.dart';
 
 /// The main dashboard widget.
@@ -38,6 +39,7 @@ class Dashboard<T extends Object> extends StatefulWidget {
     this.padding,
     this.breakpoints,
     this.resizeHandleSide = 20.0,
+    this.resizeZoneResolver,
     this.placeholderWidth = 1,
     this.placeholderHeight = 1,
     this.externalTemplateBuilder,
@@ -144,7 +146,18 @@ class Dashboard<T extends Object> extends StatefulWidget {
   final Map<double, int>? breakpoints;
 
   /// The size of the touch target on the corners and edges for resizing.
+  ///
+  /// Clamped per item to a third of its width / height (never below
+  /// [kMinResizeHandleSide]), so a small item keeps a free centre for
+  /// dragging. See [resizeZoneResolver] for per-item control.
   final double resizeHandleSide;
+
+  /// Chooses, per item and per painted size, the active resize handles and
+  /// their zone width.
+  ///
+  /// `null` (the default), or a `null` return, uses all eight handles and
+  /// [resizeHandleSide] for every item.
+  final ResizeZoneResolver? resizeZoneResolver;
 
   /// The width of the placeholder item in grid units when dragging from outside.
   final int placeholderWidth;
@@ -315,6 +328,7 @@ class _DashboardState<T extends Object> extends State<Dashboard<T>> {
     (widget.controller as DashboardControllerImpl).setScrollDirection(widget.scrollDirection);
     widget.controller.setHandleColor(widget.gridStyle.handleColor);
     widget.controller.setResizeHandleSide(widget.resizeHandleSide);
+    (widget.controller as DashboardControllerImpl).resizeZoneResolver = widget.resizeZoneResolver;
     widget.controller.guidance = widget.guidance;
   }
 
@@ -354,6 +368,7 @@ class _DashboardState<T extends Object> extends State<Dashboard<T>> {
     if (widget.resizeHandleSide != oldWidget.resizeHandleSide) {
       widget.controller.setResizeHandleSide(widget.resizeHandleSide);
     }
+    (widget.controller as DashboardControllerImpl).resizeZoneResolver = widget.resizeZoneResolver;
   }
 
   @override
@@ -385,6 +400,7 @@ class _DashboardState<T extends Object> extends State<Dashboard<T>> {
       externalTemplateBuilder: widget.externalTemplateBuilder,
       onDrop: widget.onDrop,
       resizeHandleSide: widget.resizeHandleSide,
+      resizeZoneResolver: widget.resizeZoneResolver,
       resizeSettleDuration: widget.resizeSettleDuration,
       placeholderWidth: widget.placeholderWidth,
       placeholderHeight: widget.placeholderHeight,

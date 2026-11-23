@@ -155,6 +155,7 @@ class DashboardOverlay<T extends Object> extends StatefulWidget {
     this.onItemsDeleted,
     this.trashHoverDelay = const Duration(milliseconds: 800),
     this.resizeHandleSide = 20.0,
+    this.resizeZoneResolver,
     this.resizeSettleDuration = const Duration(milliseconds: 120),
     this.placeholderWidth = 1,
     this.placeholderHeight = 1,
@@ -308,7 +309,12 @@ class DashboardOverlay<T extends Object> extends StatefulWidget {
   final Duration trashHoverDelay;
 
   /// The size of the touch target for resizing handles.
+  ///
+  /// See `Dashboard.resizeHandleSide` for the per-item clamp.
   final double resizeHandleSide;
+
+  /// See `Dashboard.resizeZoneResolver`.
+  final ResizeZoneResolver? resizeZoneResolver;
 
   /// How long a fluid-resize ghost takes to settle into its snapped slot
   /// after the pointer is released.
@@ -1519,11 +1525,14 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
       // resize instead of duplicating the tile and resizing the duplicate.
       final itemLocalPosition = itemRenderBox.globalToLocal(position);
 
+      final itemSize = itemRenderBox.size;
+      final zones = widget.resizeZoneResolver?.call(foundItem, itemSize);
       final handle = calculateResizeHandle(
         localPosition: itemLocalPosition,
-        size: itemRenderBox.size,
-        handleSide: widget.resizeHandleSide,
+        size: itemSize,
+        handleSide: zones?.side ?? widget.resizeHandleSide,
         isResizable: foundItem.isResizable ?? true,
+        enabledHandles: zones?.handles,
       );
 
       // ALT + DRAG CLONING (arming only)

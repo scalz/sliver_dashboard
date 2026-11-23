@@ -2,6 +2,7 @@ import 'package:flutter/widgets.dart';
 import 'package:sliver_dashboard/src/controller/dashboard_controller_provider.dart';
 import 'package:sliver_dashboard/src/view/default_colors.dart';
 import 'package:sliver_dashboard/src/view/guidance/dashboard_guidance.dart';
+import 'package:sliver_dashboard/src/view/resize_hit_zone.dart';
 
 /// An enum representing the different types of resize handles.
 ///
@@ -210,21 +211,113 @@ class _HandlePainter extends CustomPainter {
   }
 }
 
-/// Utility to calculate which handle is at the given local position.
+/// Floor of the clamped resize zone, in logical pixels, used by
+/// [calculateResizeHandle] so that very small items stay resizable.
+const double kMinResizeHandleSide = 8;
+
+/// Which resize handles an item exposes, and how wide their press zone is.
+///
+/// Returned per item by a `ResizeZoneResolver`.
+@immutable
+class ResizeZones {
+  /// Creates a resize-zone configuration. The defaults are the grid's own
+  /// behaviour: all eight handles, `resizeHandleSide` wide.
+  const ResizeZones({this.handles = allHandles, this.side});
+
+  /// All eight handles, the default of [handles].
+  static const Set<ResizeHandle> allHandles = {
+    ResizeHandle.topLeft,
+    ResizeHandle.top,
+    ResizeHandle.topRight,
+    ResizeHandle.left,
+    ResizeHandle.right,
+    ResizeHandle.bottomLeft,
+    ResizeHandle.bottom,
+    ResizeHandle.bottomRight,
+  };
+
+  /// The active handles: only these react to a press and are drawn. An empty
+  /// set disables resizing. Compared by content; do not mutate it in place.
+  final Set<ResizeHandle> handles;
+
+  /// The zone width before the per-axis reduction; `null` uses the grid's
+  /// `resizeHandleSide`.
+  final double? side;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ResizeZones &&
+          side == other.side &&
+          handles.length == other.handles.length &&
+          handles.containsAll(other.handles);
+
+  @override
+  int get hashCode {
+    var mask = 0;
+    for (final handle in handles) {
+      mask |= 1 << handle.index;
+    }
+    return Object.hash(side, mask);
+  }
+}
+
+/// Returns the resize handle under [localPosition] (in the item's local
+/// coordinates), or `null` when a press there should start a drag.
+///
+/// Each edge reserves [handleSide] pixels, reduced **per axis** to fit the
+/// item:
+/// - both opposite sides carry an active handle: at most a third of the
+///   extent, never below [minHandleSide] nor above [handleSide]. An axis at
+///   least `3 × handleSide` long keeps the full zone; below
+///   `2 × minHandleSide` the whole axis is a resize zone;
+/// - one side only: at most half the extent, so the other half drags;
+/// - no side: no zone on that axis.
+///
+/// [enabledHandles] limits the active handles (`null` = all of them, see
+/// [ResizeZones]). A press in the zone of a disabled handle starts a drag; it
+/// never falls back to a neighbouring handle.
 ResizeHandle? calculateResizeHandle({
   required Offset localPosition,
   required Size size,
   required double handleSide,
   required bool isResizable,
+  Set<ResizeHandle>? enabledHandles,
+  double minHandleSide = kMinResizeHandleSide,
 }) {
   if (!isResizable) return null;
+  if (enabledHandles != null && enabledHandles.isEmpty) return null;
 
+  final zones = ResizeZoneGeometry.resolve(
+    size: size,
+    handleSide: handleSide,
+    handles: enabledHandles,
+    minHandleSide: minHandleSide,
+  );
+  final top = zones.top;
+  final bottom = zones.bottom;
+  final left = zones.left;
+  final right = zones.right;
+
+  final handle = _classify(
+    isTop: top != null && localPosition.dy <= top,
+    isBottom: bottom != null && localPosition.dy >= size.height - bottom,
+    isLeft: left != null && localPosition.dx <= left,
+    isRight: right != null && localPosition.dx >= size.width - right,
+  );
+  if (handle == null || enabledHandles == null || enabledHandles.contains(handle)) {
+    return handle;
+  }
+  return null;
+}
+
+ResizeHandle? _classify({
+  required bool isTop,
+  required bool isBottom,
+  required bool isLeft,
+  required bool isRight,
+}) {
   // Corners
-  final isTop = localPosition.dy <= handleSide;
-  final isBottom = localPosition.dy >= size.height - handleSide;
-  final isLeft = localPosition.dx <= handleSide;
-  final isRight = localPosition.dx >= size.width - handleSide;
-
   if (isTop && isLeft) return ResizeHandle.topLeft;
   if (isTop && isRight) return ResizeHandle.topRight;
   if (isBottom && isLeft) return ResizeHandle.bottomLeft;

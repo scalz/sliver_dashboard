@@ -467,6 +467,45 @@ These anchors are expressed once and applied to both the snapped and the fluid
 candidate (see *Fluid Resize* above), so turning `fluidResize` on cannot change
 where a resize lands — only how it is painted on the way there.
 
+### Resize Hit Zones
+`calculateResizeHandle` is the single gesture-kind classifier, shared by
+`DashboardOverlay._onPointerDown` and the guidance hover. The edge zone is
+`resizeHandleSide` (or `resizeZoneResolver(item, size)?.side`), reduced per axis
+by `ResizeZoneGeometry` (unexported, `resize_hit_zone.dart`). On an axis whose
+two opposite sides carry an active handle it is
+`min(side, max(extent / 3, kMinResizeHandleSide))`:
+- An axis at least `3 × side` long is untouched, i.e. byte-identical to the
+  pre-clamp classifier (pinned by a brute-force comparison test). Below that, a
+  free centre is guaranteed down to `2 × kMinResizeHandleSide`; under it, the
+  whole tile is a resize zone (resizability wins).
+- The floor is capped by `side`: a deliberately thin zone is never widened.
+- One active side: `min(side, extent / 2)`, no floor (it could take the whole
+  axis on a tiny tile). No active side: no zone at all, so the perpendicular
+  edges run the full length.
+- `ResizeZones.handles` filters the classified handle. A press where a
+  disabled handle would be yields a drag, never a neighbouring handle. With
+  all eight handles the result is identical to no set at all (brute-force
+  test), and `ResizeZones` lives only in the resolver.
+- The drawn handles (`DashboardItemWrapper`) read the same
+  `ResizeZoneGeometry`. Only active handles are drawn: corners at
+  `min(20, zoneX, zoneY)`, edges centred on the part of their edge outside the
+  corner zones and capped by its length (dropped when nothing is left). The
+  20 px cap is the historical size: a handle may shrink to its zone, never
+  grow, so the cursor never covers a point that classifies as a drag. They sit
+  in a `LayoutBuilder` layer after `child`, so a tile-size change never
+  re-parents the content.
+- **One reference size (INVARIANT): the OUTER tile.** The overlay's press
+  measures the sliver child (`itemRenderBox`), so `DashboardItemWrapper` sits
+  in `DashboardItemWidget` ABOVE the `DecoratedBox` + `Padding` chrome: its
+  `LayoutBuilder`, the resolver call and the guidance hover all see that same
+  box. Below the chrome, a 3-4 px focus border made them read a box 6-8 px
+  smaller on selection, so a resolver threshold could flip between the drawn
+  handles and the press. Pinned by a test on a selected 77.5 px tile with a
+  72 px resolver threshold.
+Cost: two `min`/`max` per pointer-down (and per hover when guidance is on), one
+`LayoutBuilder` per tile in edit mode; the resolver is never called per pointer
+event of a drag.
+
 #### Data Flow during a Drag Operation
 
 ```mermaid

@@ -62,6 +62,7 @@ class NestedDashboard<T extends Object> extends StatefulWidget {
     this.crossAxisSpacing = 8.0,
     this.padding,
     this.resizeHandleSide = 20.0,
+    this.resizeZoneResolver,
     this.gridStyle = const GridStyle(),
     this.itemStyle = DashboardItemStyle.defaultStyle,
     this.resizeBehavior = ResizeBehavior.push,
@@ -163,6 +164,9 @@ class NestedDashboard<T extends Object> extends StatefulWidget {
 
   /// See [Dashboard.resizeHandleSide].
   final double resizeHandleSide;
+
+  /// See [Dashboard.resizeZoneResolver].
+  final ResizeZoneResolver? resizeZoneResolver;
 
   /// See [Dashboard.gridStyle].
   final GridStyle gridStyle;
@@ -459,6 +463,7 @@ class _NestedDashboardState<T extends Object> extends State<NestedDashboard<T>> 
           crossAxisSpacing: widget.crossAxisSpacing,
           padding: widget.padding,
           resizeHandleSide: widget.resizeHandleSide,
+          resizeZoneResolver: widget.resizeZoneResolver,
           gridStyle: widget.gridStyle,
           itemStyle: widget.itemStyle,
           resizeBehavior: widget.resizeBehavior,

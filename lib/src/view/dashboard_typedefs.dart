@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/widgets.dart';
 import 'package:sliver_dashboard/src/controller/dashboard_controller_interface.dart';
 import 'package:sliver_dashboard/src/models/layout_item.dart';
+import 'package:sliver_dashboard/src/view/resize_handle.dart' show ResizeZones;
 
 /// A static builder function for dashboard items (optimized; skips rebuilds on resize).
 typedef DashboardItemBuilder = Widget Function(BuildContext context, LayoutItem item);
@@ -110,6 +111,20 @@ typedef DashboardSectionHeaderBuilder = Widget Function(BuildContext context, La
 /// Returning `null` falls back to DashboardOverlay.placeholderWidth and
 /// DashboardOverlay.placeholderHeight.
 typedef DashboardExternalTemplateBuilder<T> = LayoutItem? Function(T data);
+
+/// Resolves which resize handles [item], painted at [size], exposes and how
+/// wide their press zone is.
+///
+/// `null` means the grid default: all eight handles, `resizeHandleSide` wide.
+/// Typical use: only `ResizeHandle.bottomRight` on small tiles, so most of
+/// their surface stays draggable. The zone is still reduced per axis by
+/// `calculateResizeHandle`, and only the active handles are drawn.
+///
+/// Called on pointer-down, on hover when guidance is enabled, and when a
+/// tile's handles are laid out in edit mode, never per pointer event of a
+/// drag: keep it cheap and pure. Like every builder, a new resolver applies to
+/// the drawn handles on their next build.
+typedef ResizeZoneResolver = ResizeZones? Function(LayoutItem item, Size size);
 
 /// Builder for accessibility messages related to an item ID.
 typedef A11yItemMessageBuilder = String Function(String itemId);

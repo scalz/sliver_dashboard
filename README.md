@@ -107,6 +107,7 @@ The package is WebAssembly (WASM) compatible. Building your production applicati
   - [Minimap Markers & Multiple Viewports](#minimap-markers--multiple-viewports)
   - [Reflow Animations](#reflow-animations)
   - [Fluid Resize](#fluid-resize)
+  - [Resize Hit Zones](#resize-hit-zones)
   - [Custom Compaction Strategy](#custom-compaction-strategy)
   - [Interaction & Collision Policies (Custom Rules)](#interaction--collision-policies-custom-rules)
   - [Utilities](#utilities)
@@ -1880,6 +1881,43 @@ event instead of one per cell crossing. With `itemBuilder` or
 every pixel of the tile's live dimensions, it means a content rebuild at pointer
 frequency. On low-end web clients that is a cost worth opting into rather than
 inheriting.
+
+### Resize Hit Zones
+
+`resizeHandleSide` (default `20`) is the width of the press zone along each edge
+of a tile. On a small tile that zone is clamped **per axis** to a third of the
+tile's width / height, never below `kMinResizeHandleSide` (8 px) and never above
+`resizeHandleSide`, so the tile always keeps a free centre for dragging. Axes at
+least `3 × resizeHandleSide` long keep the full zone.
+
+A drawn handle is never larger than its press zone, so the resize cursor never
+shows where a press would start a drag.
+
+To choose the handles and the zone width per tile, pass a `resizeZoneResolver`
+(also available on `NestedDashboard` and `DashboardOverlay`). Returning `null`
+keeps the default: all eight handles, `resizeHandleSide` wide.
+
+```dart
+Dashboard(
+  resizeHandleSide: 36, // wide zones for fingers on large tiles...
+  resizeZoneResolver: (item, size) => size.shortestSide < 120
+      // ...only the bottom-right corner on small ones: the rest drags.
+      ? const ResizeZones(handles: {ResizeHandle.bottomRight})
+      : null,
+  // ...
+)
+```
+
+`ResizeZones(handles: ..., side: ...)`: `handles` defaults to all eight (an
+empty set disables resizing), `side` to `resizeHandleSide`. Only the active
+handles react and are drawn; a press where a disabled handle would be starts a
+drag. The reduction is per axis:
+
+| Active sides on the axis | Zone width |
+|---|---|
+| both (e.g. `left` and `right`, or two opposite corners) | a third of the extent, as above |
+| one (e.g. only `bottomRight`) | at most half the extent, so the other half drags |
+| none | no zone on that axis |
 
 ### Custom Compaction Strategy
 

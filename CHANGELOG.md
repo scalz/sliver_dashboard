@@ -1,3 +1,35 @@
+## 2.10.0
+
+### Fixed
+
+- **Small tiles could not be dragged.** Every edge reserved `resizeHandleSide` pixels for resizing,
+whatever the tile size. On a tile smaller than `2 × resizeHandleSide` (40 px by default) every press
+started a resize, and tiles up to `3 ×` only had a narrow draggable centre. The resize zone is now
+clamped per axis to a third of the tile's width / height (never below 8 px, never above
+`resizeHandleSide`).
+- **The resize cursor could show where a press drags.** Handles were always drawn at 20 px, even
+where their press zone was smaller. A handle is now drawn at most as large as its zone.
+- **Selected tiles: handles and the guidance hover now use the tile's outer edges, like the press.**
+They used to be measured inside the 3-4 px focus border, so a selected tile's handles moved inward
+and its hover zones were offset from what a press does.
+
+### Default behaviour change
+
+Both fixes change the default behaviour, on small tiles only. Tiles smaller than
+`3 × resizeHandleSide` on an axis get a thinner resize zone and a wider draggable centre. Handles are
+drawn smaller on those tiles, and whenever `resizeHandleSide` is below 20. Larger tiles are
+unchanged.
+
+### Added
+
+- `Dashboard.resizeZoneResolver` (also on `NestedDashboard` and `DashboardOverlay`) and
+`ResizeZones`: choose per item and per size which resize handles exist and how wide their zone is,
+e.g. only `ResizeHandle.bottomRight` on small tiles. Only the active handles react and are drawn;
+returning `null` keeps the default.
+- `calculateResizeHandle`, the public helper the grid uses to tell a resize from a drag, applies
+the same zone reduction and accepts optional `enabledHandles` and `minHandleSide`.
+`kMinResizeHandleSide` (8 px) is the floor of that reduction.
+
 ## 2.9.0
 
 ### Flutter 3.50 compatibility

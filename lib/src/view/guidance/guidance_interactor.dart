@@ -3,6 +3,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/widgets.dart';
 import 'package:sliver_dashboard/src/controller/dashboard_controller_interface.dart';
 import 'package:sliver_dashboard/src/controller/dashboard_controller_provider.dart';
+import 'package:sliver_dashboard/src/controller/utility.dart';
 import 'package:sliver_dashboard/src/models/layout_item.dart';
 import 'package:sliver_dashboard/src/view/guidance/dashboard_guidance.dart';
 import 'package:sliver_dashboard/src/view/guidance/guidance_bubble.dart';
@@ -165,11 +166,14 @@ class _GuidanceInteractorState extends State<GuidanceInteractor> {
 
     final localPosition = renderBox.globalToLocal(event.position);
 
+    final size = renderBox.size;
+    final zones = _dashboardController.internal.resizeZoneResolver?.call(widget.item, size);
     final handle = calculateResizeHandle(
       localPosition: localPosition,
-      size: renderBox.size,
-      handleSide: _dashboardController.resizeHandleSide.peek(),
+      size: size,
+      handleSide: zones?.side ?? _dashboardController.resizeHandleSide.peek(),
       isResizable: widget.item.isResizable ?? true,
+      enabledHandles: zones?.handles,
     );
 
     final InteractionGuidance guidance;

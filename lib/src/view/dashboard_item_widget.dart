@@ -643,15 +643,20 @@ class _DashboardItemState extends State<DashboardItem>
                 // lays out identically, so the shape is fixed at the cost of
                 // two no-op render objects. Keep any new chrome layer here
                 // unconditional too.
-                child: DecoratedBox(
-                  decoration: decoration ?? const BoxDecoration(),
-                  child: Padding(
-                    // What Container derives from `decoration.padding`: a
-                    // border insets the content by its own width.
-                    padding: decoration?.padding ?? EdgeInsets.zero,
-                    child: DashboardItemWrapper(
-                      item: widget.item,
-                      child: _cachedWidget!, // Use the cached heavy content
+                //
+                // The wrapper sits ABOVE the decoration so its handles,
+                // its resolver call and the guidance hover measure the OUTER
+                // tile, the box the overlay's press hit-tests. Below it, a
+                // focus border shrank that box by 6-8 px on selection.
+                child: DashboardItemWrapper(
+                  item: widget.item,
+                  child: DecoratedBox(
+                    decoration: decoration ?? const BoxDecoration(),
+                    child: Padding(
+                      // What Container derives from `decoration.padding`: a
+                      // border insets the content by its own width.
+                      padding: decoration?.padding ?? EdgeInsets.zero,
+                      child: _cachedWidget, // Use the cached heavy content
                     ),
                   ),
                 ),
