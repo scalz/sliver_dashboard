@@ -9,6 +9,8 @@ keyboard (`onWillDelete` veto, one undo step, `onItemsDeleted`, announcement), f
 resize, selection change or lasso.
 - **`emptyBuilder`** on `Dashboard`, `NestedDashboard` and `DashboardOverlay`: shown over an empty grid
 outside edit mode.
+- **`resizeHandleBuilder`** on `Dashboard`, `NestedDashboard` and `DashboardOverlay`: custom resize handle
+visuals, drawn inside the handle's press zone; the cursor and the zones are unchanged.
 
 - **Fixed boards.** Opt-in pieces for a grid with a fixed screen (wall panels, kiosks); with the
 defaults nothing changes.

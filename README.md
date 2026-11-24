@@ -51,7 +51,7 @@ fuzz-tested invariants: a drag step on 1,000 tiles takes under 1 ms on the web
   - **Horizontal:** Items are compacted to left.
   - **Custom:** Implement `CompactorDelegate` to define custom rules (e.g., specific gravity, fixed zones).
 - **Built-in Trash:** Easy-to-implement drag-to-delete functionality. Or implement your own using available callbacks.
-- **Tile Actions & Buttons in Tiles:** an edit-mode overlay per tile (`editOverlayBuilder`) with delete / duplicate wired to the grid's own pipeline, and `DashboardGestureExclusion` so a button inside a tile gets its tap without starting a drag. Plus an `emptyBuilder` for empty grids.
+- **Tile Actions & Buttons in Tiles:** custom resize handle visuals (`resizeHandleBuilder`), an edit-mode overlay per tile (`editOverlayBuilder`) with delete / duplicate wired to the grid's own pipeline, and `DashboardGestureExclusion` so a button inside a tile gets its tap without starting a drag. Plus an `emptyBuilder` for empty grids.
 - **Custom Feedback:** Customize the appearance of items while they are being dragged. Use onInteractionStart callback for haptic feedback...
 - **Reflow Animations:** pushed/compacted tiles slide to their new slot.
 - **Fluid Resize:** opt-in pixel-tracking resize. Tiles resize fluidly in raw pixels and smoothly animate into their snapped slot on release.
@@ -670,6 +670,21 @@ itemBuilder: (context, item) => Column(
     ),
   ],
 ),
+```
+
+**Custom resize handles.** `resizeHandleBuilder` draws each active handle in place of the default
+corners and bars (round grips, icons…). It only changes the look: the box it paints in is never larger
+than the handle's press zone, so the resize cursor still matches where a press resizes, and which handles
+exist stays with `resizeZoneResolver`.
+
+```dart
+Dashboard(
+  controller: controller,
+  resizeHandleBuilder: (context, item, handle, size) => DecoratedBox(
+    decoration: BoxDecoration(color: Colors.blue, shape: BoxShape.circle),
+  ),
+  itemBuilder: (context, item) => MyCard(item),
+)
 ```
 
 **Empty grid.** `emptyBuilder` is shown over the grid while it has no tile and is not being edited; in
