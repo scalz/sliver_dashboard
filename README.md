@@ -39,7 +39,7 @@ fuzz-tested invariants: a drag step on 1,000 tiles takes under 1 ms on the web
 - **Fully Customizable:** Control the number of columns, aspect ratio, spacing, grid and handles style. Items can be draggable, resizable, and static. Support for dedicated **Drag Handles** (`DashboardDragStartListener`) and configurable mobile drag start gestures (long-press, tap, or handle-only).
 - **Declarative Interaction Policies (`DashboardPolicy`):** Inject granular business rules (e.g., "charts cannot push system KPIs", "block dragging on Row 0") on-the-fly without having to write custom compaction delegates.
 - **Segmented Grids (Section Barriers):** Divide your grid into organized visual sections using static section barriers with custom header builders while maintaining strict collision boundaries.
-- **Fixed Boards:** a hard row ceiling (`maxRows` + `strictMaxRows`), a whitelist of tile sizes (`DashboardPolicy.isSizeAllowed`), and `canPlace` / `tryAddItem` to ask before acting — for wall panels and kiosks with a fixed screen.
+- **Fixed Boards:** a hard row ceiling, a whitelist of tile sizes, and `canPlace` / `tryAddItem` — for wall panels and kiosks.
 - **Horizontal & Vertical Layouts:** Supports both vertical (default) and horizontal scrolling directions.
 - **Smart Collision Detection:** Choose your desired behavior:
   - **Push:** Items push each other out of the way to avoid overlap.
@@ -51,12 +51,12 @@ fuzz-tested invariants: a drag step on 1,000 tiles takes under 1 ms on the web
   - **Horizontal:** Items are compacted to left.
   - **Custom:** Implement `CompactorDelegate` to define custom rules (e.g., specific gravity, fixed zones).
 - **Built-in Trash:** Easy-to-implement drag-to-delete functionality. Or implement your own using available callbacks.
-- **Tile Actions & Buttons in Tiles:** custom resize handle visuals (`resizeHandleBuilder`), an edit-mode overlay per tile (`editOverlayBuilder`) with delete / duplicate wired to the grid's own pipeline, and `DashboardGestureExclusion` so a button inside a tile gets its tap without starting a drag. Plus an `emptyBuilder` for empty grids.
+- **Tile Actions:** per-tile edit buttons (delete, duplicate), custom resize handles, buttons inside tiles that never start a drag, and an empty-grid placeholder.
 - **Custom Feedback:** Customize the appearance of items while they are being dragged. Use onInteractionStart callback for haptic feedback...
 - **Reflow Animations:** pushed/compacted tiles slide to their new slot.
 - **Fluid Resize:** opt-in pixel-tracking resize. Tiles resize fluidly in raw pixels and smoothly animate into their snapped slot on release.
 - **Drag From Outside:** Drop new items from external sources directly into the grid with auto-scrolling support.
-- **Edge Auto-Scroll:** a dragged tile, external payload or cross-grid item near an edge scrolls the grid, frame by frame at any refresh rate, with a configurable zone and speed (`controller.autoScroll`). Works under a `NestedScrollView`, collapsing its header first.
+- **Edge Auto-Scroll:** smooth at any refresh rate, with a configurable zone and speed; works under a `NestedScrollView`.
 - **Guidance:** Optional contextual tooltips/guidance messages.
 - **Responsive Layouts:** Automatically adapt the number of columns (`slotCount`) based on the screen width using the built-in `breakpoints` property.
 - **Accessibility:** Full keyboard navigation support (Tab, Arrows, Space, Enter, customizable keys) and Screen Reader announcements (TalkBack/VoiceOver).
@@ -685,6 +685,23 @@ Dashboard(
   ),
   itemBuilder: (context, item) => MyCard(item),
 )
+```
+
+The builder is called once per handle with its `ResizeHandle`, so each corner and edge can have its own
+look:
+
+```dart
+resizeHandleBuilder: (context, item, handle, size) => switch (handle) {
+  // A grip icon on the corner users reach for first.
+  ResizeHandle.bottomRight => Icon(Icons.open_in_full, size: size),
+  // Dots on the other corners.
+  ResizeHandle.topLeft || ResizeHandle.topRight || ResizeHandle.bottomLeft =>
+    const DecoratedBox(
+      decoration: BoxDecoration(color: Colors.blue, shape: BoxShape.circle),
+    ),
+  // Thin bars on the edges.
+  _ => const ColoredBox(color: Colors.blueGrey),
+},
 ```
 
 **Empty grid.** `emptyBuilder` is shown over the grid while it has no tile and is not being edited; in

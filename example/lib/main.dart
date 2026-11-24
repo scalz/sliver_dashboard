@@ -223,7 +223,7 @@ class _DashboardPageState extends State<DashboardPage> {
   );
   final dragMode = ValueNotifier<DragMode>(DragMode.cascade);
 
-  // --- New in 2.11 (see the "New in 2.11" section of the config panel) ---
+  // --- Tile chrome, drag interaction tuning and fixed-board rules ---
   final useEditOverlay = ValueNotifier(false);
   final excludeCardButtons = ValueNotifier(true);
   final customHandles = ValueNotifier(false);
@@ -696,7 +696,9 @@ class _DashboardPageState extends State<DashboardPage> {
       onImportJson: _importJson,
       onStressTest: _addStressTestItems,
       onShowHud: _showShortcutsHudModal,
-      newFeaturesSection: _buildNewFeaturesSection(theme),
+      tileChromeOptions: _buildTileChromeOptions(),
+      interactionOptions: _buildInteractionOptions(theme),
+      fixedBoardOptions: _buildFixedBoardOptions(),
     );
 
     return Scaffold(
@@ -874,7 +876,7 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   // ---------------------------------------------------------------------------
-  // New in 2.11
+  // Tile chrome, interaction and fixed-board options
   // ---------------------------------------------------------------------------
 
   /// Per-tile edit overlay: delete and duplicate through the grid's own
@@ -968,22 +970,23 @@ class _DashboardPageState extends State<DashboardPage> {
     );
   }
 
-  Widget _buildNewFeaturesSection(ThemeData theme) {
-    Widget label(String text) => Padding(
-      padding: const EdgeInsets.only(top: 8, bottom: 2),
-      child: Text(
-        text,
-        style: TextStyle(
-          fontSize: 12,
-          fontWeight: FontWeight.bold,
-          color: theme.colorScheme.primary,
-        ),
+  Widget _optionLabel(ThemeData theme, String text) => Padding(
+    padding: const EdgeInsets.only(top: 8, bottom: 2),
+    child: Text(
+      text,
+      style: TextStyle(
+        fontSize: 12,
+        fontWeight: FontWeight.bold,
+        color: theme.colorScheme.primary,
       ),
-    );
+    ),
+  );
+
+  /// Tile chrome: buttons, handles, empty grid ("Visual Modes & Structures").
+  Widget _buildTileChromeOptions() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const _SectionTitle('New in 2.11'),
         _SwitchTile(
           title:
               'Tile buttons via editOverlayBuilder (instead of the card\'s own ×)',
@@ -1004,30 +1007,16 @@ class _DashboardPageState extends State<DashboardPage> {
               'Placeholder on an empty grid (emptyBuilder, outside edit mode)',
           notifier: showEmptyPlaceholder,
         ),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: TextButton.icon(
-            icon: const Icon(Icons.delete_sweep, size: 16),
-            label: const Text(
-              'Remove all tiles',
-              style: TextStyle(fontSize: 12),
-            ),
-            onPressed: () => controller.removeItems([
-              for (final i in controller.layout.value) i.id,
-            ]),
-          ),
-        ),
-        _SwitchTile(
-          title: 'Allowed sizes only: 1x1, 2x1, 2x2, 4x2 (isSizeAllowed)',
-          notifier: restrictSizes,
-        ),
-        _SwitchTile(
-          title:
-              'Strict row ceiling: pushes never cross Max Rows (strictMaxRows)',
-          notifier: strictMaxRows,
-          onChanged: controller.setStrictMaxRows,
-        ),
-        label('Edge auto-scroll (controller.autoScroll)'),
+      ],
+    );
+  }
+
+  /// Drag interaction tuning: auto-scroll and touch pick-up delay.
+  Widget _buildInteractionOptions(ThemeData theme) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _optionLabel(theme, 'Edge auto-scroll (controller.autoScroll)'),
         Text(
           'With vertical / horizontal compaction it stops at the end of the '
           'content (a tile cannot be dropped past it). Use compaction NONE to '
@@ -1063,7 +1052,7 @@ class _DashboardPageState extends State<DashboardPage> {
             },
           ),
         ),
-        label('Touch pick-up delay (longPressDelay, mobile)'),
+        _optionLabel(theme, 'Touch pick-up delay (longPressDelay, mobile)'),
         ValueListenableBuilder<int?>(
           valueListenable: longPressDelayMs,
           builder: (context, value, _) => DropdownButton<int?>(
@@ -1077,6 +1066,25 @@ class _DashboardPageState extends State<DashboardPage> {
             ],
             onChanged: (v) => longPressDelayMs.value = v,
           ),
+        ),
+      ],
+    );
+  }
+
+  /// Fixed-board rules, next to "Max Rows Limit" ("Collision & Layout Rules").
+  Widget _buildFixedBoardOptions() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _SwitchTile(
+          title:
+              'Strict row ceiling: pushes never cross Max Rows (strictMaxRows)',
+          notifier: strictMaxRows,
+          onChanged: controller.setStrictMaxRows,
+        ),
+        _SwitchTile(
+          title: 'Allowed sizes only: 1x1, 2x1, 2x2, 4x2 (isSizeAllowed)',
+          notifier: restrictSizes,
         ),
       ],
     );
@@ -1494,7 +1502,9 @@ class _ConfigPanel extends StatelessWidget {
     required this.onImportJson,
     required this.onStressTest,
     required this.onShowHud,
-    required this.newFeaturesSection,
+    required this.tileChromeOptions,
+    required this.interactionOptions,
+    required this.fixedBoardOptions,
   });
 
   final DashboardController controller;
@@ -1526,8 +1536,11 @@ class _ConfigPanel extends StatelessWidget {
   final void Function(int) onStressTest;
   final VoidCallback onShowHud;
 
-  /// The "New in 2.11" switches, built by the page that owns their state.
-  final Widget newFeaturesSection;
+  /// Option blocks built by the page that owns their state, placed in the
+  /// sections they belong to.
+  final Widget tileChromeOptions;
+  final Widget interactionOptions;
+  final Widget fixedBoardOptions;
 
   static const _palette = [
     ComponentSpec(
@@ -1623,8 +1636,6 @@ class _ConfigPanel extends StatelessWidget {
               );
             }).toList(),
           ),
-          const SizedBox(height: 12),
-          newFeaturesSection,
           const SizedBox(height: 16),
           const _SectionTitle('Visual Modes & Structures'),
           _SwitchTile(
@@ -1644,6 +1655,7 @@ class _ConfigPanel extends StatelessWidget {
             title: 'Use Custom Drag Handles only',
             notifier: useDragHandlesOnly,
           ),
+          tileChromeOptions,
           _SwitchTile(
             title: 'Native Sliver Direct Composition',
             notifier: useSliverDemo,
@@ -1732,6 +1744,7 @@ class _ConfigPanel extends StatelessWidget {
               );
             },
           ),
+          interactionOptions,
           const SizedBox(height: 10),
           Text(
             'Grid Granularity / Columns (slotCount)',
@@ -1844,6 +1857,7 @@ class _ConfigPanel extends StatelessWidget {
               );
             },
           ),
+          fixedBoardOptions,
           const SizedBox(height: 10),
           Text(
             'Compaction Type',
@@ -1956,6 +1970,13 @@ class _ConfigPanel extends StatelessWidget {
               OutlinedButton(
                 onPressed: () => controller.layout.value = [],
                 child: const Text('Clear Grid'),
+              ),
+              OutlinedButton(
+                // Through removeItems: one undo step, onLayoutChanged.
+                onPressed: () => controller.removeItems([
+                  for (final i in controller.layout.value) i.id,
+                ]),
+                child: const Text('Remove All (undoable)'),
               ),
             ],
           ),

@@ -1,63 +1,31 @@
 ## 2.11.0 (unreleased)
 
+All additions are opt-in: with the defaults, nothing changes.
+
 ### Added
 
-- **`editOverlayBuilder`** on `Dashboard`, `NestedDashboard` and `DashboardOverlay`: a per-tile overlay
-in edit mode, with `DashboardTileActions` (`delete`, `duplicate`) going through the same pipeline as the
-keyboard (`onWillDelete` veto, one undo step, `onItemsDeleted`, announcement), for that tile only.
-- **`DashboardGestureExclusion`**: a press on its child (a button inside a tile) starts no grid drag,
-resize, selection change or lasso.
-- **`emptyBuilder`** on `Dashboard`, `NestedDashboard` and `DashboardOverlay`: shown over an empty grid
-outside edit mode.
-- **`resizeHandleBuilder`** on `Dashboard`, `NestedDashboard` and `DashboardOverlay`: custom resize handle
-visuals, drawn inside the handle's press zone; the cursor and the zones are unchanged.
-
-- **Fixed boards.** Opt-in pieces for a grid with a fixed screen (wall panels, kiosks); with the
-defaults nothing changes.
-  - `DashboardController.strictMaxRows` / `setStrictMaxRows`: `maxRows` becomes a hard ceiling for
-  collision pushes too. A drag, a resize or an external / cross-grid hover whose push cascade would
-  send a tile past it is refused for that cell (the last accepted layout stays); a hover with no
-  accepted placeholder drops as canceled. A layout already past the ceiling may move but never grow.
-  - `DashboardPolicy.isSizeAllowed(item, w, h)`: restricts tile sizes. Resizes snap to the allowed
-  size nearest to the pointer and skip refused ones, the fluid ghost settles on it, auto-shrink and
-  `ResizeBehavior.shrink` never shrink a neighbour to a refused size (they push instead), and a
-  cross-grid drop takes the nearest size the target grid allows. An item's own size is always
-  accepted.
-  - `DashboardController.canPlace(item)`: whether an item fits exactly where it is, without any push.
-  - `DashboardController.tryAddItem` / `tryAddItems`: all-or-nothing add that keeps the layout under
-  `maxRows`; returns `false` with no change, no event and no history entry otherwise.
-- Engine helpers: `canPlace`, `nearestAllowedSize`, `mainAxisExtent`, `transposeItem`.
-- **`DashboardController.autoScroll` (`AutoScrollConfig`)**: edge auto-scroll zone depth
-(`edgeExtent`), speed in px/s (`maxSpeed`) and an `off` switch. Defaults reproduce 2.10.
-- **`longPressDelay`** on `Dashboard`, `NestedDashboard` and `DashboardOverlay`: how long a press must be
-held to pick a tile up on touch and to fire `onSlotLongPress` (default `kLongPressTimeout`).
+- **Fixed boards** (wall panels, kiosks):
+  - `strictMaxRows`: `maxRows` also caps collision pushes; a move that would push a tile past it is refused.
+  - `DashboardPolicy.isSizeAllowed`: restricts tile sizes. Resizes snap to the nearest allowed size,
+  shrinks never produce a refused one, cross-grid drops adopt the target's sizes.
+  - `canPlace(item)` and `tryAddItem` / `tryAddItems` (all-or-nothing, never past `maxRows`).
+- **Tile actions:** `editOverlayBuilder` (a per-tile edit-mode overlay whose `delete` / `duplicate` go
+through the keyboard's pipeline), `resizeHandleBuilder` (custom handle visuals) and `emptyBuilder`.
+- **`DashboardGestureExclusion`**: a button inside a tile gets its tap without starting a drag, resize or
+selection.
+- **`controller.autoScroll`** (`AutoScrollConfig`: zone, speed, off) and **`longPressDelay`** (touch
+pick-up delay).
 
 ### Changed
 
-- **Shrinking neighbours is 1.6x faster (AOT) and 2x faster (dart2js).** `ResizeBehavior.shrink` and
-`allowAutoShrink` no longer build a map of the whole layout before knowing whether the colliding tiles
-can shrink: 456 -> 274 µs (AOT) and 2.40 -> 1.20 ms (dart2js) on 4000 tiles. A refused shrink (min
-size, or a size the policy refuses) now costs the same as a plain push.
-- **Edge auto-scroll is frame-driven.** It was a 16 ms periodic `Timer` stepping a fixed 15 px: not
-aligned with the display, it skipped every other frame at 120 Hz and drifted against 60 Hz. It now
-runs on a `Ticker` and steps speed x frame time, so every frame moves and the speed no longer depends
-on the refresh rate. The web pointer throttle is unchanged.
+- Edge auto-scroll runs on a `Ticker` (speed x frame time): smooth at any refresh rate, where the
+16 ms timer skipped frames at 120 Hz.
+- Shrinking neighbours is 1.6x faster (AOT) and 2x faster (dart2js).
 
 ### Fixed
 
-- **Horizontal grids: imports, adds and responsive passes bounded the wrong axis.**
-`correctBounds` and `placeNewItems` always bounded `x` by the slot count and `y` by `maxRows`. On a
-horizontally scrolling grid it is the other way round, so `importLayout` pulled a tile stored deep
-along `x` back to the first columns (its position was lost) while letting `y` overflow the slot
-count, and `addItems` / auto-placement and breakpoint changes could do the same. Both functions now
-take `horizontal:` and the controller passes its scroll direction; vertical grids are unchanged.
-- **Auto-scroll under a `NestedScrollView` snapped the header shut in one frame.** With the body grid on
-the `PrimaryScrollController`, the auto-scroll's `jumpTo` moved the whole scroll coordinator. It now
-steps with `pointerScroll` (mouse-wheel semantics): the header collapses first, frame by frame.
-
-### Documentation
-
-- README: a "Why sliver-native matters" section, and a "Fixed Boards" section.
+- Horizontal grids: `importLayout`, `addItems` and breakpoint changes bounded the wrong axis.
+- Under a `NestedScrollView`, auto-scroll no longer snaps the header shut in one frame.
 
 ## 2.10.0
 
