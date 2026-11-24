@@ -55,6 +55,7 @@ fuzz-tested invariants: a drag step on 1,000 tiles takes under 1 ms on the web
 - **Reflow Animations:** pushed/compacted tiles slide to their new slot.
 - **Fluid Resize:** opt-in pixel-tracking resize. Tiles resize fluidly in raw pixels and smoothly animate into their snapped slot on release.
 - **Drag From Outside:** Drop new items from external sources directly into the grid with auto-scrolling support.
+- **Edge Auto-Scroll:** a dragged tile, external payload or cross-grid item near an edge scrolls the grid, frame by frame at any refresh rate, with a configurable zone and speed (`controller.autoScroll`). Works under a `NestedScrollView`, collapsing its header first.
 - **Guidance:** Optional contextual tooltips/guidance messages.
 - **Responsive Layouts:** Automatically adapt the number of columns (`slotCount`) based on the screen width using the built-in `breakpoints` property.
 - **Accessibility:** Full keyboard navigation support (Tab, Arrows, Space, Enter, customizable keys) and Screen Reader announcements (TalkBack/VoiceOver).
@@ -92,6 +93,7 @@ The package is WebAssembly (WASM) compatible. Building your production applicati
   - [Persisting Layout Changes](#persisting-layout-changes)
   - [Drag to Delete (Trash Bin)](#drag-to-delete-trash-bin)
   - [Custom Drag Handles & Mobile Gestures](#custom-drag-handles--mobile-gestures)
+  - [Edge Auto-Scroll](#edge-auto-scroll)
   - [Custom Drag Feedback](#custom-drag-feedback)
   - [Haptic Feedback](#haptic-feedback)
   - [Multi Selection and Cluster Drag](#multi-selection-and-cluster-drag)
@@ -788,6 +790,38 @@ Dashboard(
 )
 ```
 *Note: Use `DashboardDelayedDragStartListener` if you want your custom handle to require a long-press to start dragging.*
+
+#### 3. Long-press delay
+`longPressDelay` sets how long a finger must be held on a tile to pick it up (with
+`DragStartGesture.longPress`), and on an empty slot to fire `onSlotLongPress`. It defaults to Flutter's
+`kLongPressTimeout` (500 ms); a finger that moves first scrolls the grid instead.
+
+```dart
+Dashboard(
+  controller: controller,
+  longPressDelay: const Duration(milliseconds: 350),
+  itemBuilder: (context, item) => MyCard(item),
+)
+```
+
+### Edge Auto-Scroll
+
+Dragging a tile, an external payload or a cross-grid item close to the start or end of the viewport
+scrolls the grid. The speed grows with the depth into the edge zone and is applied per frame (speed x
+frame time), so it is smooth at 60, 90 or 120 Hz. Tune or disable it on the controller:
+
+```dart
+controller.autoScroll = const AutoScrollConfig(
+  edgeExtent: 64, // depth of the hot zone at each edge, in logical pixels
+  maxSpeed: 1200, // logical pixels per second at the very edge
+);
+
+controller.autoScroll = AutoScrollConfig.off; // no edge auto-scroll
+```
+
+A nested grid that cannot scroll delegates to its parent grid, which applies its own configuration.
+Under a `NestedScrollView` whose body grid uses the `PrimaryScrollController`, the auto-scroll
+collapses the header first, step by step, then scrolls the grid, as a mouse wheel would.
 
 ### Custom Drag Feedback
 
