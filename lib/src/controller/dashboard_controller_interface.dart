@@ -103,6 +103,14 @@ abstract class DashboardController {
   /// vertically, columns when scrolling horizontally). Null = unbounded.
   WritableBeacon<int?> get maxRows;
 
+  /// Whether [maxRows] is a hard ceiling for collision pushes too (a fixed
+  /// board). When true, a drag, a resize or an external / cross-grid hover
+  /// whose push cascade would send any item past [maxRows] is refused for
+  /// that position: the layout stays on the last accepted one. Never makes
+  /// a layout that already exceeds the cap worse, and never moves an item
+  /// out of such a layout. Off by default (pushes are not truncated).
+  WritableBeacon<bool> get strictMaxRows;
+
   /// A reactive property to control collision behavior.
   /// If `true` (default), items will push each other on drag/resize.
   /// If `false`, items will be allowed to overlap.
@@ -222,6 +230,25 @@ abstract class DashboardController {
     AutoPlacementStrategy strategy = AutoPlacementStrategy.appendBottom,
   });
 
+  /// Adds [items] only if ALL of them fit: placed exactly as [addItems]
+  /// would (auto-placement, compaction), the result must stay within
+  /// [maxRows] (or, when the layout already exceeds it, not grow further).
+  /// Returns false and changes nothing otherwise: no [onLayoutChanged], no
+  /// history entry. Without [maxRows], equivalent to [addItems] returning
+  /// true.
+  bool tryAddItems(
+    List<LayoutItem> items, {
+    engine.CompactType? overrideCompactType,
+    AutoPlacementStrategy strategy = AutoPlacementStrategy.appendBottom,
+  });
+
+  /// Single-item [tryAddItems].
+  bool tryAddItem(
+    LayoutItem newItem, {
+    engine.CompactType? overrideCompactType,
+    AutoPlacementStrategy strategy = AutoPlacementStrategy.appendBottom,
+  });
+
   /// Removes an item from the dashboard by its ID.
   ///
   /// After removal, the layout is re-compacted to fill any empty space.
@@ -291,6 +318,9 @@ abstract class DashboardController {
   /// the cap when the bounded area is full, never losing items). Collision
   /// pushes are not truncated.
   void setMaxRows(int? value);
+
+  /// Sets [strictMaxRows].
+  void setStrictMaxRows(bool value);
 
   /// Sets the collision behavior for the dashboard.
   void setPreventCollision(bool prevent);

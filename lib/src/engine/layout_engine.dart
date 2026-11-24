@@ -698,6 +698,17 @@ int bottom(Layout layout) {
   return max;
 }
 
+/// Returns the layout's extent along the main axis: the bottom-most edge for
+/// a vertically scrolling grid, the right-most edge when [horizontal].
+int mainAxisExtent(Layout layout, {bool horizontal = false}) {
+  var max = 0;
+  for (final item in layout) {
+    final end = horizontal ? item.x + item.w : item.y + item.h;
+    if (end > max) max = end;
+  }
+  return max;
+}
+
 /// Sorts layout items based on the compaction type.
 List<LayoutItem> sortLayoutItems(Layout layout, CompactType compactType) {
   final newLayout = List<LayoutItem>.from(layout);

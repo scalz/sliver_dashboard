@@ -159,10 +159,12 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
   /// decided — drag targets, interactive and programmatic resizes, and
   /// auto-placement of new items (which falls back past the limit rather
   /// than losing data when the bounded area is full). Collision pushes are
-  /// deliberately not truncated: rejecting a whole push cascade would need
-  /// speculative simulation on every pointer event.
+  /// not truncated unless [strictMaxRows] is set.
   @override
   late final maxRows = B.writable<int?>(null);
+
+  @override
+  late final strictMaxRows = B.writable<bool>(false);
 
   @override
   late final preventCollision = B.writable<bool>(true);
@@ -821,27 +823,56 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     engine.CompactType? overrideCompactType,
     AutoPlacementStrategy strategy = AutoPlacementStrategy.appendBottom,
   }) {
-    final currentLayout = List<LayoutItem>.from(layout.value);
+    layout.value = _layoutWithAdded(items, overrideCompactType, strategy);
+    _recordHistory();
+    _notifyLayoutChanged();
+  }
 
+  /// The layout [addItems] would commit. Pure: reads state, writes nothing.
+  List<LayoutItem> _layoutWithAdded(
+    List<LayoutItem> items,
+    engine.CompactType? overrideCompactType,
+    AutoPlacementStrategy strategy,
+  ) {
     final placedLayout = engine.placeNewItems(
-      existingLayout: currentLayout,
+      existingLayout: List<LayoutItem>.from(layout.peek()),
       newItems: items,
-      cols: slotCount.value,
+      cols: slotCount.peek(),
       strategy: strategy,
-      maxRows: maxRows.value,
+      maxRows: maxRows.peek(),
     );
 
     final compactorStrategy =
         overrideCompactType != null ? _getTempDelegate(overrideCompactType) : _compactor;
 
-    layout.value = compactorStrategy.compact(
-      placedLayout,
-      slotCount.value,
-    );
+    return compactorStrategy.compact(placedLayout, slotCount.peek());
+  }
 
+  @override
+  bool tryAddItems(
+    List<LayoutItem> items, {
+    engine.CompactType? overrideCompactType,
+    AutoPlacementStrategy strategy = AutoPlacementStrategy.appendBottom,
+  }) {
+    final result = _layoutWithAdded(items, overrideCompactType, strategy);
+    if (_exceedsCap(result, layout.peek())) return false;
+    layout.value = result;
     _recordHistory();
     _notifyLayoutChanged();
+    return true;
   }
+
+  @override
+  bool tryAddItem(
+    LayoutItem newItem, {
+    engine.CompactType? overrideCompactType,
+    AutoPlacementStrategy strategy = AutoPlacementStrategy.appendBottom,
+  }) =>
+      tryAddItems(
+        [newItem],
+        overrideCompactType: overrideCompactType,
+        strategy: strategy,
+      );
 
   @override
   void addItem(
@@ -1137,6 +1168,29 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     maxRows.value = value;
   }
 
+  @override
+  void setStrictMaxRows(bool value) => strictMaxRows.value = value;
+
+  /// Whether [result] would break the [strictMaxRows] ceiling, measured
+  /// against [base] (the gesture's starting layout): a layout that already
+  /// exceeds the cap may not grow, any other must stay within it.
+  ///
+  /// Called once per cell crossing, after the engine, and only when the
+  /// ceiling is on: two O(N) scans, zero cost otherwise.
+  bool _breaksStrictCap(List<LayoutItem> result, List<LayoutItem> base) {
+    if (!strictMaxRows.peek()) return false;
+    return _exceedsCap(result, base);
+  }
+
+  bool _exceedsCap(List<LayoutItem> result, List<LayoutItem> base) {
+    final cap = maxRows.peek();
+    if (cap == null) return false;
+    final horizontal = scrollDirection.peek() == Axis.horizontal;
+    final extent = engine.mainAxisExtent(result, horizontal: horizontal);
+    if (extent <= cap) return false;
+    return extent > engine.mainAxisExtent(base, horizontal: horizontal);
+  }
+
   /// Sets the scroll direction of the dashboard.
   ///
   /// This is used internally by the `Dashboard` widget and should not be
@@ -1178,6 +1232,14 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     if (current != null && current.x == x && current.y == y && current.w == w && current.h == h) {
       return;
     }
+    final refusedKey = _refusedPlaceholder;
+    if (refusedKey != null &&
+        refusedKey.$1 == x &&
+        refusedKey.$2 == y &&
+        refusedKey.$3 == w &&
+        refusedKey.$4 == h) {
+      return;
+    }
 
     if (placeholder.value == null) {
       originalLayoutOnStart.value = List.from(layout.peek());
@@ -1192,8 +1254,6 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
       isStatic: false,
       isDraggable: true,
     );
-
-    placeholder.value = placeholderItem;
 
     // Always operate on the clean layout from the start of the gesture.
     final baseLayout = List<LayoutItem>.from(originalLayoutOnStart.peek())
@@ -1231,11 +1291,26 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
         ? _compactor.compact(newLayout, slotCount.value)
         : newLayout;
 
+    // A refused position keeps the last accepted placeholder (or none, so a
+    // drop there resolves as canceled). Cached so a hover that stays on it
+    // is not re-simulated per pointer event.
+    if (_breaksStrictCap(compactedLayout, originalLayoutOnStart.peek())) {
+      _refusedPlaceholder = (x, y, w, h);
+      if (placeholder.peek() == null) originalLayoutOnStart.value = [];
+      return;
+    }
+    _refusedPlaceholder = null;
+    placeholder.value = placeholderItem;
     layout.value = compactedLayout;
   }
 
+  /// Last placeholder geometry refused by [strictMaxRows]. Cleared by an
+  /// accepted placeholder and by [hidePlaceholder] (a new hover episode).
+  (int, int, int, int)? _refusedPlaceholder;
+
   /// Removes the temporary placeholder item from the layout.
   void hidePlaceholder() {
+    _refusedPlaceholder = null;
     if (placeholder.value == null) return;
     // Revert to the clean layout from before the drag-over started.
     layout.value = List.from(originalLayoutOnStart.peek());
@@ -1724,10 +1799,16 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
           allowAutoShrink: allowAutoShrink.value,
         );
 
-    layout.value = newLayout;
+    // Reason: a refused cell keeps the last accepted layout. The bypass key
+    // above is still written: every update recomputes from the same
+    // originalLayoutOnStart, so the same cell is refused again by
+    // construction and need not be re-simulated at pointer frequency.
+    final refused = _breaksStrictCap(newLayout, originalLayoutOnStart.value);
+    if (!refused) layout.value = newLayout;
 
     // 6. Visual Offset (Smooth Drag)
-    final movedPivot = newLayout.firstWhere((i) => i.id == itemId);
+    final movedPivot =
+        refused ? (_lastMovedPivot ?? pivotItem) : newLayout.firstWhere((i) => i.id == itemId);
     _lastMovedPivot = movedPivot;
 
     final logicalItemPixelX = movedPivot.x * strideX;
@@ -2111,6 +2192,8 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
       policy: policy,
     );
 
+    // Same refusal as the drag: the previous accepted layout stays.
+    if (_breaksStrictCap(newLayout, originalLayoutOnStart.value)) return;
     layout.value = newLayout;
   }
 
