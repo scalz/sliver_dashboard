@@ -1028,6 +1028,15 @@ class _DashboardPageState extends State<DashboardPage> {
           onChanged: controller.setStrictMaxRows,
         ),
         label('Edge auto-scroll (controller.autoScroll)'),
+        Text(
+          'With vertical / horizontal compaction it stops at the end of the '
+          'content (a tile cannot be dropped past it). Use compaction NONE to '
+          'scroll on while the grid grows.',
+          style: TextStyle(
+            fontSize: 11,
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
+        ),
         ValueListenableBuilder<String>(
           valueListenable: autoScrollPreset,
           builder: (context, value, _) => DropdownButton<String>(

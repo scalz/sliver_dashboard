@@ -884,6 +884,11 @@ controller.autoScroll = const AutoScrollConfig(
 controller.autoScroll = AutoScrollConfig.off; // no edge auto-scroll
 ```
 
+**How far it scrolls depends on compaction.** With `CompactType.vertical` (the default) or `horizontal`, a
+tile cannot be dropped past the end of the content (it would compact straight back), so the grid does
+not grow under the pointer and the auto-scroll stops at the end of the content. With
+`CompactType.none`, the grid grows under the dragged tile and the auto-scroll keeps going.
+
 A nested grid that cannot scroll delegates to its parent grid, which applies its own configuration.
 Under a `NestedScrollView` whose body grid uses the `PrimaryScrollController`, the auto-scroll
 collapses the header first, step by step, then scrolls the grid, as a mouse wheel would.
