@@ -69,6 +69,7 @@ class Dashboard<T extends Object> extends StatefulWidget {
     this.onItemsDeleted,
     this.trashHoverDelay = const Duration(milliseconds: 800),
     this.dragStartGesture = DragStartGesture.longPress,
+    this.longPressDelay,
     this.sectionHeaderBuilder,
     this.crossGridDragOut = true,
     this.acceptCrossGridItems = true,
@@ -265,6 +266,12 @@ class Dashboard<T extends Object> extends StatefulWidget {
   /// The gesture used to trigger a drag operation on mobile platforms
   final DragStartGesture dragStartGesture;
 
+  /// How long a press must be held to count as a long press: picks a tile up
+  /// on touch with [DragStartGesture.longPress], and fires [onSlotLongPress].
+  /// Null keeps Flutter's `kLongPressTimeout` (500 ms). A finger that moves
+  /// before the delay scrolls the grid instead.
+  final Duration? longPressDelay;
+
   /// Optional builder to customize the appearance of section headers.
   final DashboardSectionHeaderBuilder? sectionHeaderBuilder;
 
@@ -406,6 +413,7 @@ class _DashboardState<T extends Object> extends State<Dashboard<T>> {
       placeholderHeight: widget.placeholderHeight,
       itemGlobalKeySuffix: widget.itemGlobalKeySuffix,
       dragStartGesture: widget.dragStartGesture,
+      longPressDelay: widget.longPressDelay,
       crossGridDragOut: widget.crossGridDragOut,
       acceptCrossGridItems: widget.acceptCrossGridItems,
       onCloneRequested: widget.onCloneRequested,

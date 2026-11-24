@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/scheduler.dart' show Ticker;
 import 'package:flutter/services.dart';
@@ -166,6 +167,7 @@ class DashboardOverlay<T extends Object> extends StatefulWidget {
     this.backgroundBuilder,
     this.fillViewport = false,
     this.dragStartGesture = DragStartGesture.longPress,
+    this.longPressDelay,
     this.crossGridDragOut = true,
     this.acceptCrossGridItems = true,
     this.onCloneRequested,
@@ -352,6 +354,9 @@ class DashboardOverlay<T extends Object> extends StatefulWidget {
 
   /// The gesture used to trigger a drag operation on mobile platforms
   final DragStartGesture dragStartGesture;
+
+  /// See `Dashboard.longPressDelay`.
+  final Duration? longPressDelay;
 
   /// Produces the duplicate of a tile dragged with the clone modifier held
   /// (`Alt` / `Option` by default, see `DashboardShortcuts.cloneKeys`).
@@ -1013,45 +1018,60 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
   /// Extracted so [_buildLassoCursorRegion] can hand it through as a
   /// pre-built `child`, which is what keeps a modifier press from rebuilding
   /// the scroll view.
+  /// The `GestureDetector` this replaces exposed no long-press duration, so the
+  /// two recognizers are wired by hand, with the settings `GestureDetector`
+  /// itself would pass. Each is created only when one of its callbacks is
+  /// live, exactly as `GestureDetector` does.
   Widget _buildGestureContent() {
-    return GestureDetector(
-      behavior: HitTestBehavior.translucent,
-      onTapUp: widget.onSlotTap != null
-          ? (details) => _handleSlotGesture(
-                details.globalPosition,
-                widget.onSlotTap,
-              )
-          : null,
-      onLongPressStart: (_isMobile && widget.dragStartGesture == DragStartGesture.longPress) ||
-              widget.onSlotLongPress != null
-          ? (details) {
-              if (_nestedCoordinator?.isPointerClaimedByOther(this) ?? false) {
-                return;
-              }
+    final longPressDrag = _isMobile && widget.dragStartGesture == DragStartGesture.longPress;
+    final gestureSettings = MediaQuery.maybeGestureSettingsOf(context);
+    final hasLongPress = longPressDrag || widget.onSlotLongPress != null;
 
-              // Empty-slot long-press wins; item long-press
-              // keeps its historical role (drag start on
-              // mobile longPress mode).
-              if (widget.onSlotLongPress != null && _hitTest(details.globalPosition).item == null) {
-                _handleSlotGesture(
-                  details.globalPosition,
-                  widget.onSlotLongPress,
-                );
-                return;
-              }
-              if (_isMobile && widget.dragStartGesture == DragStartGesture.longPress) {
-                _onPointerDown(details.globalPosition);
-              }
-            }
-          : null,
-      onLongPressMoveUpdate: _isMobile && widget.dragStartGesture == DragStartGesture.longPress
-          ? (details) => _onPointerMove(details.globalPosition)
-          : null,
-      onLongPressEnd: _isMobile && widget.dragStartGesture == DragStartGesture.longPress
-          ? (details) => _onPointerUp()
-          : null,
-      onLongPressCancel:
-          _isMobile && widget.dragStartGesture == DragStartGesture.longPress ? _onPointerUp : null,
+    void onLongPressStart(LongPressStartDetails details) {
+      if (_nestedCoordinator?.isPointerClaimedByOther(this) ?? false) {
+        return;
+      }
+
+      // Empty-slot long-press wins; item long-press
+      // keeps its historical role (drag start on
+      // mobile longPress mode).
+      if (widget.onSlotLongPress != null && _hitTest(details.globalPosition).item == null) {
+        _handleSlotGesture(
+          details.globalPosition,
+          widget.onSlotLongPress,
+        );
+        return;
+      }
+      if (longPressDrag) {
+        _onPointerDown(details.globalPosition);
+      }
+    }
+
+    return RawGestureDetector(
+      behavior: HitTestBehavior.translucent,
+      gestures: <Type, GestureRecognizerFactory>{
+        if (widget.onSlotTap != null)
+          TapGestureRecognizer: GestureRecognizerFactoryWithHandlers<TapGestureRecognizer>(
+            () => TapGestureRecognizer(debugOwner: this),
+            (recognizer) => recognizer
+              ..onTapUp =
+                  ((details) => _handleSlotGesture(details.globalPosition, widget.onSlotTap))
+              ..gestureSettings = gestureSettings,
+          ),
+        if (hasLongPress)
+          _DelayedLongPressGestureRecognizer:
+              GestureRecognizerFactoryWithHandlers<_DelayedLongPressGestureRecognizer>(
+            () => _DelayedLongPressGestureRecognizer(debugOwner: this),
+            (recognizer) => recognizer
+              ..delay = widget.longPressDelay ?? kLongPressTimeout
+              ..onLongPressStart = onLongPressStart
+              ..onLongPressMoveUpdate =
+                  longPressDrag ? (details) => _onPointerMove(details.globalPosition) : null
+              ..onLongPressEnd = longPressDrag ? (details) => _onPointerUp() : null
+              ..onLongPressCancel = longPressDrag ? _onPointerUp : null
+              ..gestureSettings = gestureSettings,
+          ),
+      },
       child: widget.child,
     );
   }
@@ -3342,4 +3362,22 @@ class _HoverGridIndex {
 
   /// Packed cell key -> covering item.
   final Map<int, LayoutItem> buckets;
+}
+
+/// A [LongPressGestureRecognizer] whose hold duration can change without
+/// replacing the recognizer.
+///
+/// Reason: the stock recognizer fixes its deadline at construction, and
+/// `RawGestureDetector` keeps a recognizer per type for its whole life, so a
+/// new `longPressDelay` would otherwise be ignored. Keying the detector on the
+/// delay instead would remount the grid's scroll view. The deadline is read
+/// when a pointer is added, so a change applies to the next press.
+class _DelayedLongPressGestureRecognizer extends LongPressGestureRecognizer {
+  _DelayedLongPressGestureRecognizer({super.debugOwner});
+
+  /// The hold duration applied to the next press.
+  Duration delay = kLongPressTimeout;
+
+  @override
+  Duration? get deadline => delay;
 }
