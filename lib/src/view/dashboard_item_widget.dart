@@ -336,12 +336,14 @@ class _DashboardItemState extends State<DashboardItem>
       },
     ),
     DashboardDeleteItemIntent: CallbackAction<DashboardDeleteItemIntent>(
-      onInvoke: (_) {
+      onInvoke: (intent) {
         if (!widget.isEditing) return null;
         final controller = DashboardControllerProvider.of(context);
         final overlay = DashboardOverlayProvider.maybeOf(context);
         final selectedIds = controller.selectedItemIds.peek();
-        final idsToDelete = selectedIds.contains(widget.item.id) ? selectedIds : {widget.item.id};
+        final idsToDelete = !intent.onlyThisItem && selectedIds.contains(widget.item.id)
+            ? selectedIds
+            : {widget.item.id};
 
         final itemsToDelete = controller.layout
             .peek()
@@ -386,7 +388,7 @@ class _DashboardItemState extends State<DashboardItem>
       },
     ),
     DashboardDuplicateItemIntent: CallbackAction<DashboardDuplicateItemIntent>(
-      onInvoke: (_) {
+      onInvoke: (intent) {
         if (!widget.isEditing) return null;
         final controller = DashboardControllerProvider.of(context);
         final overlay = DashboardOverlayProvider.maybeOf(context);
@@ -394,8 +396,9 @@ class _DashboardItemState extends State<DashboardItem>
         if (cloneCallback == null) return null;
 
         final selectedIds = controller.selectedItemIds.peek();
-        final idsToDuplicate =
-            selectedIds.contains(widget.item.id) ? selectedIds : {widget.item.id};
+        final idsToDuplicate = !intent.onlyThisItem && selectedIds.contains(widget.item.id)
+            ? selectedIds
+            : {widget.item.id};
 
         final itemsToDuplicate = controller.layout
             .peek()

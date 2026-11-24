@@ -4,6 +4,8 @@ import 'package:flutter/widgets.dart';
 import 'package:sliver_dashboard/src/controller/dashboard_controller_provider.dart';
 import 'package:sliver_dashboard/src/controller/utility.dart';
 import 'package:sliver_dashboard/src/models/layout_item.dart';
+import 'package:sliver_dashboard/src/view/dashboard_overlay.dart';
+import 'package:sliver_dashboard/src/view/dashboard_tile_actions.dart';
 import 'package:sliver_dashboard/src/view/dashboard_typedefs.dart';
 import 'package:sliver_dashboard/src/view/guidance/guidance_interactor.dart';
 import 'package:sliver_dashboard/src/view/resize_handle.dart';
@@ -40,22 +42,35 @@ class DashboardItemWrapper extends StatelessWidget {
     final useHandleColor = handleColor ?? controller.handleColor.value;
     final showsHandles = isEditing && (item.isResizable ?? true) && !item.isStatic;
     final handleSide = showsHandles ? controller.resizeHandleSide.watch(context) : 0.0;
+    final editOverlay =
+        isEditing ? DashboardOverlayProvider.maybeOf(context)?.editOverlayBuilder : null;
 
-    final content = showsHandles
+    // Reason: the layered shape depends on edit mode and the tile's own flags
+    // only, never on selection, focus or hover, so `child` is not re-parented
+    // while editing; it stays first, the extra layers are keyed after it.
+    final content = showsHandles || editOverlay != null
         ? Stack(
             fit: StackFit.expand,
             children: [
               child,
               // The handles are sized from the laid-out tile, with their own layer
               // child stays first and is never re-parented when the tile size changes.
-              LayoutBuilder(
-                builder: (context, constraints) => _buildHandles(
-                  constraints.biggest,
-                  handleSide: handleSide,
-                  resolver: controller.internal.resizeZoneResolver,
-                  color: useHandleColor,
+              if (showsHandles)
+                LayoutBuilder(
+                  key: const ValueKey<String>('dashboardItem.handles'),
+                  builder: (context, constraints) => _buildHandles(
+                    constraints.biggest,
+                    handleSide: handleSide,
+                    resolver: controller.internal.resizeZoneResolver,
+                    color: useHandleColor,
+                  ),
                 ),
-              ),
+              if (editOverlay != null)
+                _EditOverlayLayer(
+                  key: const ValueKey<String>('dashboardItem.editOverlay'),
+                  item: item,
+                  builder: editOverlay,
+                ),
             ],
           )
         : child;
@@ -130,4 +145,28 @@ class DashboardItemWrapper extends StatelessWidget {
   }
 
   static double _fit(double a, double b) => math.min(_defaultHandleSize, math.min(a, b));
+}
+
+/// Hosts the application's `editOverlayBuilder` output over a tile.
+///
+/// Stateful only to keep one [DashboardTileActions] per tile (no allocation
+/// per rebuild); its context sits inside the tile's `FocusableActionDetector`,
+/// which is what lets the actions reach the tile's own Delete / Duplicate.
+class _EditOverlayLayer extends StatefulWidget {
+  const _EditOverlayLayer({required this.item, required this.builder, super.key});
+
+  final LayoutItem item;
+  final DashboardEditOverlayBuilder builder;
+
+  @override
+  State<_EditOverlayLayer> createState() => _EditOverlayLayerState();
+}
+
+class _EditOverlayLayerState extends State<_EditOverlayLayer> {
+  late final DashboardTileActions _actions = DashboardTileActions(context);
+
+  @override
+  Widget build(BuildContext context) => DashboardGestureExclusion(
+        child: widget.builder(context, widget.item, _actions),
+      );
 }

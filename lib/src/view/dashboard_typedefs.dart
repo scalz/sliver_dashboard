@@ -3,10 +3,20 @@ import 'dart:async';
 import 'package:flutter/widgets.dart';
 import 'package:sliver_dashboard/src/controller/dashboard_controller_interface.dart';
 import 'package:sliver_dashboard/src/models/layout_item.dart';
+import 'package:sliver_dashboard/src/view/dashboard_tile_actions.dart';
 import 'package:sliver_dashboard/src/view/resize_handle.dart' show ResizeZones;
 
 /// A static builder function for dashboard items (optimized; skips rebuilds on resize).
 typedef DashboardItemBuilder = Widget Function(BuildContext context, LayoutItem item);
+
+/// Builds the edit-mode overlay of a tile (a delete button, a menu…), laid
+/// over the tile's content. [actions] routes through the grid's own
+/// pipelines (see [DashboardTileActions]).
+typedef DashboardEditOverlayBuilder = Widget Function(
+  BuildContext context,
+  LayoutItem item,
+  DashboardTileActions actions,
+);
 
 /// Alternative builder providing live physical pixel dimensions (rebuilds continuously on resize).
 typedef DashboardItemLayoutBuilder = Widget Function(
