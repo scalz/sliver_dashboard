@@ -764,6 +764,52 @@ List<LayoutItem> getStatics(Layout layout) {
   return layout.where((item) => item.isStatic).toList();
 }
 
+/// Whether [candidate] fits [layout] exactly as given, without any push.
+///
+/// The candidate fits when:
+/// * its size is at least 1x1 and within its own `minW`/`maxW`/`minH`/`maxH`;
+/// * it lies inside the [cols] cross-axis slots and, when [maxRows] is set,
+///   ends at or before [maxRows] on the main axis. [horizontal] selects the
+///   main axis: `y` for a vertically scrolling grid, `x` otherwise;
+/// * [isSizeAllowed] (when given) accepts its size — except that the size the
+///   layout's item with the same id already has is always accepted;
+/// * it overlaps no other item, static ones included.
+///
+/// The layout's entry sharing the candidate's id is never an obstacle, so a
+/// move or a resize of an existing item is tested by passing its updated
+/// copy. Ids are assumed unique. O(N), allocation-free.
+bool canPlace(
+  Layout layout,
+  LayoutItem candidate, {
+  required int cols,
+  int? maxRows,
+  bool horizontal = false,
+  bool Function(int w, int h)? isSizeAllowed,
+}) {
+  final w = candidate.w;
+  final h = candidate.h;
+  if (w < 1 || h < 1 || candidate.x < 0 || candidate.y < 0) return false;
+  if (w < candidate.minW || h < candidate.minH) return false;
+  if (w > candidate.maxW || h > candidate.maxH) return false;
+
+  final crossEnd = horizontal ? candidate.y + h : candidate.x + w;
+  final mainEnd = horizontal ? candidate.x + w : candidate.y + h;
+  if (crossEnd > cols) return false;
+  if (maxRows != null && mainEnd > maxRows) return false;
+
+  var keepsOwnSize = false;
+  for (final item in layout) {
+    if (item.id == candidate.id) {
+      // Reason: an item loaded or projected with a size the policy no longer
+      // allows must still be movable as it is.
+      keepsOwnSize = item.w == w && item.h == h;
+      continue;
+    }
+    if (collides(item, candidate)) return false;
+  }
+  return keepsOwnSize || isSizeAllowed == null || isSizeAllowed(w, h);
+}
+
 /// Recursively resolves collisions during compaction by moving items down/right.
 /// Exposed for custom compactors.
 LayoutItem resolveCompactionCollision(

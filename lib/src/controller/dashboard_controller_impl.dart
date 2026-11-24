@@ -587,6 +587,19 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
   @override
   LayoutItem? get currentDragPlaceholder => placeholder.value;
 
+  @override
+  bool canPlace(LayoutItem candidate) {
+    final p = policy;
+    return engine.canPlace(
+      layout.peek(),
+      candidate,
+      cols: slotCount.peek(),
+      maxRows: maxRows.peek(),
+      horizontal: scrollDirection.peek() == Axis.horizontal,
+      isSizeAllowed: p == null ? null : (w, h) => p.isSizeAllowed(candidate, w, h),
+    );
+  }
+
   /// A reactive property that holds the pixel offset for the actively dragged item,
   /// enabling a smooth visual drag effect.
   late final dragOffset = B.writable<Offset>(Offset.zero);

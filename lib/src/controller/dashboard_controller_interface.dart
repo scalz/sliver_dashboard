@@ -187,6 +187,18 @@ abstract class DashboardController {
 
   // --- PUBLIC METHODS ---
 
+  /// Whether [candidate] fits the current layout exactly as given, without
+  /// pushing anything: inside the grid's columns (rows on a horizontal grid),
+  /// under [maxRows], within its own min/max constraints, on a size the
+  /// [policy] allows ([DashboardPolicy.isSizeAllowed]), and overlapping no
+  /// other item, static ones included.
+  ///
+  /// The layout's item sharing the candidate's id is never an obstacle: to
+  /// test a move or a resize, pass the item's updated copy. To test a new
+  /// item, give it explicit coordinates (not `-1`). Pure query: reads the
+  /// state without subscribing to it.
+  bool canPlace(LayoutItem candidate);
+
   /// Adds multiple items to the dashboard.
   ///
   /// If an item has x = -1 or y = -1, it will be automatically placed

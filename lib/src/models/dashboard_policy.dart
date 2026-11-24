@@ -25,4 +25,14 @@ abstract class DashboardPolicy {
   /// Returning `false` will treat [itemB] as an immoveable static obstacle for [itemA],
   /// forcing [itemA] to slide or jump past it instead of pushing it.
   bool canCollide(LayoutItem itemA, LayoutItem itemB) => true;
+
+  /// Whether [item] may take the size [w] x [h] (in grid slots).
+  ///
+  /// Restricts a grid to a set of tile sizes (e.g. only 1x1, 2x2 and 4x2 on a
+  /// fixed wall panel). An item's current size is always accepted, so an item
+  /// stored with a size this policy no longer allows can still be moved.
+  /// Consulted by `DashboardController.canPlace`, resizes and cross-grid
+  /// projection. Must be pure and cheap: it may be called once per candidate
+  /// size while a resize crosses a slot boundary.
+  bool isSizeAllowed(LayoutItem item, int w, int h) => true;
 }
