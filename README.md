@@ -39,6 +39,7 @@ fuzz-tested invariants: a drag step on 1,000 tiles takes under 1 ms on the web
 - **Fully Customizable:** Control the number of columns, aspect ratio, spacing, grid and handles style. Items can be draggable, resizable, and static. Support for dedicated **Drag Handles** (`DashboardDragStartListener`) and configurable mobile drag start gestures (long-press, tap, or handle-only).
 - **Declarative Interaction Policies (`DashboardPolicy`):** Inject granular business rules (e.g., "charts cannot push system KPIs", "block dragging on Row 0") on-the-fly without having to write custom compaction delegates.
 - **Segmented Grids (Section Barriers):** Divide your grid into organized visual sections using static section barriers with custom header builders while maintaining strict collision boundaries.
+- **Fixed Boards:** a hard row ceiling (`maxRows` + `strictMaxRows`), a whitelist of tile sizes (`DashboardPolicy.isSizeAllowed`), and `canPlace` / `tryAddItem` to ask before acting — for wall panels and kiosks with a fixed screen.
 - **Horizontal & Vertical Layouts:** Supports both vertical (default) and horizontal scrolling directions.
 - **Smart Collision Detection:** Choose your desired behavior:
   - **Push:** Items push each other out of the way to avoid overlap.
@@ -104,6 +105,7 @@ The package is WebAssembly (WASM) compatible. Building your production applicati
   - [Custom Section Headers](#custom-section-headers)
   - [Scroll direction](#scroll-direction)
   - [Allowing free positioning](#allowing-free-positioning)
+  - [Fixed Boards (row ceiling, allowed sizes)](#fixed-boards-row-ceiling-allowed-sizes)
   - [Auto Layout bulk add](#auto-layout-bulk-add)
   - [Responsive Layouts](#responsive-layouts)
   - [Layout Optimizer](#layout-optimizer)
@@ -1207,6 +1209,58 @@ controller.setCompactionType(CompactType.vertical);
 > * **For automatic gap filling:** Use `CompactType.vertical` or `CompactType.horizontal` compaction for self-healing layouts.
 > * **For on-demand cleanup in free mode:** Call **`controller.optimizeLayout()`** to defragment the grid and compact empty gaps on demand,
     > or use **`controller.availableFreeAreas`** / **`controller.firstFreeArea`** to inspect open slots programmatically.
+
+### Fixed Boards (row ceiling, allowed sizes)
+
+A wall panel or a kiosk has a fixed screen: say 10 x 6 square slots, where only a few tile sizes
+make sense. Four opt-in pieces cover it; with the defaults nothing changes.
+
+```dart
+class PanelSizes extends DashboardPolicy {
+  const PanelSizes();
+
+  static const _sizes = {(1, 1), (2, 2), (4, 2)};
+
+  @override
+  bool isSizeAllowed(LayoutItem item, int w, int h) => _sizes.contains((w, h));
+}
+
+final controller = DashboardController(initialSlotCount: 10)
+  ..setCompactionType(CompactType.none) // a stored layout loads exactly as saved
+  ..setMaxRows(6)                       // no tile below row 5
+  ..setStrictMaxRows(true)              // ...not even a pushed one
+  ..policy = const PanelSizes();
+```
+
+- **`maxRows`** caps drag targets, resizes and auto-placement on the main axis.
+- **`strictMaxRows`** makes it a hard ceiling for collision pushes too: a drag, a resize or an
+external / cross-grid hover whose push cascade would send a tile past the ceiling is refused for
+that cell, and the last accepted layout stays. A layout that already exceeds the ceiling may move
+but never grow.
+- **`DashboardPolicy.isSizeAllowed(item, w, h)`** restricts tile sizes. A resize snaps to the
+allowed size nearest to the pointer and skips refused ones (the fluid ghost keeps following the
+pointer, then settles on the allowed size); auto-shrink never shrinks a neighbour to a refused size;
+an item dragged in from another grid takes the nearest size that grid allows. An item's own size
+is always accepted, so a tile stored with a size you no longer allow can still be moved.
+- **`canPlace(item)`** tells whether an item fits exactly where it is (columns, ceiling, own
+min/max, allowed size, no overlap) without pushing anything. **`tryAddItem` / `tryAddItems`**
+add only if the result stays under `maxRows` (all-or-nothing) and return `false` otherwise, with
+no layout change, no `onLayoutChanged` and no history entry. `addItem` keeps its overflow
+behaviour.
+
+Combine it with [`onSlotTap`](#empty-slot-interactions--business-metadata) to add a tile where the
+user taps:
+
+```dart
+Dashboard(
+  controller: controller,
+  onSlotTap: (x, y) {
+    final tile = LayoutItem(id: newId(), x: x, y: y, w: 2, h: 2);
+    if (!controller.tryAddItem(tile)) showSnackBar('No room here');
+  },
+  itemBuilder: (context, item) => PanelTile(item),
+)
+```
 
 ### Auto Layout bulk add
 

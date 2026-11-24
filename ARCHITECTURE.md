@@ -467,6 +467,37 @@ These anchors are expressed once and applied to both the snapped and the fluid
 candidate (see *Fluid Resize* above), so turning `fluidResize` on cannot change
 where a resize lands — only how it is painted on the way there.
 
+### Fixed Boards: Allowed Sizes & the Strict Ceiling
+
+Two opt-in mechanisms turn the grid into a fixed board. Both are pure post-processing of what the
+engine already computes, and both cost nothing when off.
+
+- **Allowed sizes (`DashboardPolicy.isSizeAllowed`).** In `onResizeUpdate`, every clamp above is
+applied first and the raw rounding (`fw.round()`) still keys the cell-crossing bypass. Only behind
+that bypass, when the policy refuses the rounded size, `engine.nearestAllowedSize` replaces it with
+the allowed size nearest (Manhattan) to the continuous candidate, inside per-axis bounds collected
+while clamping (`wBound` / `hBound`: anchors, grid edge, `maxRows`). The item's own size is the
+fallback, which also bounds the search radius to how far the pointer travelled. On anchored edges
+(top/left), a size whose rect would reach over a static is unreachable, not merely refused. A second
+key (`_appliedResize*`) skips the engine when a new crossing projects onto the size already applied.
+The fluid ghost keeps tracking the raw pointer; the snapped item, hence the settle target, is the
+projected one. The same predicate gates the two shrink paths (`_tryShrinkCollisions`,
+`_tryShrinkMoveCollisions`: a refused shrink falls back to a push) and `_sanitizeForTarget` (a
+cross-grid projection folds to the target grid's nearest allowed size; the session memo key carries
+the target policy's identity).
+- **Strict ceiling (`strictMaxRows`).** `maxRows` alone clamps targets, not pushes. With the flag,
+`_breaksStrictCap` measures the main-axis extent of the engine's result after each accepted cell
+crossing (drag, resize, external/cross-grid placeholder) and refuses a result that ends past the cap,
+or, for a layout already past it, one that grows. A refusal keeps the last accepted layout; the
+bypass keys are still written, which is sound because every update recomputes from the same
+`originalLayoutOnStart`, so the same cell is refused again by construction. The placeholder path
+caches its refused geometry (`_refusedPlaceholder`, cleared by an accepted placeholder and by
+`hidePlaceholder`). A hover that never had an accepted placeholder leaves none, and the drop resolves
+through the existing `canceled` outcome. On a horizontal grid the engine pushes along the cross
+axis, so a push cannot reach the main-axis ceiling there.
+- **Queries.** `canPlace` (pure engine function) and `tryAddItems` (the exact `addItems` result,
+committed only if it stays under `maxRows`) let the application ask before acting.
+
 ### Resize Hit Zones
 `calculateResizeHandle` is the single gesture-kind classifier, shared by
 `DashboardOverlay._onPointerDown` and the guidance hover. The edge zone is

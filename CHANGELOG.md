@@ -1,3 +1,27 @@
+## 2.11.0 (unreleased)
+
+### Added
+
+- **Fixed boards.** Opt-in pieces for a grid with a fixed screen (wall panels, kiosks); with the
+defaults nothing changes.
+  - `DashboardController.strictMaxRows` / `setStrictMaxRows`: `maxRows` becomes a hard ceiling for
+  collision pushes too. A drag, a resize or an external / cross-grid hover whose push cascade would
+  send a tile past it is refused for that cell (the last accepted layout stays); a hover with no
+  accepted placeholder drops as canceled. A layout already past the ceiling may move but never grow.
+  - `DashboardPolicy.isSizeAllowed(item, w, h)`: restricts tile sizes. Resizes snap to the allowed
+  size nearest to the pointer and skip refused ones, the fluid ghost settles on it, auto-shrink and
+  `ResizeBehavior.shrink` never shrink a neighbour to a refused size (they push instead), and a
+  cross-grid drop takes the nearest size the target grid allows. An item's own size is always
+  accepted.
+  - `DashboardController.canPlace(item)`: whether an item fits exactly where it is, without any push.
+  - `DashboardController.tryAddItem` / `tryAddItems`: all-or-nothing add that keeps the layout under
+  `maxRows`; returns `false` with no change, no event and no history entry otherwise.
+- Engine helpers: `canPlace`, `nearestAllowedSize`, `mainAxisExtent`.
+
+### Documentation
+
+- README: a "Why sliver-native matters" section, and a "Fixed Boards" section.
+
 ## 2.10.0
 
 ### Fixed
