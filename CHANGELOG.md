@@ -34,6 +34,10 @@ held to pick a tile up on touch and to fire `onSlotLongPress` (default `kLongPre
 
 ### Changed
 
+- **Shrinking neighbours is 1.6x faster (AOT) and 2x faster (dart2js).** `ResizeBehavior.shrink` and
+`allowAutoShrink` no longer build a map of the whole layout before knowing whether the colliding tiles
+can shrink: 456 -> 274 µs (AOT) and 2.40 -> 1.20 ms (dart2js) on 4000 tiles. A refused shrink (min
+size, or a size the policy refuses) now costs the same as a plain push.
 - **Edge auto-scroll is frame-driven.** It was a 16 ms periodic `Timer` stepping a fixed 15 px: not
 aligned with the display, it skipped every other frame at 120 Hz and drifted against 60 Hz. It now
 runs on a `Ticker` and steps speed x frame time, so every frame moves and the speed no longer depends
