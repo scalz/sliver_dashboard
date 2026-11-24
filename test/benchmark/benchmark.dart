@@ -562,6 +562,11 @@ void main() {
       ),
     );
 
+    // Two different questions, so two pairs of lines:
+    // - the price of the CALLS: a policy that accepts every size, against no
+    //   policy, on the same shrink;
+    // - the price of a REFUSAL: a refused shrink falls back to a push, so it
+    //   is compared with a push, not with a shrink.
     final grown = item.copyWith(w: item.w + 1);
     record(
       'Fixed board (2.11)',
@@ -574,9 +579,33 @@ void main() {
     );
     record(
       'Fixed board (2.11)',
-      'resizeItem shrink, isSizeAllowed ($size items)',
+      'resizeItem shrink, policy allows all ($size items)',
       measure(
-        'ResizePolicy',
+        'ResizeAllowAll',
+        () => resizeItem(
+          layout,
+          grown,
+          behavior: ResizeBehavior.shrink,
+          cols: cols,
+          policy: const _BenchAllowAll(),
+        ),
+        iterations: size > 2000 ? 5 : 15,
+      ),
+    );
+    record(
+      'Fixed board (2.11)',
+      'resizeItem push, no policy ($size items)',
+      measure(
+        'ResizePush',
+        () => resizeItem(layout, grown, behavior: ResizeBehavior.push, cols: cols),
+        iterations: size > 2000 ? 5 : 15,
+      ),
+    );
+    record(
+      'Fixed board (2.11)',
+      'resizeItem shrink refused -> push ($size items)',
+      measure(
+        'ResizeRefused',
         () => resizeItem(
           layout,
           grown,
@@ -687,4 +716,12 @@ class _BenchSizes extends DashboardPolicy {
 
   @override
   bool isSizeAllowed(LayoutItem item, int w, int h) => sizes.contains((w, h));
+}
+
+/// Accepts every size: isolates the cost of consulting a policy.
+class _BenchAllowAll extends DashboardPolicy {
+  const _BenchAllowAll();
+
+  @override
+  bool isSizeAllowed(LayoutItem item, int w, int h) => true;
 }
