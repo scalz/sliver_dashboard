@@ -546,7 +546,7 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     // A breakpoint change happened since the snapshot was taken. Replaying it
     // verbatim would leave items outside the grid, so it is re-projected.
     return _compactor.resolveCollisions(
-      engine.correctBounds(items, cols),
+      engine.correctBounds(items, cols, horizontal: !_isVerticalScroll),
       cols,
     );
   }
@@ -728,7 +728,11 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
       );
     } else {
       // 3b. Standard behavior: Calculate new layout from scratch
-      final corrected = engine.correctBounds(currentLayout, newSlotCount);
+      final corrected = engine.correctBounds(
+        currentLayout,
+        newSlotCount,
+        horizontal: !_isVerticalScroll,
+      );
       nextLayout = _compactor.compact(
         corrected,
         newSlotCount,
@@ -770,6 +774,7 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
         newItems: itemsToPlace,
         cols: newSlotCount,
         maxRows: maxRows.value,
+        horizontal: !_isVerticalScroll,
       );
 
       // Replace result with merged list
@@ -840,6 +845,7 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
       cols: slotCount.peek(),
       strategy: strategy,
       maxRows: maxRows.peek(),
+      horizontal: !_isVerticalScroll,
     );
 
     final compactorStrategy =
@@ -964,7 +970,11 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
       for (final i in current)
         if (i.id == itemId) updated else i,
     ];
-    final corrected = engine.correctBounds(candidate, slotCount.value);
+    final corrected = engine.correctBounds(
+      candidate,
+      slotCount.value,
+      horizontal: !_isVerticalScroll,
+    );
 
     final List<LayoutItem> resolved;
     if (recompact) {
@@ -1054,7 +1064,11 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     if (oldItem == null) return;
 
     // 2. Correct bounds of the new item to match target columns
-    final correctedNewItem = engine.correctBounds([newItem], slotCount.value).first;
+    final correctedNewItem = engine.correctBounds(
+      [newItem],
+      slotCount.value,
+      horizontal: !_isVerticalScroll,
+    ).first;
 
     // 3. Build and sort the new layout (Index Stability Invariant)
     final nextLayout = [
@@ -1127,7 +1141,11 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     }).toList();
 
     // Validate bounds and compact to ensure integrity
-    final corrected = engine.correctBounds(newLayout, slotCount.value);
+    final corrected = engine.correctBounds(
+      newLayout,
+      slotCount.value,
+      horizontal: !_isVerticalScroll,
+    );
 
     // Apply compaction if configured, otherwise just resolve overlaps
     layout.value = _compactor.compact(

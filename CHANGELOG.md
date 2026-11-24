@@ -16,7 +16,16 @@ defaults nothing changes.
   - `DashboardController.canPlace(item)`: whether an item fits exactly where it is, without any push.
   - `DashboardController.tryAddItem` / `tryAddItems`: all-or-nothing add that keeps the layout under
   `maxRows`; returns `false` with no change, no event and no history entry otherwise.
-- Engine helpers: `canPlace`, `nearestAllowedSize`, `mainAxisExtent`.
+- Engine helpers: `canPlace`, `nearestAllowedSize`, `mainAxisExtent`, `transposeItem`.
+
+### Fixed
+
+- **Horizontal grids: imports, adds and responsive passes bounded the wrong axis.**
+`correctBounds` and `placeNewItems` always bounded `x` by the slot count and `y` by `maxRows`. On a
+horizontally scrolling grid it is the other way round, so `importLayout` pulled a tile stored deep
+along `x` back to the first columns (its position was lost) while letting `y` overflow the slot
+count, and `addItems` / auto-placement and breakpoint changes could do the same. Both functions now
+take `horizontal:` and the controller passes its scroll direction; vertical grids are unchanged.
 
 ### Documentation
 

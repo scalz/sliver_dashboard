@@ -178,10 +178,21 @@ void main() {
   });
 
   test('the ceiling is measured along the main axis of each direction', () {
-    // x = 3 ends at 4 along x: past maxRows 3 on a horizontal grid only.
-    const tile = LayoutItem(id: 'n', x: 3, y: 0, w: 1, h: 1);
-    expect(_build(layout: const []).tryAddItem(tile), isTrue);
-    expect(_build(layout: const [], axis: Axis.horizontal).tryAddItem(tile), isFalse);
+    // A 1x4 tile: one cross slot wide on a vertical grid, a full column on a
+    // horizontal one. With maxRows 1, first-fit finds room next to it only
+    // on the vertical grid (whose layout already exceeds the cap and does not
+    // grow); on the horizontal grid the 1x1 must go past the ceiling.
+    const tall = [LayoutItem(id: 'a', x: 0, y: 0, w: 1, h: 4)];
+    const tile = LayoutItem(id: 'n', x: -1, y: -1, w: 1, h: 1);
+    expect(
+      _build(layout: tall, maxRows: 1).tryAddItem(tile, strategy: AutoPlacementStrategy.firstFit),
+      isTrue,
+    );
+    expect(
+      _build(layout: tall, maxRows: 1, axis: Axis.horizontal)
+          .tryAddItem(tile, strategy: AutoPlacementStrategy.firstFit),
+      isFalse,
+    );
   });
 
   group('resize', () {
