@@ -5,6 +5,8 @@ import 'package:sliver_dashboard/src/controller/dashboard_controller_impl.dart';
 import 'package:sliver_dashboard/src/controller/dashboard_controller_interface.dart';
 import 'package:sliver_dashboard/src/controller/layout_metrics.dart';
 import 'package:sliver_dashboard/src/controller/utility.dart';
+import 'package:sliver_dashboard/src/engine/layout_engine.dart' as engine;
+import 'package:sliver_dashboard/src/models/dashboard_policy.dart';
 import 'package:sliver_dashboard/src/models/layout_item.dart';
 import 'package:sliver_dashboard/src/view/dashboard_typedefs.dart';
 
@@ -474,6 +476,7 @@ class DashboardNestedCoordinator {
     required int targetSlotCount,
     SlotMetrics? sourceMetrics,
     SlotMetrics? targetMetrics,
+    DashboardPolicy? targetPolicy,
   }) {
     // Reason: Handle developer-defined custom projection rules first if policy is set to custom
     if (projectionPolicy == DimensionProjectionPolicy.custom && customProjectionCallback != null) {
@@ -484,7 +487,7 @@ class DashboardNestedCoordinator {
       );
       // Callback output is developer-controlled and therefore untrusted
       // with respect to the target grid's invariants.
-      return _sanitizeForTarget(custom, targetSlotCount);
+      return _sanitizeForTarget(custom, targetSlotCount, targetPolicy);
     }
 
     // Evaluated BEFORE the sourceSlotCount == targetSlotCount
@@ -496,19 +499,20 @@ class DashboardNestedCoordinator {
     // matters most.
     if (projectionPolicy == DimensionProjectionPolicy.preservePixelSize) {
       if (sourceMetrics == null || targetMetrics == null) {
-        return _sanitizeForTarget(item, targetSlotCount);
+        return _sanitizeForTarget(item, targetSlotCount, targetPolicy);
       }
       return _projectPixelSize(
         item,
         from: sourceMetrics,
         to: targetMetrics,
         targetSlotCount: targetSlotCount,
+        targetPolicy: targetPolicy,
       );
     }
 
     if (projectionPolicy == DimensionProjectionPolicy.preserveLogicalSize ||
         sourceSlotCount == targetSlotCount) {
-      return _sanitizeForTarget(item, targetSlotCount);
+      return _sanitizeForTarget(item, targetSlotCount, targetPolicy);
     }
 
     final ratio = targetSlotCount / sourceSlotCount;
@@ -536,6 +540,7 @@ class DashboardNestedCoordinator {
     return _sanitizeForTarget(
       item.copyWith(w: projectedW, h: projectedH),
       targetSlotCount,
+      targetPolicy,
     );
   }
 
@@ -568,6 +573,7 @@ class DashboardNestedCoordinator {
     required SlotMetrics from,
     required SlotMetrics to,
     required int targetSlotCount,
+    DashboardPolicy? targetPolicy,
   }) {
     final f = _stridesOf(from);
     final t = _stridesOf(to);
@@ -575,7 +581,7 @@ class DashboardNestedCoordinator {
     // non-positive or non-finite strides: keep the logical size rather than
     // producing Infinity/NaN dimensions.
     if (!(f.x > 0) || !(f.y > 0) || !(t.x > 0) || !(t.y > 0)) {
-      return _sanitizeForTarget(item, targetSlotCount);
+      return _sanitizeForTarget(item, targetSlotCount, targetPolicy);
     }
 
     final rx = f.x / t.x;
@@ -615,6 +621,7 @@ class DashboardNestedCoordinator {
         maxH: maxH?.toDouble() ?? item.maxH,
       ),
       targetSlotCount,
+      targetPolicy,
     );
   }
 
@@ -646,6 +653,7 @@ class DashboardNestedCoordinator {
       targetSlotCount: to.slotCount.peek(),
       sourceMetrics: fromTarget.currentSlotMetrics(),
       targetMetrics: toTarget.currentSlotMetrics(),
+      targetPolicy: to.policy,
     );
   }
 
@@ -655,11 +663,40 @@ class DashboardNestedCoordinator {
 
   /// Clamps [item] so it satisfies the target grid's hard invariants:
   /// `1 <= w <= targetSlotCount`, `h >= 1`, `minW <= min(w, targetSlotCount)`
-  /// and `minH <= h`. Returns the same instance when already valid (no
-  /// allocation on the common path).
-  LayoutItem _sanitizeForTarget(LayoutItem item, int targetSlotCount) {
-    final w = item.w.clamp(1, targetSlotCount);
-    final h = item.h < 1 ? 1 : item.h;
+  /// and `minH <= h`. With a [targetPolicy] restricting sizes
+  /// ([DashboardPolicy.isSizeAllowed]), the size becomes the nearest one the
+  /// target allows; when none fits, the item keeps its size (an item's own
+  /// size is always accepted). Returns the same instance when already valid
+  /// (no allocation on the common path).
+  LayoutItem _sanitizeForTarget(
+    LayoutItem item,
+    int targetSlotCount, [
+    DashboardPolicy? targetPolicy,
+  ]) {
+    var w = item.w.clamp(1, targetSlotCount);
+    var h = item.h < 1 ? 1 : item.h;
+    if (targetPolicy != null && !targetPolicy.isSizeAllowed(item, w, h)) {
+      // Reason: the main axis is unbounded, so the search box is capped at
+      // twice the larger of the item and the grid; allowed sizes of a fixed
+      // board are small.
+      final cap = (h > targetSlotCount ? h : targetSlotCount) * 2;
+      final maxW =
+          item.maxW.isFinite && item.maxW < targetSlotCount ? item.maxW.toInt() : targetSlotCount;
+      final maxH = item.maxH.isFinite && item.maxH < cap ? item.maxH.toInt() : cap;
+      final allowed = engine.nearestAllowedSize(
+        w: w.toDouble(),
+        h: h.toDouble(),
+        minW: 1,
+        maxW: maxW < 1 ? 1 : maxW,
+        minH: 1,
+        maxH: maxH < 1 ? 1 : maxH,
+        isAllowed: (cw, ch) => targetPolicy.isSizeAllowed(item, cw, ch),
+      );
+      if (allowed != null) {
+        w = allowed.$1;
+        h = allowed.$2;
+      }
+    }
     // minW/minH are capped rather than rejected so that oversized
     // items remain movable across asymmetric grids; the cap is applied to the
     // projected copy only — the source grid's snapshot keeps the original
@@ -728,6 +765,7 @@ class DashboardNestedCoordinator {
     final pixelPolicy = projectionPolicy == DimensionProjectionPolicy.preservePixelSize;
     final srcInternal = session.origin.controller.internal;
     final dstInternal = over.controller.internal;
+    final dstPolicy = over.controller.policy;
     final srcSlotW = pixelPolicy ? (srcInternal.viewSlotWidth ?? 0) : 0.0;
     final srcSlotH = pixelPolicy ? (srcInternal.viewSlotHeight ?? 0) : 0.0;
     final dstSlotW = pixelPolicy ? (dstInternal.viewSlotWidth ?? 0) : 0.0;
@@ -740,7 +778,8 @@ class DashboardNestedCoordinator {
         session.projMemoSrcSlotW == srcSlotW &&
         session.projMemoSrcSlotH == srcSlotH &&
         session.projMemoDstSlotW == dstSlotW &&
-        session.projMemoDstSlotH == dstSlotH) {
+        session.projMemoDstSlotH == dstSlotH &&
+        identical(session.projMemoDstPolicy, dstPolicy)) {
       return memo;
     }
 
@@ -750,6 +789,7 @@ class DashboardNestedCoordinator {
       targetSlotCount: dst,
       sourceMetrics: pixelPolicy ? session.origin.currentSlotMetrics() : null,
       targetMetrics: pixelPolicy ? over.currentSlotMetrics() : null,
+      targetPolicy: dstPolicy,
     );
     session
       ..projMemoSrc = src
@@ -758,6 +798,7 @@ class DashboardNestedCoordinator {
       ..projMemoSrcSlotH = srcSlotH
       ..projMemoDstSlotW = dstSlotW
       ..projMemoDstSlotH = dstSlotH
+      ..projMemoDstPolicy = dstPolicy
       ..projMemoResult = projected;
     return projected;
   }
@@ -1502,6 +1543,10 @@ class _CrossGridSession {
   double projMemoSrcSlotH = -1;
   double projMemoDstSlotW = -1;
   double projMemoDstSlotH = -1;
+
+  /// Target policy the memo was computed with (identity: a policy restricting
+  /// sizes changes the projection).
+  DashboardPolicy? projMemoDstPolicy;
   LayoutItem? projMemoResult;
 }
 

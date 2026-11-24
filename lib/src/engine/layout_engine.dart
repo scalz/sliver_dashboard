@@ -810,6 +810,63 @@ bool canPlace(
   return keepsOwnSize || isSizeAllowed == null || isSizeAllowed(w, h);
 }
 
+/// Returns the integer size, within `[minW, maxW] x [minH, maxH]`, that
+/// [isAllowed] accepts and that is nearest to the continuous size ([w], [h])
+/// (Manhattan distance, in slots).
+///
+/// [fallback] is a size known to be acceptable (e.g. the item's size before
+/// the gesture): it is returned when nothing allowed is nearer, and its
+/// distance bounds the search, so the cost is O(R²) where R is how far the
+/// target moved from it — never the whole box. Without a fallback the whole
+/// box is scanned: callers must bound it. Returns null only when no fallback
+/// is given and nothing in the box is allowed.
+///
+/// Ties are broken deterministically: larger area first, then smaller width,
+/// then smaller height. [isAllowed] is only called for a size that would win.
+(int, int)? nearestAllowedSize({
+  required double w,
+  required double h,
+  required int minW,
+  required int maxW,
+  required int minH,
+  required int maxH,
+  required bool Function(int w, int h) isAllowed,
+  (int, int)? fallback,
+}) {
+  var best = fallback;
+  var bestD =
+      fallback == null ? double.infinity : (fallback.$1 - w).abs() + (fallback.$2 - h).abs();
+
+  bool beats(int cw, int ch, double d) {
+    final b = best;
+    if (b == null || d < bestD) return true;
+    if (d > bestD) return false;
+    final area = cw * ch;
+    final bestArea = b.$1 * b.$2;
+    if (area != bestArea) return area > bestArea;
+    if (cw != b.$1) return cw < b.$1;
+    return ch < b.$2;
+  }
+
+  final wLo = bestD.isFinite ? max(minW, (w - bestD).ceil()) : minW;
+  final wHi = bestD.isFinite ? min(maxW, (w + bestD).floor()) : maxW;
+  for (var cw = wLo; cw <= wHi; cw++) {
+    final dw = (cw - w).abs();
+    // Reason: bestD only shrinks, so the h window is re-derived per column.
+    final hLo = bestD.isFinite ? max(minH, (h - (bestD - dw)).ceil()) : minH;
+    final hHi = bestD.isFinite ? min(maxH, (h + (bestD - dw)).floor()) : maxH;
+    for (var ch = hLo; ch <= hHi; ch++) {
+      final d = dw + (ch - h).abs();
+      if (fallback != null && cw == fallback.$1 && ch == fallback.$2) continue;
+      if (!beats(cw, ch, d)) continue;
+      if (!isAllowed(cw, ch)) continue;
+      best = (cw, ch);
+      bestD = d;
+    }
+  }
+  return best;
+}
+
 /// Recursively resolves collisions during compaction by moving items down/right.
 /// Exposed for custom compactors.
 LayoutItem resolveCompactionCollision(
@@ -1275,8 +1332,9 @@ bool _hasResidualOverlap(Layout layout, _RowIndex rowIndex) {
 Layout? _tryShrinkCollisions(
   Layout layout,
   LayoutItem resizedItem,
-  List<LayoutItem> collisions,
-) {
+  List<LayoutItem> collisions, {
+  DashboardPolicy? policy,
+}) {
   final layoutMap = {for (final item in layout) item.id: item};
 
   for (final collision in collisions) {
@@ -1287,13 +1345,14 @@ Layout? _tryShrinkCollisions(
       final overlap = (resizedItem.x + resizedItem.w) - collision.x;
       final newCollisionWidth = collision.w - overlap;
 
-      if (newCollisionWidth >= collision.minW) {
+      if (newCollisionWidth >= collision.minW &&
+          (policy == null || policy.isSizeAllowed(collision, newCollisionWidth, collision.h))) {
         layoutMap[collision.id] = collision.copyWith(
           x: collision.x + overlap,
           w: newCollisionWidth,
         );
       } else {
-        return null; // Shrink failed, minWidth violation.
+        return null; // Shrink failed: minW violated or size refused by the policy.
       }
     }
     // Case 2: A expands left, shrinking B from the right.
@@ -1301,10 +1360,11 @@ Layout? _tryShrinkCollisions(
       final overlap = (collision.x + collision.w) - resizedItem.x;
       final newCollisionWidth = collision.w - overlap;
 
-      if (newCollisionWidth >= collision.minW) {
+      if (newCollisionWidth >= collision.minW &&
+          (policy == null || policy.isSizeAllowed(collision, newCollisionWidth, collision.h))) {
         layoutMap[collision.id] = collision.copyWith(w: newCollisionWidth);
       } else {
-        return null; // Shrink failed, minWidth violation.
+        return null; // Shrink failed: minW violated or size refused by the policy.
       }
     }
   }
@@ -1317,8 +1377,9 @@ Layout? _tryShrinkCollisions(
 Layout? _tryShrinkMoveCollisions(
   Layout layout,
   LayoutItem movingItem,
-  List<LayoutItem> collisions,
-) {
+  List<LayoutItem> collisions, {
+  DashboardPolicy? policy,
+}) {
   final layoutMap = {for (final item in layout) item.id: item};
 
   for (final collision in collisions) {
@@ -1329,13 +1390,14 @@ Layout? _tryShrinkMoveCollisions(
     final overlapY = (movingItem.y + movingItem.h) - collision.y;
     final newCollisionHeight = collision.h - overlapY;
 
-    if (newCollisionHeight >= collision.minH) {
+    if (newCollisionHeight >= collision.minH &&
+        (policy == null || policy.isSizeAllowed(collision, collision.w, newCollisionHeight))) {
       layoutMap[collision.id] = collision.copyWith(
         y: collision.y + overlapY,
         h: newCollisionHeight,
       );
     } else {
-      return null; // Shrink failed, minHeight limit violated
+      return null; // Shrink failed: minH violated or size refused by the policy.
     }
   }
 
@@ -1367,7 +1429,12 @@ Layout resizeItem(
   // If collisions exist, handle based on behavior.
   if (behavior == ResizeBehavior.shrink) {
     // First, attempt to shrink the colliding items.
-    final shrunkLayout = _tryShrinkCollisions(newLayout, itemToResize, collisions);
+    final shrunkLayout = _tryShrinkCollisions(
+      newLayout,
+      itemToResize,
+      collisions,
+      policy: policy,
+    );
 
     // If shrinking was successful, return the result.
     if (shrunkLayout != null) {
@@ -1941,7 +2008,12 @@ Layout moveCluster(
   // If auto-shrink is enabled and collisions are detected with dynamic items,
   // we first try to dynamically contract the size of neighbors to avoid massive layout shifts.
   if (allowAutoShrink && directCollisions.isNotEmpty && !directCollisions.any((i) => i.isStatic)) {
-    final shrunk = _tryShrinkMoveCollisions(layoutForMove, targetBBox, directCollisions);
+    final shrunk = _tryShrinkMoveCollisions(
+      layoutForMove,
+      targetBBox,
+      directCollisions,
+      policy: policy,
+    );
     if (shrunk != null) {
       layoutForMove = shrunk;
     }

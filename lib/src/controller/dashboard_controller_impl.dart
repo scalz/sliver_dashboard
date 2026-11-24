@@ -664,6 +664,13 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
   int? _lastResizeX;
   int? _lastResizeY;
 
+  // Size last handed to the engine; differs from the _lastResize* key only
+  // when DashboardPolicy.isSizeAllowed projected the raw candidate.
+  int? _appliedResizeW;
+  int? _appliedResizeH;
+  int? _appliedResizeX;
+  int? _appliedResizeY;
+
   // --- PUBLIC METHODS IMPLEMENTATION ---
 
   @override
@@ -1780,6 +1787,10 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     _lastResizeH = null;
     _lastResizeX = null;
     _lastResizeY = null;
+    _appliedResizeW = null;
+    _appliedResizeH = null;
+    _appliedResizeX = null;
+    _appliedResizeY = null;
 
     // Fluid preview: the tile leaves the grid (its slot becomes the
     // snap-target placeholder) and the overlay draws it at raw pixel size
@@ -1888,6 +1899,11 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
       fh = fh.clamp(originalItem.minH.toDouble(), maxH.toDouble());
     }
 
+    // Largest size each axis may take under the clamps below (anchors, grid,
+    // maxRows); bounds the isSizeAllowed projection after the bypass.
+    var wBound = maxW;
+    var hBound = maxH;
+
     // maxRows: block interactive growth past the main-axis cap. Anchored
     // resizes (top/left) never extend the far edge, so clamping the size
     // against the ORIGINAL near edge is exact.
@@ -1896,10 +1912,12 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
       if (isVertical && !isTopResize) {
         final cap = max(originalItem.minH, rowCap - originalItem.y);
         newH = newH.clamp(originalItem.minH, cap);
+        hBound = min(hBound, cap);
         if (fluid) fh = fh.clamp(originalItem.minH.toDouble(), cap.toDouble());
       } else if (!isVertical && !isLeftResize) {
         final cap = max(originalItem.minW, rowCap - originalItem.x);
         newW = newW.clamp(originalItem.minW, cap);
+        wBound = min(wBound, cap);
         if (fluid) fw = fw.clamp(originalItem.minW.toDouble(), cap.toDouble());
       }
     }
@@ -1919,6 +1937,7 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
       final maxYClamp = originalBottom - originalItem.minH;
       newY = newY.clamp(minYClamp, maxYClamp);
       newH = originalBottom - newY;
+      hBound = originalBottom - minYClamp;
       if (fluid) {
         // Same anchor, same barriers, continuous. The barriers are resolved
         // once, against the snapped probe: an obstacle is an integer cell, and
@@ -1936,6 +1955,7 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
         if (newY + newH > slotCount.value) {
           newH = slotCount.value - newY;
         }
+        hBound = min(hBound, slotCount.value - newY);
       }
       if (fluid) {
         if (fy < 0) {
@@ -1963,6 +1983,7 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
       final maxXClamp = originalRight - originalItem.minW;
       newX = newX.clamp(minXClamp, maxXClamp);
       newW = originalRight - newX;
+      wBound = originalRight - minXClamp;
       if (fluid) {
         fx = fx.clamp(minXClamp.toDouble(), maxXClamp.toDouble());
         fw = originalRight - fx;
@@ -1977,6 +1998,7 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
         if (newX + newW > slotCount.value) {
           newW = slotCount.value - newX;
         }
+        wBound = min(wBound, slotCount.value - newX);
       }
       if (fluid) {
         if (fx < 0) {
@@ -2024,6 +2046,58 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
     _lastResizeH = newH;
     _lastResizeX = newX;
     _lastResizeY = newY;
+
+    // Allowed sizes. Runs behind the bypass (keyed on the raw rounding, which
+    // only moves on a cell crossing), so the search never costs per event.
+    // The ghost above keeps tracking the raw pointer; the snapped item, and so
+    // the settle target, is the allowed size nearest to it.
+    final p = policy;
+    if (p != null &&
+        (newW != originalItem.w || newH != originalItem.h) &&
+        !p.isSizeAllowed(originalItem, newW, newH)) {
+      final originalRight = originalItem.x + originalItem.w;
+      final originalBottom = originalItem.y + originalItem.h;
+      final changesW = handle != ResizeHandle.top && handle != ResizeHandle.bottom;
+      final changesH = handle != ResizeHandle.left && handle != ResizeHandle.right;
+      // Reason: an anchored edge (top/left) never pushes, so a size that would
+      // reach over a static barrier is unreachable, not merely refused.
+      bool reachable(int w, int h) {
+        if (!isLeftResize && !isTopResize) return true;
+        final x = isLeftResize ? originalRight - w : originalItem.x;
+        final y = isTopResize ? originalBottom - h : originalItem.y;
+        for (final s in statics) {
+          if (s.x < x + w && s.x + s.w > x && s.y < y + h && s.y + s.h > y) return false;
+        }
+        return true;
+      }
+
+      final size = engine.nearestAllowedSize(
+        w: fw,
+        h: fh,
+        minW: changesW ? originalItem.minW : originalItem.w,
+        maxW: changesW ? max(originalItem.minW, wBound) : originalItem.w,
+        minH: changesH ? originalItem.minH : originalItem.h,
+        maxH: changesH ? max(originalItem.minH, hBound) : originalItem.h,
+        isAllowed: (w, h) => p.isSizeAllowed(originalItem, w, h) && reachable(w, h),
+        fallback: (originalItem.w, originalItem.h),
+      )!;
+      newW = size.$1;
+      newH = size.$2;
+      newX = isLeftResize ? originalRight - newW : originalItem.x;
+      newY = isTopResize ? originalBottom - newH : originalItem.y;
+    }
+
+    // A refused crossing can project onto the size already applied.
+    if (_appliedResizeW == newW &&
+        _appliedResizeH == newH &&
+        _appliedResizeX == newX &&
+        _appliedResizeY == newY) {
+      return;
+    }
+    _appliedResizeW = newW;
+    _appliedResizeH = newH;
+    _appliedResizeX = newX;
+    _appliedResizeY = newY;
 
     final resizedItem = originalItem.copyWith(w: newW, h: newH, x: newX, y: newY);
 
