@@ -2693,13 +2693,12 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
     final dt = (elapsed - _lastScrollTick).inMicroseconds.clamp(0, 100000) / 1e6;
     _lastScrollTick = elapsed;
     if (!widget.scrollController.hasClients || dt == 0) return;
-    final newOffset = widget.scrollController.offset + _scrollSpeed * dt;
-    widget.scrollController.jumpTo(
-      newOffset.clamp(
-        widget.scrollController.position.minScrollExtent,
-        widget.scrollController.position.maxScrollExtent,
-      ),
-    );
+    // Reason: mouse-wheel semantics. Under a NestedScrollView the grid's
+    // position is the coordinator's inner one, and a jumpTo there moves the
+    // whole coordinator: the header snapped shut in one frame. pointerScroll
+    // lets the coordinator consume the delta in the header first, step by
+    // step; on a plain position it is a clamped jump.
+    widget.scrollController.position.pointerScroll(_scrollSpeed * dt);
     if (_lastGlobalPosition != null) {
       if (_activeItemId != null) {
         _performUpdate(_lastGlobalPosition!);

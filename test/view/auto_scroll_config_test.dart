@@ -154,6 +154,57 @@ void main() {
     });
   });
 
+  testWidgets('under a NestedScrollView the header collapses step by step', (tester) async {
+    await run(() async {
+      tester.view.physicalSize = const Size(400, 600);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final outer = ScrollController();
+      addTearDown(outer.dispose);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: NestedScrollView(
+            controller: outer,
+            headerSliverBuilder: (_, __) => [
+              const SliverAppBar(expandedHeight: 200, pinned: true, title: Text('header')),
+            ],
+            // The body's grid scrolls on the coordinator's inner position.
+            body: Builder(
+              builder: (context) => Dashboard(
+                controller: controller,
+                scrollController: PrimaryScrollController.of(context),
+                padding: const EdgeInsets.all(20),
+                itemBuilder: (context, item) => Text(item.id),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final gesture = await tester.startGesture(
+        tester.getCenter(find.text('1')),
+        kind: PointerDeviceKind.mouse,
+      );
+      await tester.pump();
+      await gesture.moveBy(const Offset(0, 10));
+      await tester.pump();
+      await gesture.moveTo(const Offset(200, 590));
+      await tester.pump();
+
+      var last = outer.offset;
+      for (var frame = 0; frame < 10; frame++) {
+        await tester.pump(const Duration(milliseconds: 16));
+        final step = outer.offset - last;
+        expect(step, greaterThan(0), reason: 'frame $frame: header did not move');
+        expect(step, lessThan(50), reason: 'frame $frame: header snapped (${outer.offset})');
+        last = outer.offset;
+      }
+      expect(controller.isDragging.value, isTrue);
+      await gesture.up();
+      await tester.pumpAndSettle();
+    });
+  });
+
   test('AutoScrollConfig equality laws and copyWith', () {
     const a = AutoScrollConfig(edgeExtent: 40, maxSpeed: 800);
     const b = AutoScrollConfig(edgeExtent: 40, maxSpeed: 800);
