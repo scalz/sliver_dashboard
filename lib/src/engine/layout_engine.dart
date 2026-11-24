@@ -846,8 +846,9 @@ bool canPlace(
 /// box is scanned: callers must bound it. Returns null only when no fallback
 /// is given and nothing in the box is allowed.
 ///
-/// Ties are broken deterministically: larger area first, then smaller width,
-/// then smaller height. [isAllowed] is only called for a size that would win.
+/// Ties are broken deterministically: larger area first, then smaller width
+/// (equal area and width imply equal height, i.e. the same size). [isAllowed]
+/// is only called for a size that would win.
 (int, int)? nearestAllowedSize({
   required double w,
   required double h,
@@ -869,8 +870,7 @@ bool canPlace(
     final area = cw * ch;
     final bestArea = b.$1 * b.$2;
     if (area != bestArea) return area > bestArea;
-    if (cw != b.$1) return cw < b.$1;
-    return ch < b.$2;
+    return cw < b.$1;
   }
 
   final wLo = bestD.isFinite ? max(minW, (w - bestD).ceil()) : minW;

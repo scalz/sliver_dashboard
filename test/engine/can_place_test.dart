@@ -3,6 +3,14 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sliver_dashboard/sliver_dashboard.dart';
 import 'package:sliver_dashboard/src/engine/layout_engine.dart' as engine;
 
+/// Overrides an unrelated rule only: isSizeAllowed keeps its default.
+class _DragOnly extends DashboardPolicy {
+  const _DragOnly();
+
+  @override
+  bool canDrag(LayoutItem item) => true;
+}
+
 class _SquaresOnly extends DashboardPolicy {
   const _SquaresOnly();
 
@@ -141,6 +149,11 @@ void main() {
         ..policy = const _SquaresOnly();
       expect(controller.canPlace(c), isFalse);
       expect(controller.canPlace(c.copyWith(h: 2)), isTrue);
+    });
+
+    test('a policy that does not override isSizeAllowed allows every size', () {
+      controller.policy = const _DragOnly();
+      expect(controller.canPlace(const LayoutItem(id: 'n', x: 0, y: 2, w: 3, h: 1)), isTrue);
     });
 
     test('follows the scroll direction', () {

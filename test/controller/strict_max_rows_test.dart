@@ -257,6 +257,17 @@ void main() {
       expect(_extent(c.layout.value), lessThanOrEqualTo(3));
     });
 
+    test('a hover that stays on a refused cell is not re-simulated', () {
+      final c = _build();
+      c.showPlaceholder(x: 0, y: 0, w: 2, h: 1); // refused, cached
+      final layoutBefore = c.layout.value;
+      final snapshotBefore = c.originalLayoutOnStart.value;
+      c.showPlaceholder(x: 0, y: 0, w: 2, h: 1); // same cell: cache hit
+      expect(identical(c.layout.value, layoutBefore), isTrue);
+      expect(identical(c.originalLayoutOnStart.value, snapshotBefore), isTrue);
+      expect(c.placeholder.value, isNull);
+    });
+
     test('hidePlaceholder starts a new hover episode', () {
       final c = _build();
       c.showPlaceholder(x: 0, y: 0, w: 2, h: 1); // refused, cached

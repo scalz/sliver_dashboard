@@ -158,6 +158,37 @@ void main() {
     });
   });
 
+  test('a corner resize never takes a size that would cover a static the clamps miss', () {
+    // a = (4,4) 2x2, anchored at right 6 / bottom 6. The static sits at
+    // x 2..3, y 1..3: outside the Y barrier's x-range [3, 6) and the X
+    // barrier's y-range [3, 6) of the rounded 3x3 probe, so no clamp sees it.
+    // 3x3 is refused; 4x4 is nearest but its rect (x 2..6, y 2..6) covers the
+    // static, so the item keeps its own 2x2.
+    final c = build(
+      allowed: {(2, 2), (4, 4)},
+      layout: const [
+        LayoutItem(id: 'a', x: 4, y: 4, w: 2, h: 2, minW: 1, minH: 1),
+        LayoutItem(id: 's', x: 2, y: 1, w: 1, h: 2, isStatic: true),
+      ],
+    );
+    c.onResizeStart('a');
+    update(c, ResizeHandle.topLeft, const Offset(-150, -150));
+    final a = itemA(c);
+    expect((a.x, a.y, a.w, a.h), (4, 4, 2, 2));
+    expect(overlapFree(c.layout.value), isTrue);
+
+    // The same gesture without the static takes 4x4.
+    final free = build(
+      allowed: {(2, 2), (4, 4)},
+      layout: const [
+        LayoutItem(id: 'a', x: 4, y: 4, w: 2, h: 2, minW: 1, minH: 1),
+      ],
+    );
+    free.onResizeStart('a');
+    update(free, ResizeHandle.topLeft, const Offset(-150, -150));
+    expect((itemA(free).w, itemA(free).h), (4, 4));
+  });
+
   group('resize — cost', () {
     test('the policy is not consulted while the pointer stays in a cell', () {
       final c = build();
@@ -255,6 +286,27 @@ void main() {
       final b = layout.firstWhere((i) => i.id == 'b');
       expect((b.w, b.h), (2, 1));
       expect(overlapFree(layout), isTrue);
+    });
+
+    test('growing LEFT shrinks the neighbour from its right edge', () {
+      List<LayoutItem> grow(Set<(int, int)> allowed) => engine.resizeItem(
+            const [
+              LayoutItem(id: 'a', x: 2, y: 0, w: 2, h: 1),
+              LayoutItem(id: 'b', x: 0, y: 0, w: 2, h: 1),
+            ],
+            const LayoutItem(id: 'a', x: 1, y: 0, w: 3, h: 1),
+            behavior: engine.ResizeBehavior.shrink,
+            cols: 4,
+            policy: _Sizes(allowed),
+          );
+
+      final shrunk = grow({(1, 1), (2, 1), (3, 1)}).firstWhere((i) => i.id == 'b');
+      expect((shrunk.x, shrunk.w), (0, 1));
+
+      final refused = grow({(2, 1), (3, 1)});
+      final b = refused.firstWhere((i) => i.id == 'b');
+      expect((b.w, b.h), (2, 1), reason: 'refused: b keeps its size and is pushed');
+      expect(overlapFree(refused), isTrue);
     });
 
     test('the same shrink is applied when the size is allowed', () {

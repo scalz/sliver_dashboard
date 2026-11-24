@@ -1277,6 +1277,8 @@ void main() {
       expect(controller.onWillDelete, isNull);
       expect(controller.onItemsDeleted, isNull);
       expect(controller.onCloneRequested, isNull);
+      expect(controller.editOverlayBuilder, isNull);
+      expect(controller.resizeHandleBuilder, isNull);
     });
 
     testWidgets(
