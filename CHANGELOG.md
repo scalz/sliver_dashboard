@@ -2,6 +2,14 @@
 
 ### Added
 
+- **`editOverlayBuilder`** on `Dashboard`, `NestedDashboard` and `DashboardOverlay`: a per-tile overlay
+in edit mode, with `DashboardTileActions` (`delete`, `duplicate`) going through the same pipeline as the
+keyboard (`onWillDelete` veto, one undo step, `onItemsDeleted`, announcement), for that tile only.
+- **`DashboardGestureExclusion`**: a press on its child (a button inside a tile) starts no grid drag,
+resize, selection change or lasso.
+- **`emptyBuilder`** on `Dashboard`, `NestedDashboard` and `DashboardOverlay`: shown over an empty grid
+outside edit mode.
+
 - **Fixed boards.** Opt-in pieces for a grid with a fixed screen (wall panels, kiosks); with the
 defaults nothing changes.
   - `DashboardController.strictMaxRows` / `setStrictMaxRows`: `maxRows` becomes a hard ceiling for
