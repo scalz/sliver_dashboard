@@ -19,6 +19,17 @@ Ideal for analytics platforms, IoT control panels, project management tools, no-
   <img src="https://raw.githubusercontent.com/scalz/sliver_dashboard/main/img/single_grid.gif" alt="Sliver Dashboard Demo" width="500"/>
 </p>
 
+## Why sliver-native matters
+
+- **Native Sliver architecture, not a `Stack` dressed up as a sliver.** A real
+`RenderSliverMultiBoxAdaptor` sized to its content: several grids, lists and app bars share one
+`CustomScrollView`.
+- **RenderObject-level virtualization.** The sliver's child manager creates tiles lazily and
+garbage-collects them as they leave the cache extent.
+- **A high-performance engine for complex interactive dashboards.** Indexed collision cascade and
+fuzz-tested invariants: a drag step on 1,000 tiles takes under 1 ms on the web
+([benchmarks](BENCHMARK.md)).
+
 ## Features
 
 - **High Performance:** Built on Flutter's `Sliver` protocol with **smart caching**. It only renders visible items and prevents unnecessary rebuilds of children during drag/resize operations.
