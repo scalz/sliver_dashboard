@@ -1371,7 +1371,10 @@ Layout? _tryShrinkCollisions(
   List<LayoutItem> collisions, {
   DashboardPolicy? policy,
 }) {
-  final layoutMap = {for (final item in layout) item.id: item};
+  // Reason: only the colliding items change, and a refusal is common once a
+  // policy restricts sizes. Collect the few shrunk items, fail before any
+  // O(N) work, and rebuild the list once, in the input's order.
+  final shrunk = <String, LayoutItem>{};
 
   for (final collision in collisions) {
     // This logic primarily handles horizontal shrinking.
@@ -1383,7 +1386,7 @@ Layout? _tryShrinkCollisions(
 
       if (newCollisionWidth >= collision.minW &&
           (policy == null || policy.isSizeAllowed(collision, newCollisionWidth, collision.h))) {
-        layoutMap[collision.id] = collision.copyWith(
+        shrunk[collision.id] = collision.copyWith(
           x: collision.x + overlap,
           w: newCollisionWidth,
         );
@@ -1398,14 +1401,14 @@ Layout? _tryShrinkCollisions(
 
       if (newCollisionWidth >= collision.minW &&
           (policy == null || policy.isSizeAllowed(collision, newCollisionWidth, collision.h))) {
-        layoutMap[collision.id] = collision.copyWith(w: newCollisionWidth);
+        shrunk[collision.id] = collision.copyWith(w: newCollisionWidth);
       } else {
         return null; // Shrink failed: minW violated or size refused by the policy.
       }
     }
   }
 
-  return layoutMap.values.toList();
+  return [for (final item in layout) shrunk[item.id] ?? item];
 }
 
 /// A private helper function that attempts to resolve move collisions by shrinking
@@ -1416,7 +1419,8 @@ Layout? _tryShrinkMoveCollisions(
   List<LayoutItem> collisions, {
   DashboardPolicy? policy,
 }) {
-  final layoutMap = {for (final item in layout) item.id: item};
+  // Same shape as _tryShrinkCollisions: no O(N) work before success.
+  final shrunk = <String, LayoutItem>{};
 
   for (final collision in collisions) {
     if (collision.isStatic) return null; // Statics cannot shrink
@@ -1428,7 +1432,7 @@ Layout? _tryShrinkMoveCollisions(
 
     if (newCollisionHeight >= collision.minH &&
         (policy == null || policy.isSizeAllowed(collision, collision.w, newCollisionHeight))) {
-      layoutMap[collision.id] = collision.copyWith(
+      shrunk[collision.id] = collision.copyWith(
         y: collision.y + overlapY,
         h: newCollisionHeight,
       );
@@ -1437,7 +1441,7 @@ Layout? _tryShrinkMoveCollisions(
     }
   }
 
-  return layoutMap.values.toList();
+  return [for (final item in layout) shrunk[item.id] ?? item];
 }
 
 /// Resize item. Implements the "try shrink, fallback to push" logic.

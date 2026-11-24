@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 
+import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:sliver_dashboard/sliver_dashboard.dart';
@@ -150,9 +151,21 @@ class ComponentSpec {
 
 /// A strict policy to isolate layout regions and block specific collisions.
 class CustomDashboardPolicy extends DashboardPolicy {
-  const CustomDashboardPolicy({required this.blockSectionCollision});
+  const CustomDashboardPolicy({
+    required this.blockSectionCollision,
+    this.restrictSizes = false,
+  });
 
   final bool blockSectionCollision;
+
+  /// Fixed-board demo: tiles may only be 1x1, 2x1, 2x2 or 4x2.
+  final bool restrictSizes;
+
+  static const allowedSizes = {(1, 1), (2, 1), (2, 2), (4, 2)};
+
+  @override
+  bool isSizeAllowed(LayoutItem item, int w, int h) =>
+      !restrictSizes || item.isSectionBarrier || allowedSizes.contains((w, h));
 
   @override
   bool canCollide(LayoutItem itemA, LayoutItem itemB) {
@@ -209,6 +222,16 @@ class _DashboardPageState extends State<DashboardPage> {
     LassoSelectionMode.emptySpace,
   );
   final dragMode = ValueNotifier<DragMode>(DragMode.cascade);
+
+  // --- New in 2.11 (see the "New in 2.11" section of the config panel) ---
+  final useEditOverlay = ValueNotifier(false);
+  final excludeCardButtons = ValueNotifier(true);
+  final customHandles = ValueNotifier(false);
+  final showEmptyPlaceholder = ValueNotifier(true);
+  final restrictSizes = ValueNotifier(false);
+  final strictMaxRows = ValueNotifier(false);
+  final autoScrollPreset = ValueNotifier<String>('default');
+  final longPressDelayMs = ValueNotifier<int?>(null);
 
   // null = Use Responsive Breakpoints. Non-null = Override with custom fixed slot count.
   final customSlotCount = ValueNotifier<int?>(null);
@@ -358,6 +381,8 @@ class _DashboardPageState extends State<DashboardPage> {
     );
 
     blockSectionCollision.addListener(_updatePolicy);
+    restrictSizes.addListener(_updatePolicy);
+    autoScrollPreset.addListener(_applyAutoScroll);
   }
 
   void _showHistoryToast(String message) {
@@ -405,7 +430,17 @@ class _DashboardPageState extends State<DashboardPage> {
   void _updatePolicy() {
     controller.policy = CustomDashboardPolicy(
       blockSectionCollision: blockSectionCollision.value,
+      restrictSizes: restrictSizes.value,
     );
+  }
+
+  void _applyAutoScroll() {
+    controller.autoScroll = switch (autoScrollPreset.value) {
+      'fast' => const AutoScrollConfig(edgeExtent: 90, maxSpeed: 2000),
+      'slow' => const AutoScrollConfig(edgeExtent: 40, maxSpeed: 400),
+      'off' => AutoScrollConfig.off,
+      _ => AutoScrollConfig.byDefault,
+    };
   }
 
   void _syncJsonField() {
@@ -590,6 +625,20 @@ class _DashboardPageState extends State<DashboardPage> {
   @override
   void dispose() {
     blockSectionCollision.removeListener(_updatePolicy);
+    restrictSizes.removeListener(_updatePolicy);
+    autoScrollPreset.removeListener(_applyAutoScroll);
+    for (final n in <ChangeNotifier>[
+      useEditOverlay,
+      excludeCardButtons,
+      customHandles,
+      showEmptyPlaceholder,
+      restrictSizes,
+      strictMaxRows,
+      autoScrollPreset,
+      longPressDelayMs,
+    ]) {
+      n.dispose();
+    }
     showGenerateButton.dispose();
     confirmHistory.dispose();
     isEditing.dispose();
@@ -647,6 +696,7 @@ class _DashboardPageState extends State<DashboardPage> {
       onImportJson: _importJson,
       onStressTest: _addStressTestItems,
       onShowHud: _showShortcutsHudModal,
+      newFeaturesSection: _buildNewFeaturesSection(theme),
     );
 
     return Scaffold(
@@ -818,6 +868,208 @@ class _DashboardPageState extends State<DashboardPage> {
       textColor: colors.textColor,
       theme: theme,
       onDelete: () => _confirmAndDelete(item),
+      useEditOverlay: useEditOverlay,
+      excludeButtons: excludeCardButtons,
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // New in 2.11
+  // ---------------------------------------------------------------------------
+
+  /// Per-tile edit overlay: delete and duplicate through the grid's own
+  /// pipeline (onWillDelete confirmation, undo, onCloneRequested).
+  Widget _buildEditOverlay(
+    BuildContext context,
+    LayoutItem item,
+    DashboardTileActions actions,
+  ) {
+    if (item.isSectionBarrier) return const SizedBox.shrink();
+    Widget button(IconData icon, String tip, VoidCallback onTap) => Tooltip(
+      message: tip,
+      child: GestureDetector(
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.all(4),
+          decoration: const BoxDecoration(
+            color: Colors.black54,
+            shape: BoxShape.circle,
+          ),
+          child: Icon(icon, size: 14, color: Colors.white),
+        ),
+      ),
+    );
+    return Align(
+      alignment: Alignment.topRight,
+      child: Padding(
+        padding: const EdgeInsets.all(4),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            button(
+              Icons.copy,
+              'Duplicate (needs onCloneRequested)',
+              actions.duplicate,
+            ),
+            const SizedBox(width: 4),
+            button(Icons.close, 'Delete', actions.delete),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Round grips instead of the default L corners and edge bars.
+  Widget _buildRoundHandle(
+    BuildContext context,
+    LayoutItem item,
+    ResizeHandle handle,
+    double size,
+  ) {
+    final color = Theme.of(context).colorScheme.tertiary;
+    return Center(
+      child: Container(
+        width: size * 0.7,
+        height: size * 0.7,
+        decoration: BoxDecoration(
+          color: color,
+          shape: BoxShape.circle,
+          border: Border.all(color: Colors.white, width: 1.5),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEmptyPlaceholder(BuildContext context) {
+    final theme = Theme.of(context);
+    return Center(
+      child: Card(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.dashboard_customize,
+                size: 40,
+                color: theme.colorScheme.primary,
+              ),
+              const SizedBox(height: 8),
+              const Text('This dashboard is empty'),
+              const SizedBox(height: 4),
+              Text(
+                'Turn on Edit mode and drag a component from the palette.',
+                style: theme.textTheme.bodySmall,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildNewFeaturesSection(ThemeData theme) {
+    Widget label(String text) => Padding(
+      padding: const EdgeInsets.only(top: 8, bottom: 2),
+      child: Text(
+        text,
+        style: TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.bold,
+          color: theme.colorScheme.primary,
+        ),
+      ),
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const _SectionTitle('New in 2.11'),
+        _SwitchTile(
+          title:
+              'Tile buttons via editOverlayBuilder (instead of the card\'s own ×)',
+          notifier: useEditOverlay,
+        ),
+        _SwitchTile(
+          title:
+              'Wrap the card\'s own × in DashboardGestureExclusion '
+              '(off: clicking it starts a drag first)',
+          notifier: excludeCardButtons,
+        ),
+        _SwitchTile(
+          title: 'Custom resize handles (resizeHandleBuilder)',
+          notifier: customHandles,
+        ),
+        _SwitchTile(
+          title:
+              'Placeholder on an empty grid (emptyBuilder, outside edit mode)',
+          notifier: showEmptyPlaceholder,
+        ),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            icon: const Icon(Icons.delete_sweep, size: 16),
+            label: const Text(
+              'Remove all tiles',
+              style: TextStyle(fontSize: 12),
+            ),
+            onPressed: () => controller.removeItems([
+              for (final i in controller.layout.value) i.id,
+            ]),
+          ),
+        ),
+        _SwitchTile(
+          title: 'Allowed sizes only: 1x1, 2x1, 2x2, 4x2 (isSizeAllowed)',
+          notifier: restrictSizes,
+        ),
+        _SwitchTile(
+          title:
+              'Strict row ceiling: pushes never cross Max Rows (strictMaxRows)',
+          notifier: strictMaxRows,
+          onChanged: controller.setStrictMaxRows,
+        ),
+        label('Edge auto-scroll (controller.autoScroll)'),
+        ValueListenableBuilder<String>(
+          valueListenable: autoScrollPreset,
+          builder: (context, value, _) => DropdownButton<String>(
+            isExpanded: true,
+            dropdownColor: theme.colorScheme.surfaceContainerHigh,
+            value: value,
+            items: const [
+              DropdownMenuItem(
+                value: 'default',
+                child: Text('DEFAULT (50 PX ZONE, 937 PX/S)'),
+              ),
+              DropdownMenuItem(
+                value: 'fast',
+                child: Text('FAST (90 PX ZONE, 2000 PX/S)'),
+              ),
+              DropdownMenuItem(
+                value: 'slow',
+                child: Text('SLOW (40 PX ZONE, 400 PX/S)'),
+              ),
+              DropdownMenuItem(value: 'off', child: Text('OFF')),
+            ],
+            onChanged: (v) {
+              if (v != null) autoScrollPreset.value = v;
+            },
+          ),
+        ),
+        label('Touch pick-up delay (longPressDelay, mobile)'),
+        ValueListenableBuilder<int?>(
+          valueListenable: longPressDelayMs,
+          builder: (context, value, _) => DropdownButton<int?>(
+            isExpanded: true,
+            dropdownColor: theme.colorScheme.surfaceContainerHigh,
+            value: value,
+            items: const [
+              DropdownMenuItem(value: null, child: Text('DEFAULT (500 MS)')),
+              DropdownMenuItem(value: 350, child: Text('350 MS')),
+              DropdownMenuItem(value: 200, child: Text('200 MS')),
+            ],
+            onChanged: (v) => longPressDelayMs.value = v,
+          ),
+        ),
+      ],
     );
   }
 
@@ -864,6 +1116,10 @@ class _DashboardPageState extends State<DashboardPage> {
         fluidResize,
         enableLassoGuidance,
         lassoMode,
+        useEditOverlay,
+        customHandles,
+        showEmptyPlaceholder,
+        longPressDelayMs,
       ]),
       builder: (context, _) {
         final overrideSlots = customSlotCount.value;
@@ -897,6 +1153,18 @@ class _DashboardPageState extends State<DashboardPage> {
               // cursor, the original stays put. Registering the callback
               // is what turns the feature on.
               onCloneRequested: cloneEnabled ? _handleCloneRequested : null,
+              editOverlayBuilder: useEditOverlay.value
+                  ? _buildEditOverlay
+                  : null,
+              resizeHandleBuilder: customHandles.value
+                  ? _buildRoundHandle
+                  : null,
+              emptyBuilder: showEmptyPlaceholder.value
+                  ? _buildEmptyPlaceholder
+                  : null,
+              longPressDelay: longPressDelayMs.value == null
+                  ? null
+                  : Duration(milliseconds: longPressDelayMs.value!),
               externalTemplateBuilder: _buildExternalTemplate,
               onDrop: _handleExternalDrop,
               dragStartGesture: handlesOnly
@@ -950,6 +1218,10 @@ class _DashboardPageState extends State<DashboardPage> {
         fluidResize,
         enableLassoGuidance,
         lassoMode,
+        useEditOverlay,
+        customHandles,
+        showEmptyPlaceholder,
+        longPressDelayMs,
       ]),
       builder: (context, _) {
         final slotTapEnabled = enableSlotTapToAdd.value;
@@ -975,6 +1247,18 @@ class _DashboardPageState extends State<DashboardPage> {
               // Same feature, wired on the raw overlay instead of the
               // high-level Dashboard widget.
               onCloneRequested: cloneEnabled ? _handleCloneRequested : null,
+              editOverlayBuilder: useEditOverlay.value
+                  ? _buildEditOverlay
+                  : null,
+              resizeHandleBuilder: customHandles.value
+                  ? _buildRoundHandle
+                  : null,
+              emptyBuilder: showEmptyPlaceholder.value
+                  ? _buildEmptyPlaceholder
+                  : null,
+              longPressDelay: longPressDelayMs.value == null
+                  ? null
+                  : Duration(milliseconds: longPressDelayMs.value!),
               externalTemplateBuilder: _buildExternalTemplate,
               onDrop: _handleExternalDrop,
               gridStyle: _buildGridStyle(theme),
@@ -1201,6 +1485,7 @@ class _ConfigPanel extends StatelessWidget {
     required this.onImportJson,
     required this.onStressTest,
     required this.onShowHud,
+    required this.newFeaturesSection,
   });
 
   final DashboardController controller;
@@ -1231,6 +1516,9 @@ class _ConfigPanel extends StatelessWidget {
   final VoidCallback onImportJson;
   final void Function(int) onStressTest;
   final VoidCallback onShowHud;
+
+  /// The "New in 2.11" switches, built by the page that owns their state.
+  final Widget newFeaturesSection;
 
   static const _palette = [
     ComponentSpec(
@@ -1327,6 +1615,8 @@ class _ConfigPanel extends StatelessWidget {
             }).toList(),
           ),
           const SizedBox(height: 12),
+          newFeaturesSection,
+          const SizedBox(height: 16),
           const _SectionTitle('Visual Modes & Structures'),
           _SwitchTile(
             title: 'Edit Mode (Draggable/Resizable)',
@@ -1768,8 +2058,16 @@ class _DashboardCard extends StatelessWidget {
     required this.textColor,
     required this.theme,
     required this.onDelete,
+    required this.useEditOverlay,
+    required this.excludeButtons,
     super.key,
   });
+
+  /// When on, the grid's editOverlayBuilder draws the buttons instead.
+  final ValueListenable<bool> useEditOverlay;
+
+  /// Wraps the card's own buttons in DashboardGestureExclusion.
+  final ValueListenable<bool> excludeButtons;
 
   final LayoutItem item;
   final bool isEditing;
@@ -1860,20 +2158,31 @@ class _DashboardCard extends StatelessWidget {
             Positioned(
               top: 4,
               right: 4,
-              child: GestureDetector(
-                onTap: onDelete,
-                child: Container(
-                  padding: const EdgeInsets.all(4),
-                  decoration: const BoxDecoration(
-                    color: Colors.black38,
-                    shape: BoxShape.circle,
-                  ),
-                  child: Icon(
-                    Icons.close,
-                    size: 14,
-                    color: theme.colorScheme.error,
-                  ),
-                ),
+              // Reactive: tile content is cached by the grid, so a plain
+              // rebuild of the page would not reach it.
+              child: ListenableBuilder(
+                listenable: Listenable.merge([useEditOverlay, excludeButtons]),
+                builder: (context, _) {
+                  if (useEditOverlay.value) return const SizedBox.shrink();
+                  final button = GestureDetector(
+                    onTap: onDelete,
+                    child: Container(
+                      padding: const EdgeInsets.all(4),
+                      decoration: const BoxDecoration(
+                        color: Colors.black38,
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(
+                        Icons.close,
+                        size: 14,
+                        color: theme.colorScheme.error,
+                      ),
+                    ),
+                  );
+                  return excludeButtons.value
+                      ? DashboardGestureExclusion(child: button)
+                      : button;
+                },
               ),
             ),
         ],
