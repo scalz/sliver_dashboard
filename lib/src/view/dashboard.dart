@@ -5,7 +5,8 @@ import 'package:sliver_dashboard/src/engine/layout_engine.dart' show ResizeBehav
 import 'package:sliver_dashboard/src/models/layout_item.dart';
 import 'package:sliver_dashboard/src/view/dashboard_configuration.dart';
 import 'package:sliver_dashboard/src/view/dashboard_overlay.dart';
-import 'package:sliver_dashboard/src/view/dashboard_tile_actions.dart' show DashboardGestureExclusion;
+import 'package:sliver_dashboard/src/view/dashboard_tile_actions.dart'
+    show DashboardGestureExclusion;
 import 'package:sliver_dashboard/src/view/dashboard_typedefs.dart';
 import 'package:sliver_dashboard/src/view/guidance/dashboard_guidance.dart';
 import 'package:sliver_dashboard/src/view/nested/dashboard_nested_scope.dart'
@@ -72,6 +73,7 @@ class Dashboard<T extends Object> extends StatefulWidget {
     this.dragStartGesture = DragStartGesture.longPress,
     this.longPressDelay,
     this.editOverlayBuilder,
+    this.resizeHandleBuilder,
     this.emptyBuilder,
     this.sectionHeaderBuilder,
     this.crossGridDragOut = true,
@@ -285,6 +287,14 @@ class Dashboard<T extends Object> extends StatefulWidget {
   /// edit-mode chrome: it never re-parents the tile's content while editing.
   final DashboardEditOverlayBuilder? editOverlayBuilder;
 
+  /// Draws the resize handles in place of the default "L" corners and edge
+  /// bars, e.g. round grips. Called for each active handle with the box it
+  /// may paint in: never larger than its press zone, so the resize cursor
+  /// always matches where a press resizes. Visual only: which handles exist
+  /// and how wide their zones are stay with [resizeZoneResolver] and
+  /// [resizeHandleSide].
+  final DashboardResizeHandleBuilder? resizeHandleBuilder;
+
   /// Shown over the grid while it has no item and is NOT in edit mode (an
   /// "add your first widget" hint). In edit mode the empty grid stays a drop
   /// and tap surface. It sits above the grid, so its own buttons work.
@@ -433,6 +443,7 @@ class _DashboardState<T extends Object> extends State<Dashboard<T>> {
       dragStartGesture: widget.dragStartGesture,
       longPressDelay: widget.longPressDelay,
       editOverlayBuilder: widget.editOverlayBuilder,
+      resizeHandleBuilder: widget.resizeHandleBuilder,
       emptyBuilder: widget.emptyBuilder,
       crossGridDragOut: widget.crossGridDragOut,
       acceptCrossGridItems: widget.acceptCrossGridItems,

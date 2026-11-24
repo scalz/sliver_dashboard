@@ -4,10 +4,21 @@ import 'package:flutter/widgets.dart';
 import 'package:sliver_dashboard/src/controller/dashboard_controller_interface.dart';
 import 'package:sliver_dashboard/src/models/layout_item.dart';
 import 'package:sliver_dashboard/src/view/dashboard_tile_actions.dart';
-import 'package:sliver_dashboard/src/view/resize_handle.dart' show ResizeZones;
+import 'package:sliver_dashboard/src/view/resize_handle.dart' show ResizeHandle, ResizeZones;
 
 /// A static builder function for dashboard items (optimized; skips rebuilds on resize).
 typedef DashboardItemBuilder = Widget Function(BuildContext context, LayoutItem item);
+
+/// Draws a resize handle of [item] in place of the default one, inside a
+/// [size] x [size] box (the handle's press zone, never larger). Visual only:
+/// which handles exist and how wide their press zone is stay with
+/// `resizeZoneResolver` / `resizeHandleSide`.
+typedef DashboardResizeHandleBuilder = Widget Function(
+  BuildContext context,
+  LayoutItem item,
+  ResizeHandle handle,
+  double size,
+);
 
 /// Builds the edit-mode overlay of a tile (a delete button, a menu…), laid
 /// over the tile's content. [actions] routes through the grid's own

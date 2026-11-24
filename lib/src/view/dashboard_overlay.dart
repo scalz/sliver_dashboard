@@ -95,6 +95,9 @@ class DashboardOverlayController {
 
   /// Builder of the per-tile edit-mode overlay (`Dashboard.editOverlayBuilder`).
   DashboardEditOverlayBuilder? get editOverlayBuilder => null;
+
+  /// Custom resize handle visuals (`Dashboard.resizeHandleBuilder`).
+  DashboardResizeHandleBuilder? get resizeHandleBuilder => null;
 }
 
 /// An InheritedWidget that provides a [DashboardOverlayController] to its descendants.
@@ -173,6 +176,7 @@ class DashboardOverlay<T extends Object> extends StatefulWidget {
     this.dragStartGesture = DragStartGesture.longPress,
     this.longPressDelay,
     this.editOverlayBuilder,
+    this.resizeHandleBuilder,
     this.emptyBuilder,
     this.crossGridDragOut = true,
     this.acceptCrossGridItems = true,
@@ -366,6 +370,9 @@ class DashboardOverlay<T extends Object> extends StatefulWidget {
 
   /// See `Dashboard.editOverlayBuilder`.
   final DashboardEditOverlayBuilder? editOverlayBuilder;
+
+  /// See `Dashboard.resizeHandleBuilder`.
+  final DashboardResizeHandleBuilder? resizeHandleBuilder;
 
   /// See `Dashboard.emptyBuilder`.
   final WidgetBuilder? emptyBuilder;
@@ -696,6 +703,9 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
 
   @override
   DashboardEditOverlayBuilder? get editOverlayBuilder => widget.editOverlayBuilder;
+
+  @override
+  DashboardResizeHandleBuilder? get resizeHandleBuilder => widget.resizeHandleBuilder;
 
   @override
   void startDragging(String itemId, Offset globalPosition) {

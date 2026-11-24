@@ -53,6 +53,7 @@ class ResizeHandleWidget extends StatefulWidget {
     this.size = 20.0,
     this.color,
     this.strokeWidth = 2.5,
+    this.builder,
     super.key,
   });
 
@@ -67,6 +68,11 @@ class ResizeHandleWidget extends StatefulWidget {
 
   /// The thickness of the "L" shape lines.
   final double strokeWidth;
+
+  /// Draws the handle instead of the default "L" / bar, inside a
+  /// [size] x [size] box. Visual only: the resize cursor and the press zone
+  /// are unchanged.
+  final Widget Function(BuildContext context, ResizeHandle handle, double size)? builder;
 
   @override
   State<ResizeHandleWidget> createState() => _ResizeHandleWidgetState();
@@ -127,13 +133,14 @@ class _ResizeHandleWidgetState extends State<ResizeHandleWidget> {
       child: SizedBox(
         width: widget.size,
         height: widget.size,
-        child: CustomPaint(
-          painter: _HandlePainter(
-            handle: widget.handle,
-            color: widget.color ?? DefaultColors.focus,
-            strokeWidth: widget.strokeWidth,
-          ),
-        ),
+        child: widget.builder?.call(context, widget.handle, widget.size) ??
+            CustomPaint(
+              painter: _HandlePainter(
+                handle: widget.handle,
+                color: widget.color ?? DefaultColors.focus,
+                strokeWidth: widget.strokeWidth,
+              ),
+            ),
       ),
     );
   }

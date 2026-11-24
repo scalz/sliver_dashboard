@@ -42,8 +42,9 @@ class DashboardItemWrapper extends StatelessWidget {
     final useHandleColor = handleColor ?? controller.handleColor.value;
     final showsHandles = isEditing && (item.isResizable ?? true) && !item.isStatic;
     final handleSide = showsHandles ? controller.resizeHandleSide.watch(context) : 0.0;
-    final editOverlay =
-        isEditing ? DashboardOverlayProvider.maybeOf(context)?.editOverlayBuilder : null;
+    final overlayController = isEditing ? DashboardOverlayProvider.maybeOf(context) : null;
+    final editOverlay = overlayController?.editOverlayBuilder;
+    final handleBuilder = overlayController?.resizeHandleBuilder;
 
     // Reason: the layered shape depends on edit mode and the tile's own flags
     // only, never on selection, focus or hover, so `child` is not re-parented
@@ -63,6 +64,7 @@ class DashboardItemWrapper extends StatelessWidget {
                     handleSide: handleSide,
                     resolver: controller.internal.resizeZoneResolver,
                     color: useHandleColor,
+                    builder: handleBuilder,
                   ),
                 ),
               if (editOverlay != null)
@@ -86,6 +88,7 @@ class DashboardItemWrapper extends StatelessWidget {
     required double handleSide,
     required ResizeZoneResolver? resolver,
     required Color? color,
+    DashboardResizeHandleBuilder? builder,
   }) {
     final zones = resolver?.call(item, size);
     final handles = zones?.handles;
@@ -121,7 +124,12 @@ class DashboardItemWrapper extends StatelessWidget {
           left: left,
           right: right,
           bottom: bottom,
-          child: ResizeHandleWidget(handle: handle, size: handleSize, color: color),
+          child: ResizeHandleWidget(
+            handle: handle,
+            size: handleSize,
+            color: color,
+            builder: builder == null ? null : (context, h, s) => builder(context, item, h, s),
+          ),
         );
 
     return Stack(
