@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:sliver_dashboard/sliver_dashboard.dart';
 
+import 'fixed_board_example.dart' show FixedBoardExamplePage;
 import 'multi_sliver_crossdrag_example.dart' show MultiSliverExamplePage;
 import 'nested_example.dart' show NestedExamplePage;
 import 'shortcuts_hud.dart';
@@ -34,7 +35,7 @@ class MyApp extends StatelessWidget {
   }
 }
 
-/// Launcher for the three dashboard demo examples.
+/// Launcher for the dashboard demo examples.
 class ExampleHome extends StatelessWidget {
   const ExampleHome({super.key});
 
@@ -94,6 +95,23 @@ class ExampleHome extends StatelessWidget {
               onTap: () => Navigator.of(context).push(
                 MaterialPageRoute<void>(
                   builder: (_) => const MultiSliverExamplePage(),
+                ),
+              ),
+            ),
+          ),
+          Card(
+            color: theme.colorScheme.surfaceContainer,
+            child: ListTile(
+              leading: Icon(Icons.tv, color: theme.colorScheme.primary),
+              title: const Text('Fixed board'),
+              subtitle: const Text(
+                'A 10 x 6 wall panel: allowed tile sizes, a strict row ceiling, '
+                'tap an empty slot to add a tile.',
+              ),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => const FixedBoardExamplePage(),
                 ),
               ),
             ),
