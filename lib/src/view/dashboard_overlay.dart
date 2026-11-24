@@ -3,6 +3,7 @@ import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/scheduler.dart' show Ticker;
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:sliver_dashboard/src/controller/dashboard_controller_impl.dart'
@@ -382,6 +383,7 @@ class DashboardOverlay<T extends Object> extends StatefulWidget {
 }
 
 class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>>
+    with SingleTickerProviderStateMixin
     implements DashboardOverlayController, CrossGridDragTarget {
   final GlobalKey _overlayStackKey = GlobalKey();
 
@@ -633,7 +635,14 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
   Offset? _dragGrabOffset;
 
   // Auto-scroll
-  Timer? _scrollTimer;
+  // Edge auto-scroll. A Ticker, not a periodic Timer: the step is
+  // speed x frame time, so it lands on every frame whatever the refresh rate
+  // (a 16 ms Timer drifts against a 60 Hz vsync and skips every other frame
+  // at 120 Hz). Created lazily, active only while the pointer is in a hot zone.
+  Ticker? _scrollTicker;
+  Duration _lastScrollTick = Duration.zero;
+
+  /// Signed auto-scroll speed, in logical pixels per second.
   double _scrollSpeed = 0;
 
   // Cached metrics for the active sliver
@@ -813,7 +822,7 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
     _detachLassoScrollListener();
     _lassoOverlay.dispose();
     _scrollSubscription?.cancel().ignore();
-    _scrollTimer?.cancel();
+    _scrollTicker?.dispose();
     _leaveTimer?.cancel();
     _isHoveringTrash.dispose();
     _isTrashActive.dispose();
@@ -2592,10 +2601,9 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
         _delegatedAutoScroll?.stopAutoScroll();
         _delegatedAutoScroll = null;
       }
-      // Nothing to scroll locally regardless; stop only this grid's own timer
+      // Nothing to scroll locally regardless; stop only this grid's own ticker
       // (must NOT cancel the delegation we just requested above).
-      _scrollTimer?.cancel();
-      _scrollTimer = null;
+      _scrollTicker?.stop();
       _scrollSpeed = 0.0;
       return;
     }
@@ -2606,8 +2614,13 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
     final localPosition = overlayBox.globalToLocal(globalPosition);
     final size = overlayBox.size;
 
-    const hotZoneExtent = 50.0;
-    const maxScrollSpeed = 15.0;
+    final config = widget.controller.autoScroll;
+    if (!config.enabled) {
+      _stopScrollTimer();
+      return;
+    }
+    final hotZoneExtent = config.edgeExtent;
+    final maxScrollSpeed = config.maxSpeed;
 
     final isVertical = _activeSliverMetrics?.scrollDirection != Axis.horizontal;
 
@@ -2639,50 +2652,57 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
   }
 
   void _startScrollTimer() {
-    if (_scrollTimer?.isActive ?? false) return;
+    if (_scrollTicker?.isActive ?? false) return;
     // A non-scrollable grid (e.g. sizeToContent on NeverScrollableScrollPhysics)
     // has nothing to auto-scroll on its own. A foreign hover has already been
     // delegated to the parent in _handleAutoScroll; an internal drag simply
     // grows the host via sizeToContent, and the parent scrolls itself. Starting
-    // a timer here would tick jumpTo() against a pinned position every 16ms for
-    // no effect, so skip it.
+    // the ticker here would jumpTo() a pinned position every frame for no
+    // effect, so skip it.
     if (widget.scrollController.hasClients) {
       final p = widget.scrollController.position;
       if (p.maxScrollExtent <= p.minScrollExtent) return;
     }
-    _scrollTimer = Timer.periodic(const Duration(milliseconds: 16), (timer) {
-      if (!widget.scrollController.hasClients) return;
-      final newOffset = widget.scrollController.offset + _scrollSpeed;
-      widget.scrollController.jumpTo(
-        newOffset.clamp(
-          widget.scrollController.position.minScrollExtent,
-          widget.scrollController.position.maxScrollExtent,
-        ),
-      );
-      if (_lastGlobalPosition != null) {
-        if (_activeItemId != null) {
-          _performUpdate(_lastGlobalPosition!);
-        } else if (_foreignDragItem != null) {
-          // Cross-grid hover: re-anchor with the dragged item's size, not the
-          // DragTarget placeholder size.
-          _showPlaceholderAt(
-            _lastGlobalPosition!,
-            w: _foreignDragItem!.w,
-            h: _foreignDragItem!.h,
-            grabFraction: _nestedCoordinator?.sessionGrabFraction ?? Offset.zero,
-          );
-        } else if (widget.controller.currentDragPlaceholder != null) {
-          // External DragTarget hover only; never resurrect a placeholder
-          // from a stale position (e.g. when scrolled by delegation).
-          final p = widget.controller.currentDragPlaceholder!;
-          _showPlaceholderAt(
-            _lastGlobalPosition!,
-            w: p.w,
-            h: p.h,
-          );
-        }
+    _lastScrollTick = Duration.zero;
+    (_scrollTicker ??= createTicker(_onScrollTick)).start();
+  }
+
+  void _onScrollTick(Duration elapsed) {
+    // Reason: a frame stall (debugger, backgrounded app) must not turn into
+    // one giant jump; 100 ms caps a step at 10 frames' worth of travel.
+    final dt = (elapsed - _lastScrollTick).inMicroseconds.clamp(0, 100000) / 1e6;
+    _lastScrollTick = elapsed;
+    if (!widget.scrollController.hasClients || dt == 0) return;
+    final newOffset = widget.scrollController.offset + _scrollSpeed * dt;
+    widget.scrollController.jumpTo(
+      newOffset.clamp(
+        widget.scrollController.position.minScrollExtent,
+        widget.scrollController.position.maxScrollExtent,
+      ),
+    );
+    if (_lastGlobalPosition != null) {
+      if (_activeItemId != null) {
+        _performUpdate(_lastGlobalPosition!);
+      } else if (_foreignDragItem != null) {
+        // Cross-grid hover: re-anchor with the dragged item's size, not the
+        // DragTarget placeholder size.
+        _showPlaceholderAt(
+          _lastGlobalPosition!,
+          w: _foreignDragItem!.w,
+          h: _foreignDragItem!.h,
+          grabFraction: _nestedCoordinator?.sessionGrabFraction ?? Offset.zero,
+        );
+      } else if (widget.controller.currentDragPlaceholder != null) {
+        // External DragTarget hover only; never resurrect a placeholder
+        // from a stale position (e.g. when scrolled by delegation).
+        final p = widget.controller.currentDragPlaceholder!;
+        _showPlaceholderAt(
+          _lastGlobalPosition!,
+          w: p.w,
+          h: p.h,
+        );
       }
-    });
+    }
   }
 
   void _stopScrollTimer() {
@@ -2690,8 +2710,7 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
     _delegatedAutoScroll?.stopAutoScroll();
     _delegatedAutoScroll = null;
 
-    _scrollTimer?.cancel();
-    _scrollTimer = null;
+    _scrollTicker?.stop();
     _scrollSpeed = 0.0;
   }
 

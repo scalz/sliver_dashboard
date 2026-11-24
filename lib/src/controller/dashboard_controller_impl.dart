@@ -114,6 +114,9 @@ class DashboardControllerImpl with BeaconController implements DashboardControll
   LassoStyle lassoStyle = LassoStyle.byDefault;
 
   @override
+  AutoScrollConfig autoScroll = AutoScrollConfig.byDefault;
+
+  @override
   late final dragMode = B.writable<engine.DragMode>(engine.DragMode.cascade);
 
   @override
