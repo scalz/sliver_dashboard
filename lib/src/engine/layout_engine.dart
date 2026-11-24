@@ -770,6 +770,20 @@ List<LayoutItem> getAllCollisions(Layout layout, LayoutItem layoutItem) {
   return collisions;
 }
 
+/// Returns [item] mirrored across the main diagonal: `x`/`y`, `w`/`h` and the
+/// min/max constraints swapped. Lets a vertical-axis algorithm serve a
+/// horizontally scrolling grid; applying it twice yields an equal item.
+LayoutItem transposeItem(LayoutItem item) => item.copyWith(
+      x: item.y,
+      y: item.x,
+      w: item.h,
+      h: item.w,
+      minW: item.minH,
+      minH: item.minW,
+      maxW: item.maxH,
+      maxH: item.maxW,
+    );
+
 /// Returns a list of all static items in the layout.
 List<LayoutItem> getStatics(Layout layout) {
   return layout.where((item) => item.isStatic).toList();
@@ -1065,7 +1079,18 @@ LayoutItem compactItem(
 
 /// Corrects the bounds of the layout items to ensure they fit within the
 /// specified number of columns.
-Layout correctBounds(Layout layout, int cols) {
+///
+/// [horizontal] selects the axis convention: on a horizontally scrolling grid
+/// [cols] bounds `y` (the cross axis) and `x` is the unbounded main axis. The
+/// item is then sanitized through its transpose, so both axes share one
+/// implementation and the vertical path is untouched.
+Layout correctBounds(Layout layout, int cols, {bool horizontal = false}) {
+  if (horizontal) {
+    return [
+      for (final item in correctBounds([for (final l in layout) transposeItem(l)], cols))
+        transposeItem(item),
+    ];
+  }
   final collidesWith = getStatics(layout).toList();
   final newLayout = <LayoutItem>[];
 
@@ -1516,6 +1541,10 @@ Layout resizeItem(
 /// [newItems] The list of items to add. Some may already have positions, others may be -1.
 /// [cols] The number of columns in the grid.
 ///
+/// [horizontal] selects the axis convention, as in [correctBounds]: on a
+/// horizontally scrolling grid [cols] bounds `y`, [maxRows] bounds `x`, and
+/// "bottom" means the right-most edge.
+///
 /// Returns a new list containing all items from [existingLayout] and [newItems],
 /// with valid coordinates for everyone.
 List<LayoutItem> placeNewItems({
@@ -1524,7 +1553,18 @@ List<LayoutItem> placeNewItems({
   required int cols,
   AutoPlacementStrategy strategy = AutoPlacementStrategy.appendBottom,
   int? maxRows,
+  bool horizontal = false,
 }) {
+  if (horizontal) {
+    final placed = placeNewItems(
+      existingLayout: [for (final i in existingLayout) transposeItem(i)],
+      newItems: [for (final i in newItems) transposeItem(i)],
+      cols: cols,
+      strategy: strategy,
+      maxRows: maxRows,
+    );
+    return [for (final i in placed) transposeItem(i)];
+  }
   // Separate items that need placement from those that don't
   final itemsToPlace = newItems.where((i) => i.x == -1 || i.y == -1).toList();
   // Pre-positioned items are SANITIZED, not trusted: explicit coordinates
