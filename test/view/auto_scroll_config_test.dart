@@ -164,6 +164,8 @@ void main() {
     expect(a.copyWith(), a);
     expect(a.copyWith(maxSpeed: 1).maxSpeed, 1);
     expect(AutoScrollConfig.off.enabled, isFalse);
-    expect(AutoScrollConfig.byDefault, const AutoScrollConfig());
+    // The defaults reproduce the historical 15 px every 16 ms, 50 px zone.
+    const d = AutoScrollConfig.byDefault;
+    expect((d.enabled, d.edgeExtent, d.maxSpeed), (true, 50.0, 937.5));
   });
 }
