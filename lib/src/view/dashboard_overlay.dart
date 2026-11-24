@@ -2,7 +2,9 @@ import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/scheduler.dart' show Ticker;
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:sliver_dashboard/src/controller/dashboard_controller_impl.dart'
@@ -165,6 +167,7 @@ class DashboardOverlay<T extends Object> extends StatefulWidget {
     this.backgroundBuilder,
     this.fillViewport = false,
     this.dragStartGesture = DragStartGesture.longPress,
+    this.longPressDelay,
     this.crossGridDragOut = true,
     this.acceptCrossGridItems = true,
     this.onCloneRequested,
@@ -352,6 +355,9 @@ class DashboardOverlay<T extends Object> extends StatefulWidget {
   /// The gesture used to trigger a drag operation on mobile platforms
   final DragStartGesture dragStartGesture;
 
+  /// See `Dashboard.longPressDelay`.
+  final Duration? longPressDelay;
+
   /// Produces the duplicate of a tile dragged with the clone modifier held
   /// (`Alt` / `Option` by default, see `DashboardShortcuts.cloneKeys`).
   ///
@@ -382,6 +388,7 @@ class DashboardOverlay<T extends Object> extends StatefulWidget {
 }
 
 class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>>
+    with SingleTickerProviderStateMixin
     implements DashboardOverlayController, CrossGridDragTarget {
   final GlobalKey _overlayStackKey = GlobalKey();
 
@@ -633,7 +640,14 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
   Offset? _dragGrabOffset;
 
   // Auto-scroll
-  Timer? _scrollTimer;
+  // Edge auto-scroll. A Ticker, not a periodic Timer: the step is
+  // speed x frame time, so it lands on every frame whatever the refresh rate
+  // (a 16 ms Timer drifts against a 60 Hz vsync and skips every other frame
+  // at 120 Hz). Created lazily, active only while the pointer is in a hot zone.
+  Ticker? _scrollTicker;
+  Duration _lastScrollTick = Duration.zero;
+
+  /// Signed auto-scroll speed, in logical pixels per second.
   double _scrollSpeed = 0;
 
   // Cached metrics for the active sliver
@@ -813,7 +827,7 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
     _detachLassoScrollListener();
     _lassoOverlay.dispose();
     _scrollSubscription?.cancel().ignore();
-    _scrollTimer?.cancel();
+    _scrollTicker?.dispose();
     _leaveTimer?.cancel();
     _isHoveringTrash.dispose();
     _isTrashActive.dispose();
@@ -1004,45 +1018,60 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
   /// Extracted so [_buildLassoCursorRegion] can hand it through as a
   /// pre-built `child`, which is what keeps a modifier press from rebuilding
   /// the scroll view.
+  /// The `GestureDetector` this replaces exposed no long-press duration, so the
+  /// two recognizers are wired by hand, with the settings `GestureDetector`
+  /// itself would pass. Each is created only when one of its callbacks is
+  /// live, exactly as `GestureDetector` does.
   Widget _buildGestureContent() {
-    return GestureDetector(
-      behavior: HitTestBehavior.translucent,
-      onTapUp: widget.onSlotTap != null
-          ? (details) => _handleSlotGesture(
-                details.globalPosition,
-                widget.onSlotTap,
-              )
-          : null,
-      onLongPressStart: (_isMobile && widget.dragStartGesture == DragStartGesture.longPress) ||
-              widget.onSlotLongPress != null
-          ? (details) {
-              if (_nestedCoordinator?.isPointerClaimedByOther(this) ?? false) {
-                return;
-              }
+    final longPressDrag = _isMobile && widget.dragStartGesture == DragStartGesture.longPress;
+    final gestureSettings = MediaQuery.maybeGestureSettingsOf(context);
+    final hasLongPress = longPressDrag || widget.onSlotLongPress != null;
 
-              // Empty-slot long-press wins; item long-press
-              // keeps its historical role (drag start on
-              // mobile longPress mode).
-              if (widget.onSlotLongPress != null && _hitTest(details.globalPosition).item == null) {
-                _handleSlotGesture(
-                  details.globalPosition,
-                  widget.onSlotLongPress,
-                );
-                return;
-              }
-              if (_isMobile && widget.dragStartGesture == DragStartGesture.longPress) {
-                _onPointerDown(details.globalPosition);
-              }
-            }
-          : null,
-      onLongPressMoveUpdate: _isMobile && widget.dragStartGesture == DragStartGesture.longPress
-          ? (details) => _onPointerMove(details.globalPosition)
-          : null,
-      onLongPressEnd: _isMobile && widget.dragStartGesture == DragStartGesture.longPress
-          ? (details) => _onPointerUp()
-          : null,
-      onLongPressCancel:
-          _isMobile && widget.dragStartGesture == DragStartGesture.longPress ? _onPointerUp : null,
+    void onLongPressStart(LongPressStartDetails details) {
+      if (_nestedCoordinator?.isPointerClaimedByOther(this) ?? false) {
+        return;
+      }
+
+      // Empty-slot long-press wins; item long-press
+      // keeps its historical role (drag start on
+      // mobile longPress mode).
+      if (widget.onSlotLongPress != null && _hitTest(details.globalPosition).item == null) {
+        _handleSlotGesture(
+          details.globalPosition,
+          widget.onSlotLongPress,
+        );
+        return;
+      }
+      if (longPressDrag) {
+        _onPointerDown(details.globalPosition);
+      }
+    }
+
+    return RawGestureDetector(
+      behavior: HitTestBehavior.translucent,
+      gestures: <Type, GestureRecognizerFactory>{
+        if (widget.onSlotTap != null)
+          TapGestureRecognizer: GestureRecognizerFactoryWithHandlers<TapGestureRecognizer>(
+            () => TapGestureRecognizer(debugOwner: this),
+            (recognizer) => recognizer
+              ..onTapUp =
+                  ((details) => _handleSlotGesture(details.globalPosition, widget.onSlotTap))
+              ..gestureSettings = gestureSettings,
+          ),
+        if (hasLongPress)
+          _DelayedLongPressGestureRecognizer:
+              GestureRecognizerFactoryWithHandlers<_DelayedLongPressGestureRecognizer>(
+            () => _DelayedLongPressGestureRecognizer(debugOwner: this),
+            (recognizer) => recognizer
+              ..delay = widget.longPressDelay ?? kLongPressTimeout
+              ..onLongPressStart = onLongPressStart
+              ..onLongPressMoveUpdate =
+                  longPressDrag ? (details) => _onPointerMove(details.globalPosition) : null
+              ..onLongPressEnd = longPressDrag ? (details) => _onPointerUp() : null
+              ..onLongPressCancel = longPressDrag ? _onPointerUp : null
+              ..gestureSettings = gestureSettings,
+          ),
+      },
       child: widget.child,
     );
   }
@@ -2592,10 +2621,9 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
         _delegatedAutoScroll?.stopAutoScroll();
         _delegatedAutoScroll = null;
       }
-      // Nothing to scroll locally regardless; stop only this grid's own timer
+      // Nothing to scroll locally regardless; stop only this grid's own ticker
       // (must NOT cancel the delegation we just requested above).
-      _scrollTimer?.cancel();
-      _scrollTimer = null;
+      _scrollTicker?.stop();
       _scrollSpeed = 0.0;
       return;
     }
@@ -2606,8 +2634,13 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
     final localPosition = overlayBox.globalToLocal(globalPosition);
     final size = overlayBox.size;
 
-    const hotZoneExtent = 50.0;
-    const maxScrollSpeed = 15.0;
+    final config = widget.controller.autoScroll;
+    if (!config.enabled) {
+      _stopScrollTimer();
+      return;
+    }
+    final hotZoneExtent = config.edgeExtent;
+    final maxScrollSpeed = config.maxSpeed;
 
     final isVertical = _activeSliverMetrics?.scrollDirection != Axis.horizontal;
 
@@ -2639,50 +2672,56 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
   }
 
   void _startScrollTimer() {
-    if (_scrollTimer?.isActive ?? false) return;
+    if (_scrollTicker?.isActive ?? false) return;
     // A non-scrollable grid (e.g. sizeToContent on NeverScrollableScrollPhysics)
     // has nothing to auto-scroll on its own. A foreign hover has already been
     // delegated to the parent in _handleAutoScroll; an internal drag simply
     // grows the host via sizeToContent, and the parent scrolls itself. Starting
-    // a timer here would tick jumpTo() against a pinned position every 16ms for
-    // no effect, so skip it.
+    // the ticker here would jumpTo() a pinned position every frame for no
+    // effect, so skip it.
     if (widget.scrollController.hasClients) {
       final p = widget.scrollController.position;
       if (p.maxScrollExtent <= p.minScrollExtent) return;
     }
-    _scrollTimer = Timer.periodic(const Duration(milliseconds: 16), (timer) {
-      if (!widget.scrollController.hasClients) return;
-      final newOffset = widget.scrollController.offset + _scrollSpeed;
-      widget.scrollController.jumpTo(
-        newOffset.clamp(
-          widget.scrollController.position.minScrollExtent,
-          widget.scrollController.position.maxScrollExtent,
-        ),
-      );
-      if (_lastGlobalPosition != null) {
-        if (_activeItemId != null) {
-          _performUpdate(_lastGlobalPosition!);
-        } else if (_foreignDragItem != null) {
-          // Cross-grid hover: re-anchor with the dragged item's size, not the
-          // DragTarget placeholder size.
-          _showPlaceholderAt(
-            _lastGlobalPosition!,
-            w: _foreignDragItem!.w,
-            h: _foreignDragItem!.h,
-            grabFraction: _nestedCoordinator?.sessionGrabFraction ?? Offset.zero,
-          );
-        } else if (widget.controller.currentDragPlaceholder != null) {
-          // External DragTarget hover only; never resurrect a placeholder
-          // from a stale position (e.g. when scrolled by delegation).
-          final p = widget.controller.currentDragPlaceholder!;
-          _showPlaceholderAt(
-            _lastGlobalPosition!,
-            w: p.w,
-            h: p.h,
-          );
-        }
+    _lastScrollTick = Duration.zero;
+    (_scrollTicker ??= createTicker(_onScrollTick)).start();
+  }
+
+  void _onScrollTick(Duration elapsed) {
+    // Reason: a frame stall (debugger, backgrounded app) must not turn into
+    // one giant jump; 100 ms caps a step at 10 frames' worth of travel.
+    final dt = (elapsed - _lastScrollTick).inMicroseconds.clamp(0, 100000) / 1e6;
+    _lastScrollTick = elapsed;
+    if (!widget.scrollController.hasClients || dt == 0) return;
+    // Reason: mouse-wheel semantics. Under a NestedScrollView the grid's
+    // position is the coordinator's inner one, and a jumpTo there moves the
+    // whole coordinator: the header snapped shut in one frame. pointerScroll
+    // lets the coordinator consume the delta in the header first, step by
+    // step; on a plain position it is a clamped jump.
+    widget.scrollController.position.pointerScroll(_scrollSpeed * dt);
+    if (_lastGlobalPosition != null) {
+      if (_activeItemId != null) {
+        _performUpdate(_lastGlobalPosition!);
+      } else if (_foreignDragItem != null) {
+        // Cross-grid hover: re-anchor with the dragged item's size, not the
+        // DragTarget placeholder size.
+        _showPlaceholderAt(
+          _lastGlobalPosition!,
+          w: _foreignDragItem!.w,
+          h: _foreignDragItem!.h,
+          grabFraction: _nestedCoordinator?.sessionGrabFraction ?? Offset.zero,
+        );
+      } else if (widget.controller.currentDragPlaceholder != null) {
+        // External DragTarget hover only; never resurrect a placeholder
+        // from a stale position (e.g. when scrolled by delegation).
+        final p = widget.controller.currentDragPlaceholder!;
+        _showPlaceholderAt(
+          _lastGlobalPosition!,
+          w: p.w,
+          h: p.h,
+        );
       }
-    });
+    }
   }
 
   void _stopScrollTimer() {
@@ -2690,8 +2729,7 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
     _delegatedAutoScroll?.stopAutoScroll();
     _delegatedAutoScroll = null;
 
-    _scrollTimer?.cancel();
-    _scrollTimer = null;
+    _scrollTicker?.stop();
     _scrollSpeed = 0.0;
   }
 
@@ -3323,4 +3361,22 @@ class _HoverGridIndex {
 
   /// Packed cell key -> covering item.
   final Map<int, LayoutItem> buckets;
+}
+
+/// A [LongPressGestureRecognizer] whose hold duration can change without
+/// replacing the recognizer.
+///
+/// Reason: the stock recognizer fixes its deadline at construction, and
+/// `RawGestureDetector` keeps a recognizer per type for its whole life, so a
+/// new `longPressDelay` would otherwise be ignored. Keying the detector on the
+/// delay instead would remount the grid's scroll view. The deadline is read
+/// when a pointer is added, so a change applies to the next press.
+class _DelayedLongPressGestureRecognizer extends LongPressGestureRecognizer {
+  _DelayedLongPressGestureRecognizer({super.debugOwner});
+
+  /// The hold duration applied to the next press.
+  Duration delay = kLongPressTimeout;
+
+  @override
+  Duration? get deadline => delay;
 }

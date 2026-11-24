@@ -17,6 +17,17 @@ defaults nothing changes.
   - `DashboardController.tryAddItem` / `tryAddItems`: all-or-nothing add that keeps the layout under
   `maxRows`; returns `false` with no change, no event and no history entry otherwise.
 - Engine helpers: `canPlace`, `nearestAllowedSize`, `mainAxisExtent`, `transposeItem`.
+- **`DashboardController.autoScroll` (`AutoScrollConfig`)**: edge auto-scroll zone depth
+(`edgeExtent`), speed in px/s (`maxSpeed`) and an `off` switch. Defaults reproduce 2.10.
+- **`longPressDelay`** on `Dashboard`, `NestedDashboard` and `DashboardOverlay`: how long a press must be
+held to pick a tile up on touch and to fire `onSlotLongPress` (default `kLongPressTimeout`).
+
+### Changed
+
+- **Edge auto-scroll is frame-driven.** It was a 16 ms periodic `Timer` stepping a fixed 15 px: not
+aligned with the display, it skipped every other frame at 120 Hz and drifted against 60 Hz. It now
+runs on a `Ticker` and steps speed x frame time, so every frame moves and the speed no longer depends
+on the refresh rate. The web pointer throttle is unchanged.
 
 ### Fixed
 
@@ -26,6 +37,9 @@ horizontally scrolling grid it is the other way round, so `importLayout` pulled 
 along `x` back to the first columns (its position was lost) while letting `y` overflow the slot
 count, and `addItems` / auto-placement and breakpoint changes could do the same. Both functions now
 take `horizontal:` and the controller passes its scroll direction; vertical grids are unchanged.
+- **Auto-scroll under a `NestedScrollView` snapped the header shut in one frame.** With the body grid on
+the `PrimaryScrollController`, the auto-scroll's `jumpTo` moved the whole scroll coordinator. It now
+steps with `pointerScroll` (mouse-wheel semantics): the header collapses first, frame by frame.
 
 ### Documentation
 

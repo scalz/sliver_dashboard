@@ -399,6 +399,12 @@ abstract class DashboardController {
   LassoStyle get lassoStyle;
   set lassoStyle(LassoStyle value);
 
+  /// Edge auto-scroll during a drag. Defaults to [AutoScrollConfig.byDefault];
+  /// assign [AutoScrollConfig.off] to disable it. Read on every pointer
+  /// event, so a change applies to the next one.
+  AutoScrollConfig get autoScroll;
+  set autoScroll(AutoScrollConfig value);
+
   /// Sets whether moving items can dynamically shrink their neighbors to avoid pushes.
   void setAllowAutoShrink({required bool allow});
 

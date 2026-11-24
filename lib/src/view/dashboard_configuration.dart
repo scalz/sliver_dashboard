@@ -94,6 +94,61 @@ class LassoStyle {
   int get hashCode => Object.hash(mode, fillColor, borderColor, borderWidth);
 }
 
+/// Edge auto-scroll while a tile, an external payload or a cross-grid item is
+/// dragged near the start or end of the viewport.
+///
+/// Configured on the controller (`controller.autoScroll = ...`), like
+/// [LassoStyle]: it is interaction policy, and a nested grid that cannot
+/// scroll delegates to its parent, which applies its own configuration.
+@immutable
+class AutoScrollConfig {
+  /// Creates an [AutoScrollConfig].
+  const AutoScrollConfig({
+    this.enabled = true,
+    this.edgeExtent = 50,
+    this.maxSpeed = 937.5,
+  })  : assert(edgeExtent > 0, 'edgeExtent must be positive'),
+        assert(maxSpeed >= 0, 'maxSpeed must not be negative');
+
+  /// Whether dragging near an edge scrolls the grid at all.
+  final bool enabled;
+
+  /// Depth, in logical pixels, of the hot zone at each edge of the grid's
+  /// viewport along the scroll axis.
+  final double edgeExtent;
+
+  /// Scroll speed, in logical pixels per SECOND, reached at the very edge.
+  /// The speed grows linearly with the depth into the hot zone. The default
+  /// matches the historical 15 px every 16 ms.
+  final double maxSpeed;
+
+  /// The default configuration.
+  static const AutoScrollConfig byDefault = AutoScrollConfig();
+
+  /// Turns edge auto-scroll off.
+  static const AutoScrollConfig off = AutoScrollConfig(enabled: false);
+
+  /// Creates a copy of this [AutoScrollConfig] with the given fields replaced.
+  AutoScrollConfig copyWith({bool? enabled, double? edgeExtent, double? maxSpeed}) =>
+      AutoScrollConfig(
+        enabled: enabled ?? this.enabled,
+        edgeExtent: edgeExtent ?? this.edgeExtent,
+        maxSpeed: maxSpeed ?? this.maxSpeed,
+      );
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is AutoScrollConfig &&
+        other.enabled == enabled &&
+        other.edgeExtent == edgeExtent &&
+        other.maxSpeed == maxSpeed;
+  }
+
+  @override
+  int get hashCode => Object.hash(enabled, edgeExtent, maxSpeed);
+}
+
 /// A class to hold styling properties for the background grid.
 @immutable
 class GridStyle {
