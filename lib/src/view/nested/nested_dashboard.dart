@@ -78,6 +78,9 @@ class NestedDashboard<T extends Object> extends StatefulWidget {
     this.onItemResizeEnd,
     this.dragStartGesture = DragStartGesture.longPress,
     this.longPressDelay,
+    this.editOverlayBuilder,
+    this.resizeHandleBuilder,
+    this.emptyBuilder,
     this.sectionHeaderBuilder,
     this.crossGridDragOut = true,
     this.acceptCrossGridItems = true,
@@ -215,6 +218,15 @@ class NestedDashboard<T extends Object> extends StatefulWidget {
 
   /// See [Dashboard.longPressDelay].
   final Duration? longPressDelay;
+
+  /// See [Dashboard.editOverlayBuilder].
+  final DashboardEditOverlayBuilder? editOverlayBuilder;
+
+  /// See [Dashboard.resizeHandleBuilder].
+  final DashboardResizeHandleBuilder? resizeHandleBuilder;
+
+  /// See [Dashboard.emptyBuilder].
+  final WidgetBuilder? emptyBuilder;
 
   /// See [Dashboard.sectionHeaderBuilder].
   final DashboardSectionHeaderBuilder? sectionHeaderBuilder;
@@ -493,6 +505,9 @@ class _NestedDashboardState<T extends Object> extends State<NestedDashboard<T>> 
           onItemResizeEnd: widget.onItemResizeEnd,
           dragStartGesture: widget.dragStartGesture,
           longPressDelay: widget.longPressDelay,
+          editOverlayBuilder: widget.editOverlayBuilder,
+          resizeHandleBuilder: widget.resizeHandleBuilder,
+          emptyBuilder: widget.emptyBuilder,
           sectionHeaderBuilder: widget.sectionHeaderBuilder,
           crossGridDragOut: widget.crossGridDragOut,
           acceptCrossGridItems: widget.acceptCrossGridItems,

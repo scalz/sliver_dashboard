@@ -5,6 +5,8 @@ import 'package:sliver_dashboard/src/engine/layout_engine.dart' show ResizeBehav
 import 'package:sliver_dashboard/src/models/layout_item.dart';
 import 'package:sliver_dashboard/src/view/dashboard_configuration.dart';
 import 'package:sliver_dashboard/src/view/dashboard_overlay.dart';
+import 'package:sliver_dashboard/src/view/dashboard_tile_actions.dart'
+    show DashboardGestureExclusion;
 import 'package:sliver_dashboard/src/view/dashboard_typedefs.dart';
 import 'package:sliver_dashboard/src/view/guidance/dashboard_guidance.dart';
 import 'package:sliver_dashboard/src/view/nested/dashboard_nested_scope.dart'
@@ -70,6 +72,9 @@ class Dashboard<T extends Object> extends StatefulWidget {
     this.trashHoverDelay = const Duration(milliseconds: 800),
     this.dragStartGesture = DragStartGesture.longPress,
     this.longPressDelay,
+    this.editOverlayBuilder,
+    this.resizeHandleBuilder,
+    this.emptyBuilder,
     this.sectionHeaderBuilder,
     this.crossGridDragOut = true,
     this.acceptCrossGridItems = true,
@@ -272,6 +277,29 @@ class Dashboard<T extends Object> extends StatefulWidget {
   /// before the delay scrolls the grid instead.
   final Duration? longPressDelay;
 
+  /// Builds a per-tile overlay shown in edit mode only (a delete button, a
+  /// menu…), above the content and the resize handles.
+  ///
+  /// The returned widgets are wrapped in a [DashboardGestureExclusion]: a
+  /// press on them never starts a drag, a resize or a selection change, so a
+  /// button there just gets its tap. Avoid an opaque full-tile background,
+  /// which would make the whole tile non-draggable. The layer is part of the
+  /// edit-mode chrome: it never re-parents the tile's content while editing.
+  final DashboardEditOverlayBuilder? editOverlayBuilder;
+
+  /// Draws the resize handles in place of the default "L" corners and edge
+  /// bars, e.g. round grips. Called for each active handle with the box it
+  /// may paint in: never larger than its press zone, so the resize cursor
+  /// always matches where a press resizes. Visual only: which handles exist
+  /// and how wide their zones are stay with [resizeZoneResolver] and
+  /// [resizeHandleSide].
+  final DashboardResizeHandleBuilder? resizeHandleBuilder;
+
+  /// Shown over the grid while it has no item and is NOT in edit mode (an
+  /// "add your first widget" hint). In edit mode the empty grid stays a drop
+  /// and tap surface. It sits above the grid, so its own buttons work.
+  final WidgetBuilder? emptyBuilder;
+
   /// Optional builder to customize the appearance of section headers.
   final DashboardSectionHeaderBuilder? sectionHeaderBuilder;
 
@@ -414,6 +442,9 @@ class _DashboardState<T extends Object> extends State<Dashboard<T>> {
       itemGlobalKeySuffix: widget.itemGlobalKeySuffix,
       dragStartGesture: widget.dragStartGesture,
       longPressDelay: widget.longPressDelay,
+      editOverlayBuilder: widget.editOverlayBuilder,
+      resizeHandleBuilder: widget.resizeHandleBuilder,
+      emptyBuilder: widget.emptyBuilder,
       crossGridDragOut: widget.crossGridDragOut,
       acceptCrossGridItems: widget.acceptCrossGridItems,
       onCloneRequested: widget.onCloneRequested,

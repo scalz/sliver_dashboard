@@ -51,6 +51,7 @@ fuzz-tested invariants: a drag step on 1,000 tiles takes under 1 ms on the web
   - **Horizontal:** Items are compacted to left.
   - **Custom:** Implement `CompactorDelegate` to define custom rules (e.g., specific gravity, fixed zones).
 - **Built-in Trash:** Easy-to-implement drag-to-delete functionality. Or implement your own using available callbacks.
+- **Tile Actions & Buttons in Tiles:** custom resize handle visuals (`resizeHandleBuilder`), an edit-mode overlay per tile (`editOverlayBuilder`) with delete / duplicate wired to the grid's own pipeline, and `DashboardGestureExclusion` so a button inside a tile gets its tap without starting a drag. Plus an `emptyBuilder` for empty grids.
 - **Custom Feedback:** Customize the appearance of items while they are being dragged. Use onInteractionStart callback for haptic feedback...
 - **Reflow Animations:** pushed/compacted tiles slide to their new slot.
 - **Fluid Resize:** opt-in pixel-tracking resize. Tiles resize fluidly in raw pixels and smoothly animate into their snapped slot on release.
@@ -92,6 +93,7 @@ The package is WebAssembly (WASM) compatible. Building your production applicati
   - [Dragging From Outside](#dragging-from-outside)
   - [Persisting Layout Changes](#persisting-layout-changes)
   - [Drag to Delete (Trash Bin)](#drag-to-delete-trash-bin)
+  - [Tile Actions, Buttons in Tiles & Empty Grids](#tile-actions-buttons-in-tiles--empty-grids)
   - [Custom Drag Handles & Mobile Gestures](#custom-drag-handles--mobile-gestures)
   - [Edge Auto-Scroll](#edge-auto-scroll)
   - [Custom Drag Feedback](#custom-drag-feedback)
@@ -631,6 +633,69 @@ onItemsDeleted: (items) async {
   // Soft delete: recoverable by undo.
   await db.widgets.markDeleted([for (final i in items) i.id]);
 },
+```
+
+### Tile Actions, Buttons in Tiles & Empty Grids
+
+**Edit-mode overlay.** `editOverlayBuilder` lays a widget over every tile while editing (a close
+button, a menu…), above the content and the resize handles. Its `DashboardTileActions` go through the
+grid's own pipeline, exactly like the keyboard shortcuts: `delete()` asks `onWillDelete`, removes the
+tile as one undo step and calls `onItemsDeleted`; `duplicate()` uses `onCloneRequested`. Both act on
+that tile only, never on the rest of the selection.
+
+```dart
+Dashboard(
+  controller: controller,
+  onWillDelete: (items) => confirmDelete(context, items),
+  editOverlayBuilder: (context, item, actions) => Align(
+    alignment: Alignment.topRight,
+    child: IconButton(icon: const Icon(Icons.close), onPressed: actions.delete),
+  ),
+  itemBuilder: (context, item) => MyCard(item),
+)
+```
+
+**Buttons inside tiles.** A press on a tile starts a drag or a resize at once on desktop, so a button
+placed in a tile used to fight the grid. Wrap it in `DashboardGestureExclusion`: a press on it starts
+no drag, resize, selection change or lasso, and the rest of the tile still drags. The edit overlay is
+wrapped for you. Only the area where the child is actually hit is excluded, so avoid an opaque
+full-tile background in there.
+
+```dart
+itemBuilder: (context, item) => Column(
+  children: [
+    Text(item.id),
+    DashboardGestureExclusion(
+      child: TextButton(onPressed: () => openSettings(item), child: const Text('Settings')),
+    ),
+  ],
+),
+```
+
+**Custom resize handles.** `resizeHandleBuilder` draws each active handle in place of the default
+corners and bars (round grips, icons…). It only changes the look: the box it paints in is never larger
+than the handle's press zone, so the resize cursor still matches where a press resizes, and which handles
+exist stays with `resizeZoneResolver`.
+
+```dart
+Dashboard(
+  controller: controller,
+  resizeHandleBuilder: (context, item, handle, size) => DecoratedBox(
+    decoration: BoxDecoration(color: Colors.blue, shape: BoxShape.circle),
+  ),
+  itemBuilder: (context, item) => MyCard(item),
+)
+```
+
+**Empty grid.** `emptyBuilder` is shown over the grid while it has no tile and is not being edited; in
+edit mode the empty grid stays a drop and tap surface.
+
+```dart
+Dashboard(
+  controller: controller,
+  emptyBuilder: (context) => const Center(child: Text('Tap "Edit" to add your first widget')),
+  itemBuilder: (context, item) => MyCard(item),
+)
 ```
 
 ### Drag to Delete (Trash Bin)

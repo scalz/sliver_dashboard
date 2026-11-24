@@ -21,6 +21,7 @@ import 'package:sliver_dashboard/src/view/dashboard_feedback_widget.dart';
 import 'package:sliver_dashboard/src/view/dashboard_grid.dart';
 import 'package:sliver_dashboard/src/view/dashboard_item_widget.dart';
 import 'package:sliver_dashboard/src/view/dashboard_lasso_layer.dart';
+import 'package:sliver_dashboard/src/view/dashboard_tile_actions.dart';
 import 'package:sliver_dashboard/src/view/dashboard_typedefs.dart';
 import 'package:sliver_dashboard/src/view/guidance/dashboard_guidance.dart';
 import 'package:sliver_dashboard/src/view/nested/dashboard_nested_scope.dart';
@@ -91,6 +92,12 @@ class DashboardOverlayController {
 
   /// Clone callback.
   DashboardCloneRequestCallback? get onCloneRequested => null;
+
+  /// Builder of the per-tile edit-mode overlay (`Dashboard.editOverlayBuilder`).
+  DashboardEditOverlayBuilder? get editOverlayBuilder => null;
+
+  /// Custom resize handle visuals (`Dashboard.resizeHandleBuilder`).
+  DashboardResizeHandleBuilder? get resizeHandleBuilder => null;
 }
 
 /// An InheritedWidget that provides a [DashboardOverlayController] to its descendants.
@@ -168,6 +175,9 @@ class DashboardOverlay<T extends Object> extends StatefulWidget {
     this.fillViewport = false,
     this.dragStartGesture = DragStartGesture.longPress,
     this.longPressDelay,
+    this.editOverlayBuilder,
+    this.resizeHandleBuilder,
+    this.emptyBuilder,
     this.crossGridDragOut = true,
     this.acceptCrossGridItems = true,
     this.onCloneRequested,
@@ -358,6 +368,15 @@ class DashboardOverlay<T extends Object> extends StatefulWidget {
   /// See `Dashboard.longPressDelay`.
   final Duration? longPressDelay;
 
+  /// See `Dashboard.editOverlayBuilder`.
+  final DashboardEditOverlayBuilder? editOverlayBuilder;
+
+  /// See `Dashboard.resizeHandleBuilder`.
+  final DashboardResizeHandleBuilder? resizeHandleBuilder;
+
+  /// See `Dashboard.emptyBuilder`.
+  final WidgetBuilder? emptyBuilder;
+
   /// Produces the duplicate of a tile dragged with the clone modifier held
   /// (`Alt` / `Option` by default, see `DashboardShortcuts.cloneKeys`).
   ///
@@ -408,6 +427,7 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
   static const _backgroundSlotKey = ValueKey<String>('dashboardOverlay.background');
   static const _contentSlotKey = ValueKey<String>('dashboardOverlay.content');
   static const _lassoSlotKey = ValueKey<String>('dashboardOverlay.lasso');
+  static const _emptySlotKey = ValueKey<String>('dashboardOverlay.empty');
   static const _feedbackSlotKey = ValueKey<String>('dashboardOverlay.feedback');
   static const _trashSlotKey = ValueKey<String>('dashboardOverlay.trash');
 
@@ -680,6 +700,12 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
 
   @override
   DashboardCloneRequestCallback? get onCloneRequested => _cloneCallback;
+
+  @override
+  DashboardEditOverlayBuilder? get editOverlayBuilder => widget.editOverlayBuilder;
+
+  @override
+  DashboardResizeHandleBuilder? get resizeHandleBuilder => widget.resizeHandleBuilder;
 
   @override
   void startDragging(String itemId, Offset globalPosition) {
@@ -988,6 +1014,18 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
                   ),
                 ),
 
+                // 2b. Empty-grid placeholder (`emptyBuilder`): its own keyed
+                // slot, present whenever the builder is, so it never shifts
+                // the slots around it.
+                if (widget.emptyBuilder != null)
+                  Positioned.fill(
+                    key: _emptySlotKey,
+                    child: _EmptyGridLayer(
+                      controller: widget.controller,
+                      builder: widget.emptyBuilder!,
+                    ),
+                  ),
+
                 // 3. Rubberband selection rectangle.
                 // Above the content so it is visible, below the drag
                 // feedback so a cross-grid proxy is never hidden by it, and
@@ -1113,7 +1151,8 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
     void Function(int x, int y)? callback,
   ) {
     if (callback == null) return;
-    if (_hitTest(globalPosition).item != null) return;
+    final slotHit = _hitTest(globalPosition);
+    if (slotHit.item != null || slotHit.excluded) return;
     final renderSliver = _findRenderSliver();
     if (renderSliver == null || !renderSliver.attached) return;
     // Containment: strict sliver bounds keep several grids sharing one
@@ -1173,6 +1212,7 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
     if (!widget.controller.isEditing.value) return;
 
     final hit = _hitTest(globalPosition);
+    if (hit.excluded) return;
     final foundItem = hit.item;
 
     if (foundItem != null && !foundItem.isStatic) {
@@ -1432,11 +1472,21 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
 
   // Interaction Logic
 
-  ({LayoutItem? item, RenderSliverDashboard? renderSliver, RenderBox? itemRenderBox}) _hitTest(
+  /// The item of THIS grid under [globalPosition], and whether the press
+  /// landed on a [DashboardGestureExclusion] (a button inside a tile, at any
+  /// depth): such a press must start no grid gesture at all.
+  ({
+    LayoutItem? item,
+    RenderSliverDashboard? renderSliver,
+    RenderBox? itemRenderBox,
+    bool excluded,
+  }) _hitTest(
     Offset globalPosition,
   ) {
     final overlayRenderBox = context.findRenderObject() as RenderBox?;
-    if (overlayRenderBox == null) return (item: null, renderSliver: null, itemRenderBox: null);
+    if (overlayRenderBox == null) {
+      return (item: null, renderSliver: null, itemRenderBox: null, excluded: false);
+    }
 
     final localPosition = overlayRenderBox.globalToLocal(globalPosition);
     final result = BoxHitTestResult();
@@ -1449,8 +1499,16 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
       // id). Only entries whose sliver is our own are considered; deeper
       // entries are skipped and the walk naturally reaches our host item.
       final ownSliver = _findRenderSliver();
+      var excluded = false;
       for (final entry in result.path) {
         final target = entry.target;
+        // Reason: deepest-first, so the marker of a button inside a tile is
+        // met before that tile's box; one type test per entry, pointer-down only.
+        if (target is RenderMetaData &&
+            identical(target.metaData, DashboardGestureExclusion.marker)) {
+          excluded = true;
+          continue;
+        }
         if (target is RenderBox) {
           final parentData = target.parentData;
           if (parentData is SliverDashboardParentData && parentData.index != null) {
@@ -1463,14 +1521,18 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
                   item: parent.items[index],
                   renderSliver: parent,
                   itemRenderBox: target,
+                  excluded: excluded,
                 );
               }
             }
           }
         }
       }
+      if (excluded) {
+        return (item: null, renderSliver: null, itemRenderBox: null, excluded: true);
+      }
     }
-    return (item: null, renderSliver: null, itemRenderBox: null);
+    return (item: null, renderSliver: null, itemRenderBox: null, excluded: false);
   }
 
   RenderSliverDashboard? _findRenderSliver() {
@@ -1533,6 +1595,7 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
     widget.controller.internal.clearResizeGhost();
 
     final hit = _hitTest(position);
+    if (hit.excluded) return;
     final foundItem = hit.item;
     final itemRenderBox = hit.itemRenderBox;
     final renderSliver = hit.renderSliver;
@@ -3379,4 +3442,22 @@ class _DelayedLongPressGestureRecognizer extends LongPressGestureRecognizer {
 
   @override
   Duration? get deadline => delay;
+}
+
+/// Shows `emptyBuilder` while the grid has no item and is not being edited.
+///
+/// A widget of its own so the layout watch rebuilds this leaf only, never the
+/// overlay. In edit mode the empty grid stays a drop and tap surface.
+class _EmptyGridLayer extends StatelessWidget {
+  const _EmptyGridLayer({required this.controller, required this.builder});
+
+  final DashboardController controller;
+  final WidgetBuilder builder;
+
+  @override
+  Widget build(BuildContext context) {
+    final isEmpty = controller.layout.watch(context).isEmpty;
+    final isEditing = controller.isEditing.watch(context);
+    return isEmpty && !isEditing ? builder(context) : const SizedBox.shrink();
+  }
 }

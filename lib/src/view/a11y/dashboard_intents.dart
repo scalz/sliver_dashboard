@@ -33,7 +33,11 @@ class DashboardCancelInteractionIntent extends Intent {
 /// Intent to delete the selected item(s) or the currently focused item.
 class DashboardDeleteItemIntent extends Intent {
   /// Creates a [DashboardDeleteItemIntent].
-  const DashboardDeleteItemIntent();
+  const DashboardDeleteItemIntent({this.onlyThisItem = false});
+
+  /// Targets the tile that handles the intent only, ignoring the rest of the
+  /// selection (a per-tile delete button). False: the keyboard semantics.
+  final bool onlyThisItem;
 }
 
 /// Intent to select all non-static items in the grid.
@@ -45,7 +49,10 @@ class DashboardSelectAllIntent extends Intent {
 /// Intent to duplicate the active / selected item(s).
 class DashboardDuplicateItemIntent extends Intent {
   /// Creates a [DashboardDuplicateItemIntent].
-  const DashboardDuplicateItemIntent();
+  const DashboardDuplicateItemIntent({this.onlyThisItem = false});
+
+  /// See [DashboardDeleteItemIntent.onlyThisItem].
+  final bool onlyThisItem;
 }
 
 /// Intent to undo the last layout transaction.
