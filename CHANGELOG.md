@@ -1,4 +1,4 @@
-## 2.11.0 (unreleased)
+## 2.11.0
 
 All additions are opt-in: with the defaults, nothing changes.
 
