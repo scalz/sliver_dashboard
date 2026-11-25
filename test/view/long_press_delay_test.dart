@@ -131,4 +131,131 @@ void main() {
     await g.up();
     await tester.pumpAndSettle();
   });
+
+  group('the grid only claims the long presses it uses', () {
+    // A tile with its own long press (e.g. "open the tile's settings"),
+    // outside edit mode, with a grid delay SHORTER than the tile's 500 ms.
+    var tileLongPresses = 0;
+    var builds = 0;
+
+    Widget appWithTileLongPress({
+      Duration? delay = const Duration(milliseconds: 350),
+      void Function(int, int)? onSlotLongPress,
+    }) =>
+        MaterialApp(
+          home: Builder(
+            builder: (context) {
+              builds++;
+              return Dashboard(
+                controller: controller,
+                scrollController: scroll,
+                padding: const EdgeInsets.all(20),
+                longPressDelay: delay,
+                onSlotLongPress: onSlotLongPress,
+                itemBuilder: (context, item) => GestureDetector(
+                  onLongPressStart: (_) => tileLongPresses++,
+                  child: ColoredBox(
+                    color: const Color(0xFF9E9E9E),
+                    child: Center(child: Text(item.id)),
+                  ),
+                ),
+              );
+            },
+          ),
+        );
+
+    setUp(() {
+      tileLongPresses = 0;
+      builds = 0;
+    });
+
+    testWidgets('outside edit mode, the tile keeps its own long press', (tester) async {
+      controller.setEditMode(false);
+      await tester.pumpWidget(appWithTileLongPress());
+      await tester.longPress(find.text('a'));
+      await tester.pumpAndSettle();
+      expect(tileLongPresses, 1);
+      expect(controller.isDragging.value, isFalse);
+    });
+
+    testWidgets('in edit mode, the shorter delay still picks the tile up first', (tester) async {
+      await tester.pumpWidget(appWithTileLongPress());
+      final g = await holdOn(
+        tester,
+        tester.getCenter(find.text('a')),
+        const Duration(milliseconds: 380),
+      );
+      expect(controller.isDragging.value, isTrue);
+      expect(tileLongPresses, 0);
+      await g.up();
+      await tester.pumpAndSettle();
+    });
+
+    testWidgets('outside edit mode, onSlotLongPress still fires on an empty slot', (tester) async {
+      controller.setEditMode(false);
+      final hits = <(int, int)>[];
+      await tester.pumpWidget(
+        appWithTileLongPress(onSlotLongPress: (x, y) => hits.add((x, y))),
+      );
+      final a = tester.getRect(find.text('a').first);
+      final emptyRight = Offset(tester.getSize(find.byType(Dashboard)).width - 40, a.center.dy);
+      final g = await holdOn(tester, emptyRight, const Duration(milliseconds: 380));
+      expect(hits, hasLength(1));
+      await g.up();
+      await tester.pumpAndSettle();
+
+      // ...and still leaves a tile's own long press alone.
+      await tester.longPress(find.text('a'));
+      await tester.pumpAndSettle();
+      expect(tileLongPresses, 1);
+      expect(hits, hasLength(1));
+    });
+
+    testWidgets('in edit mode, a button in a DashboardGestureExclusion keeps its long press',
+        (tester) async {
+      var buttonLongPresses = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Dashboard(
+            controller: controller,
+            longPressDelay: const Duration(milliseconds: 350),
+            itemBuilder: (context, item) => Center(
+              child: DashboardGestureExclusion(
+                child: GestureDetector(
+                  key: ValueKey('btn-${item.id}'),
+                  onLongPressStart: (_) => buttonLongPresses++,
+                  child: const SizedBox(
+                    width: 30,
+                    height: 30,
+                    child: ColoredBox(color: Color(0xFF4CAF50)),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.longPress(find.byKey(const ValueKey('btn-a')));
+      await tester.pumpAndSettle();
+      expect(buttonLongPresses, 1);
+      expect(controller.isDragging.value, isFalse);
+    });
+
+    testWidgets('no rebuild: toggling edit mode does not rebuild the composing widget',
+        (tester) async {
+      controller.setEditMode(false);
+      await tester.pumpWidget(appWithTileLongPress());
+      final before = builds;
+      controller.setEditMode(true);
+      await tester.pumpAndSettle();
+      controller.setEditMode(false);
+      await tester.pumpAndSettle();
+      expect(builds, before);
+
+      // The decision is taken at pointer-down: still correct after the toggles.
+      await tester.longPress(find.text('a'));
+      await tester.pumpAndSettle();
+      expect(tileLongPresses, 1);
+    });
+  });
 }

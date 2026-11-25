@@ -1102,6 +1102,7 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
             () => _DelayedLongPressGestureRecognizer(debugOwner: this),
             (recognizer) => recognizer
               ..delay = widget.longPressDelay ?? kLongPressTimeout
+              ..accepts = ((position) => _claimsLongPress(position, longPressDrag: longPressDrag))
               ..onLongPressStart = onLongPressStart
               ..onLongPressMoveUpdate =
                   longPressDrag ? (details) => _onPointerMove(details.globalPosition) : null
@@ -1112,6 +1113,24 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
       },
       child: widget.child,
     );
+  }
+
+  /// Whether the grid's long-press recognizer enters the arena for a press at
+  /// [globalPosition]: only for a press it will act on.
+  ///
+  /// Reason: a recognizer in the arena wins by its deadline, so with a
+  /// `longPressDelay` shorter than a tile's own long press it would take that
+  /// press even where the grid then does nothing (outside edit mode, on a
+  /// tile). Decided at pointer-down from `peek()` and the hit path, so an
+  /// edit-mode toggle rebuilds nothing.
+  bool _claimsLongPress(Offset globalPosition, {required bool longPressDrag}) {
+    final editing = widget.controller.isEditing.peek();
+    if (!editing && widget.onSlotLongPress == null) return false;
+    final hit = _hitTest(globalPosition);
+    if (hit.excluded) return false;
+    if (editing && longPressDrag) return true;
+    // Only the empty-slot callback is left to serve.
+    return hit.item == null;
   }
 
   /// Wraps the grid content in the [MouseRegion] carrying the lasso cursor.
@@ -3440,8 +3459,17 @@ class _DelayedLongPressGestureRecognizer extends LongPressGestureRecognizer {
   /// The hold duration applied to the next press.
   Duration delay = kLongPressTimeout;
 
+  /// Decides, at pointer-down, whether this recognizer competes at all. A
+  /// refused pointer never enters the arena, so it cannot win by deadline
+  /// over a long press the application put on the tile.
+  bool Function(Offset globalPosition)? accepts;
+
   @override
   Duration? get deadline => delay;
+
+  @override
+  bool isPointerAllowed(PointerDownEvent event) =>
+      super.isPointerAllowed(event) && (accepts?.call(event.position) ?? true);
 }
 
 /// Shows `emptyBuilder` while the grid has no item and is not being edited.
