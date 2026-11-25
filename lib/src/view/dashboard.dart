@@ -275,6 +275,12 @@ class Dashboard<T extends Object> extends StatefulWidget {
   /// on touch with [DragStartGesture.longPress], and fires [onSlotLongPress].
   /// Null keeps Flutter's `kLongPressTimeout` (500 ms). A finger that moves
   /// before the delay scrolls the grid instead.
+  ///
+  /// It only governs the long presses the grid acts on (a pick-up in edit
+  /// mode, an empty-slot `onSlotLongPress`). Elsewhere, e.g. on a tile outside
+  /// edit mode or on a [DashboardGestureExclusion], the grid does not compete,
+  /// so a long press the application put on its tiles keeps working whatever
+  /// the delay.
   final Duration? longPressDelay;
 
   /// Builds a per-tile overlay shown in edit mode only (a delete button, a

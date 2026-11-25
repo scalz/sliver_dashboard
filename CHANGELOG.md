@@ -14,7 +14,8 @@ through the keyboard's pipeline), `resizeHandleBuilder` (custom handle visuals) 
 - **`DashboardGestureExclusion`**: a button inside a tile gets its tap without starting a drag, resize or
 selection.
 - **`controller.autoScroll`** (`AutoScrollConfig`: zone, speed, off) and **`longPressDelay`** (touch
-pick-up delay).
+pick-up delay; it never takes a long press the grid does not use, such as a tile's own outside edit
+mode).
 
 ### Changed
 

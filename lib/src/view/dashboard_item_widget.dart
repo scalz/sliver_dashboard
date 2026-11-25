@@ -192,9 +192,10 @@ class _DashboardItemState extends State<DashboardItem>
 
     // PERFORMANCE CRITICAL:
     // We intentionally ignore `widget.builder` changes here.
-    // We only invalidate the cache if:
-    // 1. The item content (w, h, id, static) changes (checked via signature).
-    // 2. The global edit mode changes.
+    // We only invalidate the cache if the item content (w, h, id, static…)
+    // changes (checked via signature), or, for the sub-pixel / breakpoint
+    // builders, the tracked dimensions do. Edit mode never invalidates it:
+    // the chrome lives outside the cache.
 
     final newSignature = widget.item.contentSignature;
     final signatureChanged = newSignature != _lastSignature;
