@@ -11,7 +11,7 @@
 
 **A high-performance and scalable dashboard engine for Flutter, built on Slivers.**
 
-`sliver_dashboard` is a sliver-native layout engine for building interactive, user-configurable dashboards with drag & drop, resizing, nested grids, and viewport virtualization. Designed as an engine rather than a monolithic widget, it composes naturally with Flutter's scrolling system while remaining responsive with hundreds or thousands of tiles.
+`sliver_dashboard` is a sliver-native layout engine for building interactive, user-configurable dashboards with drag & drop, resizing, nested grids, and viewport virtualization. Designed as an engine rather than a monolithic widget, it composes naturally with Flutter's scrolling system while remaining responsive with hundreds or thousands of tiles. Use it as a regular widget (`Dashboard` builds the scroll view for you), or drop `SliverDashboard` into your own `CustomScrollView` when you need to compose with app bars and lists.
 
 Ideal for analytics platforms, IoT control panels, project management tools, no-code builders, and any application requiring complex, interactive layouts across mobile, desktop, and web.
 
@@ -21,18 +21,12 @@ Ideal for analytics platforms, IoT control panels, project management tools, no-
 
 ## Why sliver-native matters
 
-- **Native Sliver architecture, not a `Stack` dressed up as a sliver.** A real
-`RenderSliverMultiBoxAdaptor` sized to its content: several grids, lists and app bars share one
-`CustomScrollView`.
-- **RenderObject-level virtualization.** The sliver's child manager creates tiles lazily and
-garbage-collects them as they leave the cache extent.
-- **Fast at scale**. A drag step on 1,000 tiles takes about 1 ms on the web, with fuzz-tested layout invariants (benchmarks).
-([benchmarks](BENCHMARK.md)).
+- **A real sliver.** A `RenderSliverMultiBoxAdaptor` sized to its content. Virtualization comes from the sliver protocol itself: the viewport's constraints decide which tiles exist, with no scroll listener. With 1,000 tiles, only those near the screen are built.
+- **Composes like any sliver.** A `SliverAppBar` collapses over the grid, a `SliverList` starts exactly where the grid's content ends, and tiles can be dragged between sibling grids sharing one `CustomScrollView`.
+- **Fast at scale.** A drag step on 1,000 tiles takes about 1 ms on the web, and tile content is not rebuilt during a drag or a resize. Layout invariants are fuzz-tested ([benchmarks](BENCHMARK.md)).
 
 ## Features
 
-- **High Performance:** Built on Flutter's `Sliver` protocol with **smart caching**. It only renders visible items and prevents unnecessary rebuilds of children during drag/resize operations.
-- **Sliver Composition:** Integrate the dashboard's grid seamlessly with other slivers like `SliverAppBar` and `SliverList` within a single `CustomScrollView`.
 - **Nested Grids:** Embed full dashboards inside grid items (`NestedDashboard`) at any depth, and **drag items between grids** (parent ↔ child ↔ siblings) with a live push-preview placeholder. Supports auto-sizing hosts, dynamic sub-grid creation, and one-call recursive save/load.
 - **Cross-Sliver Drag & Drop:** drag tiles between independent sibling `SliverDashboard`s sharing one `CustomScrollView`, with **dimension projection policies** (`preserveLogicalSize`, `preserveVisualProportion`, or a custom callback) translating item sizes between grids of different column counts.
 - **Fully Customizable:** Control the number of columns, aspect ratio, spacing, grid and handles style. Items can be draggable, resizable, and static. Support for dedicated **Drag Handles** (`DashboardDragStartListener`) and configurable mobile drag start gestures (long-press, tap, or handle-only).
@@ -42,7 +36,7 @@ garbage-collects them as they leave the cache extent.
 - **Horizontal & Vertical Layouts:** Supports both vertical (default) and horizontal scrolling directions.
 - **Smart Collision Detection:** Choose your desired behavior:
   - **Push:** Items push each other out of the way to avoid overlap.
-  - **Push or Shrink:** Items can be shrinked or pushed when resizing a neighbour item.
+  - **Push or Shrink:** Items can be shrunk or pushed when resizing a neighbour item.
   - **Auto-Shrink on Drag:** Move large widgets over smaller items, and the engine automatically contracts neighboring elements to clear room.
 - **Compaction:** Choose your desired behavior:
   - **None:** Free positioning. Items are not compacted.
@@ -51,7 +45,7 @@ garbage-collects them as they leave the cache extent.
   - **Custom:** Implement `CompactorDelegate` to define custom rules (e.g., specific gravity, fixed zones).
 - **Built-in Trash:** Easy-to-implement drag-to-delete functionality. Or implement your own using available callbacks.
 - **Tile Actions:** per-tile edit buttons (delete, duplicate), custom resize handles, buttons inside tiles that never start a drag, and an empty-grid placeholder.
-- **Custom Feedback:** Customize the appearance of items while they are being dragged. Use onInteractionStart callback for haptic feedback...
+- **Custom Feedback:** Customize the appearance of items while they are being dragged. Use `onInteractionStart` callback for haptic feedback.
 - **Reflow Animations:** pushed/compacted tiles slide to their new slot.
 - **Fluid Resize:** opt-in pixel-tracking resize. Tiles resize fluidly in raw pixels and smoothly animate into their snapped slot on release.
 - **Drag From Outside:** Drop new items from external sources directly into the grid with auto-scrolling support.
@@ -161,7 +155,7 @@ final controller = DashboardController(
 
 ### 3. Build the Dashboard Widget
 
-For basic usage, use the `Dashboard` widget. It handles the scroll view creation for you.
+For basic usage, use the `Dashboard` widget. It handles the scroll view creation for you, no sliver knowledge required.
 
 ```dart
 import 'package:flutter/material.dart';
