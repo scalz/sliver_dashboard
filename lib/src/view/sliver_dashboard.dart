@@ -1119,17 +1119,22 @@ class RenderSliverDashboard extends RenderSliverMultiBoxAdaptor {
     var trailingGarbage = 0;
 
     if (firstChild != null) {
-      final firstChildIndex = indexOf(firstChild!);
-      final lastChildIndex = indexOf(lastChild!);
-
-      final int lastRemoveIndex = min(lastChildIndex, minVisibleIndex - 1);
-      if (lastRemoveIndex >= firstChildIndex) {
-        leadingGarbage = lastRemoveIndex - firstChildIndex + 1;
+      // Reason: garbage is a count of REAL children, never an index span. The
+      // child list is not contiguous: `performRebuild` remaps keyed children
+      // through `findChildIndexCallback` before layout, so a tile jumping far
+      // in the geometric view leaves e.g. {0..4, 49}, and `collectGarbage`
+      // pops one `firstChild!`/`lastChild!` per counted child. The two walks
+      // are disjoint because `minVisibleIndex <= maxVisibleIndex + 1`.
+      var leading = firstChild;
+      while (leading != null && indexOf(leading) < minVisibleIndex) {
+        leadingGarbage++;
+        leading = childAfter(leading);
       }
 
-      final int firstRemoveIndex = max(firstChildIndex, maxVisibleIndex + 1);
-      if (firstRemoveIndex <= lastChildIndex) {
-        trailingGarbage = lastChildIndex - firstRemoveIndex + 1;
+      var trailing = lastChild;
+      while (trailing != null && indexOf(trailing) > maxVisibleIndex) {
+        trailingGarbage++;
+        trailing = childBefore(trailing);
       }
 
       collectGarbage(leadingGarbage, trailingGarbage);

@@ -11,6 +11,7 @@ export 'src/view/dashboard_configuration.dart';
 export 'src/view/dashboard_drag_start_listener.dart';
 export 'src/view/dashboard_item_wrapper.dart';
 export 'src/view/dashboard_overlay.dart';
+export 'src/view/dashboard_tile_actions.dart';
 export 'src/view/dashboard_typedefs.dart';
 export 'src/view/grid_background_painter.dart';
 export 'src/view/guidance/dashboard_guidance.dart';

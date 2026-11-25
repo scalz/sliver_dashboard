@@ -5,6 +5,7 @@ import 'dart:typed_data';
 
 // Import your package files
 import 'package:sliver_dashboard/src/engine/layout_engine.dart';
+import 'package:sliver_dashboard/src/models/dashboard_policy.dart';
 import 'package:sliver_dashboard/src/models/layout_item.dart';
 
 // ============================================================================
@@ -521,6 +522,122 @@ void main() {
     }
   }
 
+  // 2quater. FIXED BOARD (2.11) — the cost the new options add.
+  //
+  // strictMaxRows adds two O(N) extent scans per ACCEPTED cell crossing, on
+  // top of the cascade measured just above: compare the two lines directly.
+  // isSizeAllowed only runs on a resize whose rounding is refused; its search
+  // is bounded by the distance to the item's own size (R), so it is measured
+  // at the R a real gesture produces (a few slots) and at a pathological one.
+  for (final size in [1000, 4000]) {
+    final layout = generateUniformLayout(size, cols);
+    final item = layout[layout.length ~/ 2];
+    final moved = moveElement(
+      layout,
+      item,
+      item.x,
+      item.y + 1,
+      cols: cols,
+      compactType: CompactType.vertical,
+      preventCollision: true,
+      force: true,
+    );
+
+    record(
+      'Fixed board (2.11)',
+      'strictMaxRows guard: 2 extent scans ($size items)',
+      measure(
+        'StrictGuard',
+        () => mainAxisExtent(moved) + mainAxisExtent(layout),
+        iterations: 200,
+      ),
+    );
+    record(
+      'Fixed board (2.11)',
+      'canPlace, free spot ($size items)',
+      measure(
+        'CanPlace',
+        () => canPlace(layout, item.copyWith(y: item.y + 10000), cols: cols),
+        iterations: 200,
+      ),
+    );
+
+    // Two different questions, so two pairs of lines:
+    // - the price of the CALLS: a policy that accepts every size, against no
+    //   policy, on the same shrink;
+    // - the price of a REFUSAL: a refused shrink falls back to a push, so it
+    //   is compared with a push, not with a shrink.
+    final grown = item.copyWith(w: item.w + 1);
+    record(
+      'Fixed board (2.11)',
+      'resizeItem shrink, no policy ($size items)',
+      measure(
+        'ResizeNoPolicy',
+        () => resizeItem(layout, grown, behavior: ResizeBehavior.shrink, cols: cols),
+        iterations: size > 2000 ? 5 : 15,
+      ),
+    );
+    record(
+      'Fixed board (2.11)',
+      'resizeItem shrink, policy allows all ($size items)',
+      measure(
+        'ResizeAllowAll',
+        () => resizeItem(
+          layout,
+          grown,
+          behavior: ResizeBehavior.shrink,
+          cols: cols,
+          policy: const _BenchAllowAll(),
+        ),
+        iterations: size > 2000 ? 5 : 15,
+      ),
+    );
+    record(
+      'Fixed board (2.11)',
+      'resizeItem push, no policy ($size items)',
+      measure(
+        'ResizePush',
+        () => resizeItem(layout, grown, behavior: ResizeBehavior.push, cols: cols),
+        iterations: size > 2000 ? 5 : 15,
+      ),
+    );
+    record(
+      'Fixed board (2.11)',
+      'resizeItem shrink refused -> push ($size items)',
+      measure(
+        'ResizeRefused',
+        () => resizeItem(
+          layout,
+          grown,
+          behavior: ResizeBehavior.shrink,
+          cols: cols,
+          policy: const _BenchSizes(),
+        ),
+        iterations: size > 2000 ? 5 : 15,
+      ),
+    );
+  }
+  for (final r in [3, 20]) {
+    record(
+      'Fixed board (2.11)',
+      'nearestAllowedSize, radius $r',
+      measure(
+        'Nearest',
+        () => nearestAllowedSize(
+          w: 2.0 + r - 0.4,
+          h: 2,
+          minW: 1,
+          maxW: 10000,
+          minH: 1,
+          maxH: 10000,
+          isAllowed: (w, h) => _BenchSizes.sizes.contains((w, h)),
+          fallback: (2, 2),
+        ),
+        iterations: 2000,
+      ),
+    );
+  }
+
   // 2ter. SLIVER LAYOUT PASS — what a geometry memo + binary window would save.
   for (final size in [1000, 4000, 10000]) {
     final layout = generateUniformLayout(size, cols);
@@ -589,4 +706,22 @@ void main() {
   }
 
   printReport();
+}
+
+/// Fixed-board policy used by the 2.11 benchmarks: three allowed sizes.
+class _BenchSizes extends DashboardPolicy {
+  const _BenchSizes();
+
+  static const sizes = {(1, 1), (2, 2), (4, 2)};
+
+  @override
+  bool isSizeAllowed(LayoutItem item, int w, int h) => sizes.contains((w, h));
+}
+
+/// Accepts every size: isolates the cost of consulting a policy.
+class _BenchAllowAll extends DashboardPolicy {
+  const _BenchAllowAll();
+
+  @override
+  bool isSizeAllowed(LayoutItem item, int w, int h) => true;
 }

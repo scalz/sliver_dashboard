@@ -135,6 +135,10 @@ The view layer has been refactored to support native Sliver composition. It is c
   - **Content-Origin Arithmetic:** the overlay converts between grid-content coordinates and overlay-local coordinates using the single rule stated in §6 (Content-Origin Convention). It does **not** use `getTransformTo`/`MatrixUtils` — an earlier revision of this document claimed it did, while every call site computed the transform arithmetically, and two of them double-counted the leading padding as a result.
   - **Overlap-Aware Clipping:** dynamically calculates a `ClipRect` for the feedback item that respects `SliverConstraints.overlap` (e.g., sliding under a pinned `SliverAppBar`).
   - **Web Throttle Flush:** The 16 ms pointer-event throttle used on web keeps the freshest position and flushes it on a short timer, so the item never settles one event behind the cursor at the end of a burst.
+  - **Edge Auto-Scroll:** a `Ticker` on the overlay (`SingleTickerProviderStateMixin`), created lazily and active only while the pointer sits in a hot zone. Each tick steps `speed x frame time` (capped at 100 ms of travel after a stall) through `ScrollPosition.pointerScroll`, then re-runs the drag / placeholder update at the last pointer position. Zone and speed come from `controller.autoScroll` (`AutoScrollConfig`), read per event like `lassoStyle`. Not the web pointer throttle: that one coalesces pointer EVENTS; this one produces scroll STEPS.
+  - **Gesture Exclusion:** `DashboardGestureExclusion` is a `MetaData` (`deferToChild`) carrying a marker; `_hitTest` flags it while walking the hit path it already walks (deepest-first, so a button's marker precedes its tile's box), and pointer-down, mobile tap and slot gestures return early on it. The per-tile `editOverlayBuilder` layer lives in `DashboardItemWrapper`'s handle `Stack` and is wrapped in it; its `DashboardTileActions` invoke the tile's own `Actions` (`onlyThisItem`), so deletion and duplication keep a single implementation.
+  - **Empty Grid:** `emptyBuilder` occupies its own keyed slot in the overlay `Stack` (present whenever the builder is), and a leaf widget watches `layout.isEmpty` / `isEditing`, so showing it rebuilds that leaf only.
+  - **Long-Press Recognizer:** the overlay's tap and long-press recognizers are wired by hand in a `RawGestureDetector` (the `GestureDetector` exposed no duration). `_DelayedLongPressGestureRecognizer` overrides `deadline` with a mutable field, so a new `longPressDelay` applies to the next press without replacing the recognizer or remounting the grid.
   - **`CrossGridDragTarget`:** the overlay state implements this interface so the nested-grid coordinator can drive it (`foreignDragOver`/`foreignDragLeave`/`foreignDrop`, `itemAtGlobal`, `currentSlotMetrics`, highlight). It registers with the nearest `DashboardNestedScope` in `didChangeDependencies` (depth = number of enclosing dashboards) and unregisters on dispose.
   - **Hit-Test Ownership:** `_hitTest` filters hit-path entries by **sliver ownership**. The hit-test path is deepest-first, so with nested grids the first `SliverDashboardParentData` under the pointer may belong to an *inner* grid; without the filter the outer overlay would start a drag on a foreign item id (StateError). Entries from foreign slivers are skipped and the walk naturally reaches the overlay's own host item.
     - **Documented consequence:** when the child grid is **not** editing, its `_onPointerDown` returns before claiming the pointer and the walk reaches the host — so the parent drags the panel. Intentional (iOS-folder feel) and pinned by a test, but it is a by-product of an early return rather than an explicit decision, and it is the most frequent integration surprise. Applications must propagate their edit state to the child controller.
@@ -466,6 +470,37 @@ To prevent counter-intuitive layout expansions during resize gestures (e.g., dra
 These anchors are expressed once and applied to both the snapped and the fluid
 candidate (see *Fluid Resize* above), so turning `fluidResize` on cannot change
 where a resize lands — only how it is painted on the way there.
+
+### Fixed Boards: Allowed Sizes & the Strict Ceiling
+
+Two opt-in mechanisms turn the grid into a fixed board. Both are pure post-processing of what the
+engine already computes, and both cost nothing when off.
+
+- **Allowed sizes (`DashboardPolicy.isSizeAllowed`).** In `onResizeUpdate`, every clamp above is
+applied first and the raw rounding (`fw.round()`) still keys the cell-crossing bypass. Only behind
+that bypass, when the policy refuses the rounded size, `engine.nearestAllowedSize` replaces it with
+the allowed size nearest (Manhattan) to the continuous candidate, inside per-axis bounds collected
+while clamping (`wBound` / `hBound`: anchors, grid edge, `maxRows`). The item's own size is the
+fallback, which also bounds the search radius to how far the pointer travelled. On anchored edges
+(top/left), a size whose rect would reach over a static is unreachable, not merely refused. A second
+key (`_appliedResize*`) skips the engine when a new crossing projects onto the size already applied.
+The fluid ghost keeps tracking the raw pointer; the snapped item, hence the settle target, is the
+projected one. The same predicate gates the two shrink paths (`_tryShrinkCollisions`,
+`_tryShrinkMoveCollisions`: a refused shrink falls back to a push) and `_sanitizeForTarget` (a
+cross-grid projection folds to the target grid's nearest allowed size; the session memo key carries
+the target policy's identity).
+- **Strict ceiling (`strictMaxRows`).** `maxRows` alone clamps targets, not pushes. With the flag,
+`_breaksStrictCap` measures the main-axis extent of the engine's result after each accepted cell
+crossing (drag, resize, external/cross-grid placeholder) and refuses a result that ends past the cap,
+or, for a layout already past it, one that grows. A refusal keeps the last accepted layout; the
+bypass keys are still written, which is sound because every update recomputes from the same
+`originalLayoutOnStart`, so the same cell is refused again by construction. The placeholder path
+caches its refused geometry (`_refusedPlaceholder`, cleared by an accepted placeholder and by
+`hidePlaceholder`). A hover that never had an accepted placeholder leaves none, and the drop resolves
+through the existing `canceled` outcome. On a horizontal grid the engine pushes along the cross
+axis, so a push cannot reach the main-axis ceiling there.
+- **Queries.** `canPlace` (pure engine function) and `tryAddItems` (the exact `addItems` result,
+committed only if it stays under `maxRows`) let the application ask before acting.
 
 ### Resize Hit Zones
 `calculateResizeHandle` is the single gesture-kind classifier, shared by

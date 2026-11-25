@@ -1,3 +1,35 @@
+## 2.11.0 (unreleased)
+
+All additions are opt-in: with the defaults, nothing changes.
+
+### Added
+
+- **Fixed boards** (wall panels, kiosks):
+  - `strictMaxRows`: `maxRows` also caps collision pushes; a move that would push a tile past it is refused.
+  - `DashboardPolicy.isSizeAllowed`: restricts tile sizes. Resizes snap to the nearest allowed size,
+  shrinks never produce a refused one, cross-grid drops adopt the target's sizes.
+  - `canPlace(item)` and `tryAddItem` / `tryAddItems` (all-or-nothing, never past `maxRows`).
+- **Tile actions:** `editOverlayBuilder` (a per-tile edit-mode overlay whose `delete` / `duplicate` go
+through the keyboard's pipeline), `resizeHandleBuilder` (custom handle visuals) and `emptyBuilder`.
+- **`DashboardGestureExclusion`**: a button inside a tile gets its tap without starting a drag, resize or
+selection.
+- **`controller.autoScroll`** (`AutoScrollConfig`: zone, speed, off) and **`longPressDelay`** (touch
+pick-up delay; it never takes a long press the grid does not use, such as a tile's own outside edit
+mode).
+
+### Changed
+
+- Edge auto-scroll runs on a `Ticker` (speed x frame time): smooth at any refresh rate, where the
+16 ms timer skipped frames at 120 Hz.
+- Shrinking neighbours is 1.6x faster (AOT) and 2x faster (dart2js).
+
+### Fixed
+
+- Horizontal grids: `importLayout`, `addItems` and breakpoint changes bounded the wrong axis.
+- Under a `NestedScrollView`, auto-scroll no longer snaps the header shut in one frame.
+- A crash (`Null check operator used on a null value`) when a visible tile moved far in the layout,
+e.g. after a removal or an import.
+
 ## 2.10.0
 
 ### Fixed

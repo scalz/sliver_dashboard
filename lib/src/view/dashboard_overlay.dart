@@ -2,7 +2,9 @@ import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/scheduler.dart' show Ticker;
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:sliver_dashboard/src/controller/dashboard_controller_impl.dart'
@@ -19,6 +21,7 @@ import 'package:sliver_dashboard/src/view/dashboard_feedback_widget.dart';
 import 'package:sliver_dashboard/src/view/dashboard_grid.dart';
 import 'package:sliver_dashboard/src/view/dashboard_item_widget.dart';
 import 'package:sliver_dashboard/src/view/dashboard_lasso_layer.dart';
+import 'package:sliver_dashboard/src/view/dashboard_tile_actions.dart';
 import 'package:sliver_dashboard/src/view/dashboard_typedefs.dart';
 import 'package:sliver_dashboard/src/view/guidance/dashboard_guidance.dart';
 import 'package:sliver_dashboard/src/view/nested/dashboard_nested_scope.dart';
@@ -89,6 +92,12 @@ class DashboardOverlayController {
 
   /// Clone callback.
   DashboardCloneRequestCallback? get onCloneRequested => null;
+
+  /// Builder of the per-tile edit-mode overlay (`Dashboard.editOverlayBuilder`).
+  DashboardEditOverlayBuilder? get editOverlayBuilder => null;
+
+  /// Custom resize handle visuals (`Dashboard.resizeHandleBuilder`).
+  DashboardResizeHandleBuilder? get resizeHandleBuilder => null;
 }
 
 /// An InheritedWidget that provides a [DashboardOverlayController] to its descendants.
@@ -165,6 +174,10 @@ class DashboardOverlay<T extends Object> extends StatefulWidget {
     this.backgroundBuilder,
     this.fillViewport = false,
     this.dragStartGesture = DragStartGesture.longPress,
+    this.longPressDelay,
+    this.editOverlayBuilder,
+    this.resizeHandleBuilder,
+    this.emptyBuilder,
     this.crossGridDragOut = true,
     this.acceptCrossGridItems = true,
     this.onCloneRequested,
@@ -352,6 +365,18 @@ class DashboardOverlay<T extends Object> extends StatefulWidget {
   /// The gesture used to trigger a drag operation on mobile platforms
   final DragStartGesture dragStartGesture;
 
+  /// See `Dashboard.longPressDelay`.
+  final Duration? longPressDelay;
+
+  /// See `Dashboard.editOverlayBuilder`.
+  final DashboardEditOverlayBuilder? editOverlayBuilder;
+
+  /// See `Dashboard.resizeHandleBuilder`.
+  final DashboardResizeHandleBuilder? resizeHandleBuilder;
+
+  /// See `Dashboard.emptyBuilder`.
+  final WidgetBuilder? emptyBuilder;
+
   /// Produces the duplicate of a tile dragged with the clone modifier held
   /// (`Alt` / `Option` by default, see `DashboardShortcuts.cloneKeys`).
   ///
@@ -382,6 +407,7 @@ class DashboardOverlay<T extends Object> extends StatefulWidget {
 }
 
 class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>>
+    with SingleTickerProviderStateMixin
     implements DashboardOverlayController, CrossGridDragTarget {
   final GlobalKey _overlayStackKey = GlobalKey();
 
@@ -401,6 +427,7 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
   static const _backgroundSlotKey = ValueKey<String>('dashboardOverlay.background');
   static const _contentSlotKey = ValueKey<String>('dashboardOverlay.content');
   static const _lassoSlotKey = ValueKey<String>('dashboardOverlay.lasso');
+  static const _emptySlotKey = ValueKey<String>('dashboardOverlay.empty');
   static const _feedbackSlotKey = ValueKey<String>('dashboardOverlay.feedback');
   static const _trashSlotKey = ValueKey<String>('dashboardOverlay.trash');
 
@@ -633,7 +660,14 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
   Offset? _dragGrabOffset;
 
   // Auto-scroll
-  Timer? _scrollTimer;
+  // Edge auto-scroll. A Ticker, not a periodic Timer: the step is
+  // speed x frame time, so it lands on every frame whatever the refresh rate
+  // (a 16 ms Timer drifts against a 60 Hz vsync and skips every other frame
+  // at 120 Hz). Created lazily, active only while the pointer is in a hot zone.
+  Ticker? _scrollTicker;
+  Duration _lastScrollTick = Duration.zero;
+
+  /// Signed auto-scroll speed, in logical pixels per second.
   double _scrollSpeed = 0;
 
   // Cached metrics for the active sliver
@@ -666,6 +700,12 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
 
   @override
   DashboardCloneRequestCallback? get onCloneRequested => _cloneCallback;
+
+  @override
+  DashboardEditOverlayBuilder? get editOverlayBuilder => widget.editOverlayBuilder;
+
+  @override
+  DashboardResizeHandleBuilder? get resizeHandleBuilder => widget.resizeHandleBuilder;
 
   @override
   void startDragging(String itemId, Offset globalPosition) {
@@ -813,7 +853,7 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
     _detachLassoScrollListener();
     _lassoOverlay.dispose();
     _scrollSubscription?.cancel().ignore();
-    _scrollTimer?.cancel();
+    _scrollTicker?.dispose();
     _leaveTimer?.cancel();
     _isHoveringTrash.dispose();
     _isTrashActive.dispose();
@@ -974,6 +1014,18 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
                   ),
                 ),
 
+                // 2b. Empty-grid placeholder (`emptyBuilder`): its own keyed
+                // slot, present whenever the builder is, so it never shifts
+                // the slots around it.
+                if (widget.emptyBuilder != null)
+                  Positioned.fill(
+                    key: _emptySlotKey,
+                    child: _EmptyGridLayer(
+                      controller: widget.controller,
+                      builder: widget.emptyBuilder!,
+                    ),
+                  ),
+
                 // 3. Rubberband selection rectangle.
                 // Above the content so it is visible, below the drag
                 // feedback so a cross-grid proxy is never hidden by it, and
@@ -1004,47 +1056,81 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
   /// Extracted so [_buildLassoCursorRegion] can hand it through as a
   /// pre-built `child`, which is what keeps a modifier press from rebuilding
   /// the scroll view.
+  /// The `GestureDetector` this replaces exposed no long-press duration, so the
+  /// two recognizers are wired by hand, with the settings `GestureDetector`
+  /// itself would pass. Each is created only when one of its callbacks is
+  /// live, exactly as `GestureDetector` does.
   Widget _buildGestureContent() {
-    return GestureDetector(
-      behavior: HitTestBehavior.translucent,
-      onTapUp: widget.onSlotTap != null
-          ? (details) => _handleSlotGesture(
-                details.globalPosition,
-                widget.onSlotTap,
-              )
-          : null,
-      onLongPressStart: (_isMobile && widget.dragStartGesture == DragStartGesture.longPress) ||
-              widget.onSlotLongPress != null
-          ? (details) {
-              if (_nestedCoordinator?.isPointerClaimedByOther(this) ?? false) {
-                return;
-              }
+    final longPressDrag = _isMobile && widget.dragStartGesture == DragStartGesture.longPress;
+    final gestureSettings = MediaQuery.maybeGestureSettingsOf(context);
+    final hasLongPress = longPressDrag || widget.onSlotLongPress != null;
 
-              // Empty-slot long-press wins; item long-press
-              // keeps its historical role (drag start on
-              // mobile longPress mode).
-              if (widget.onSlotLongPress != null && _hitTest(details.globalPosition).item == null) {
-                _handleSlotGesture(
-                  details.globalPosition,
-                  widget.onSlotLongPress,
-                );
-                return;
-              }
-              if (_isMobile && widget.dragStartGesture == DragStartGesture.longPress) {
-                _onPointerDown(details.globalPosition);
-              }
-            }
-          : null,
-      onLongPressMoveUpdate: _isMobile && widget.dragStartGesture == DragStartGesture.longPress
-          ? (details) => _onPointerMove(details.globalPosition)
-          : null,
-      onLongPressEnd: _isMobile && widget.dragStartGesture == DragStartGesture.longPress
-          ? (details) => _onPointerUp()
-          : null,
-      onLongPressCancel:
-          _isMobile && widget.dragStartGesture == DragStartGesture.longPress ? _onPointerUp : null,
+    void onLongPressStart(LongPressStartDetails details) {
+      if (_nestedCoordinator?.isPointerClaimedByOther(this) ?? false) {
+        return;
+      }
+
+      // Empty-slot long-press wins; item long-press
+      // keeps its historical role (drag start on
+      // mobile longPress mode).
+      if (widget.onSlotLongPress != null && _hitTest(details.globalPosition).item == null) {
+        _handleSlotGesture(
+          details.globalPosition,
+          widget.onSlotLongPress,
+        );
+        return;
+      }
+      if (longPressDrag) {
+        _onPointerDown(details.globalPosition);
+      }
+    }
+
+    return RawGestureDetector(
+      behavior: HitTestBehavior.translucent,
+      gestures: <Type, GestureRecognizerFactory>{
+        if (widget.onSlotTap != null)
+          TapGestureRecognizer: GestureRecognizerFactoryWithHandlers<TapGestureRecognizer>(
+            () => TapGestureRecognizer(debugOwner: this),
+            (recognizer) => recognizer
+              ..onTapUp =
+                  ((details) => _handleSlotGesture(details.globalPosition, widget.onSlotTap))
+              ..gestureSettings = gestureSettings,
+          ),
+        if (hasLongPress)
+          _DelayedLongPressGestureRecognizer:
+              GestureRecognizerFactoryWithHandlers<_DelayedLongPressGestureRecognizer>(
+            () => _DelayedLongPressGestureRecognizer(debugOwner: this),
+            (recognizer) => recognizer
+              ..delay = widget.longPressDelay ?? kLongPressTimeout
+              ..accepts = ((position) => _claimsLongPress(position, longPressDrag: longPressDrag))
+              ..onLongPressStart = onLongPressStart
+              ..onLongPressMoveUpdate =
+                  longPressDrag ? (details) => _onPointerMove(details.globalPosition) : null
+              ..onLongPressEnd = longPressDrag ? (details) => _onPointerUp() : null
+              ..onLongPressCancel = longPressDrag ? _onPointerUp : null
+              ..gestureSettings = gestureSettings,
+          ),
+      },
       child: widget.child,
     );
+  }
+
+  /// Whether the grid's long-press recognizer enters the arena for a press at
+  /// [globalPosition]: only for a press it will act on.
+  ///
+  /// Reason: a recognizer in the arena wins by its deadline, so with a
+  /// `longPressDelay` shorter than a tile's own long press it would take that
+  /// press even where the grid then does nothing (outside edit mode, on a
+  /// tile). Decided at pointer-down from `peek()` and the hit path, so an
+  /// edit-mode toggle rebuilds nothing.
+  bool _claimsLongPress(Offset globalPosition, {required bool longPressDrag}) {
+    final editing = widget.controller.isEditing.peek();
+    if (!editing && widget.onSlotLongPress == null) return false;
+    final hit = _hitTest(globalPosition);
+    if (hit.excluded) return false;
+    if (editing && longPressDrag) return true;
+    // Only the empty-slot callback is left to serve.
+    return hit.item == null;
   }
 
   /// Wraps the grid content in the [MouseRegion] carrying the lasso cursor.
@@ -1084,7 +1170,8 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
     void Function(int x, int y)? callback,
   ) {
     if (callback == null) return;
-    if (_hitTest(globalPosition).item != null) return;
+    final slotHit = _hitTest(globalPosition);
+    if (slotHit.item != null || slotHit.excluded) return;
     final renderSliver = _findRenderSliver();
     if (renderSliver == null || !renderSliver.attached) return;
     // Containment: strict sliver bounds keep several grids sharing one
@@ -1144,6 +1231,7 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
     if (!widget.controller.isEditing.value) return;
 
     final hit = _hitTest(globalPosition);
+    if (hit.excluded) return;
     final foundItem = hit.item;
 
     if (foundItem != null && !foundItem.isStatic) {
@@ -1403,11 +1491,21 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
 
   // Interaction Logic
 
-  ({LayoutItem? item, RenderSliverDashboard? renderSliver, RenderBox? itemRenderBox}) _hitTest(
+  /// The item of THIS grid under [globalPosition], and whether the press
+  /// landed on a [DashboardGestureExclusion] (a button inside a tile, at any
+  /// depth): such a press must start no grid gesture at all.
+  ({
+    LayoutItem? item,
+    RenderSliverDashboard? renderSliver,
+    RenderBox? itemRenderBox,
+    bool excluded,
+  }) _hitTest(
     Offset globalPosition,
   ) {
     final overlayRenderBox = context.findRenderObject() as RenderBox?;
-    if (overlayRenderBox == null) return (item: null, renderSliver: null, itemRenderBox: null);
+    if (overlayRenderBox == null) {
+      return (item: null, renderSliver: null, itemRenderBox: null, excluded: false);
+    }
 
     final localPosition = overlayRenderBox.globalToLocal(globalPosition);
     final result = BoxHitTestResult();
@@ -1420,8 +1518,16 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
       // id). Only entries whose sliver is our own are considered; deeper
       // entries are skipped and the walk naturally reaches our host item.
       final ownSliver = _findRenderSliver();
+      var excluded = false;
       for (final entry in result.path) {
         final target = entry.target;
+        // Reason: deepest-first, so the marker of a button inside a tile is
+        // met before that tile's box; one type test per entry, pointer-down only.
+        if (target is RenderMetaData &&
+            identical(target.metaData, DashboardGestureExclusion.marker)) {
+          excluded = true;
+          continue;
+        }
         if (target is RenderBox) {
           final parentData = target.parentData;
           if (parentData is SliverDashboardParentData && parentData.index != null) {
@@ -1434,14 +1540,18 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
                   item: parent.items[index],
                   renderSliver: parent,
                   itemRenderBox: target,
+                  excluded: excluded,
                 );
               }
             }
           }
         }
       }
+      if (excluded) {
+        return (item: null, renderSliver: null, itemRenderBox: null, excluded: true);
+      }
     }
-    return (item: null, renderSliver: null, itemRenderBox: null);
+    return (item: null, renderSliver: null, itemRenderBox: null, excluded: false);
   }
 
   RenderSliverDashboard? _findRenderSliver() {
@@ -1504,6 +1614,7 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
     widget.controller.internal.clearResizeGhost();
 
     final hit = _hitTest(position);
+    if (hit.excluded) return;
     final foundItem = hit.item;
     final itemRenderBox = hit.itemRenderBox;
     final renderSliver = hit.renderSliver;
@@ -2592,10 +2703,9 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
         _delegatedAutoScroll?.stopAutoScroll();
         _delegatedAutoScroll = null;
       }
-      // Nothing to scroll locally regardless; stop only this grid's own timer
+      // Nothing to scroll locally regardless; stop only this grid's own ticker
       // (must NOT cancel the delegation we just requested above).
-      _scrollTimer?.cancel();
-      _scrollTimer = null;
+      _scrollTicker?.stop();
       _scrollSpeed = 0.0;
       return;
     }
@@ -2606,8 +2716,13 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
     final localPosition = overlayBox.globalToLocal(globalPosition);
     final size = overlayBox.size;
 
-    const hotZoneExtent = 50.0;
-    const maxScrollSpeed = 15.0;
+    final config = widget.controller.autoScroll;
+    if (!config.enabled) {
+      _stopScrollTimer();
+      return;
+    }
+    final hotZoneExtent = config.edgeExtent;
+    final maxScrollSpeed = config.maxSpeed;
 
     final isVertical = _activeSliverMetrics?.scrollDirection != Axis.horizontal;
 
@@ -2639,50 +2754,56 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
   }
 
   void _startScrollTimer() {
-    if (_scrollTimer?.isActive ?? false) return;
+    if (_scrollTicker?.isActive ?? false) return;
     // A non-scrollable grid (e.g. sizeToContent on NeverScrollableScrollPhysics)
     // has nothing to auto-scroll on its own. A foreign hover has already been
     // delegated to the parent in _handleAutoScroll; an internal drag simply
     // grows the host via sizeToContent, and the parent scrolls itself. Starting
-    // a timer here would tick jumpTo() against a pinned position every 16ms for
-    // no effect, so skip it.
+    // the ticker here would jumpTo() a pinned position every frame for no
+    // effect, so skip it.
     if (widget.scrollController.hasClients) {
       final p = widget.scrollController.position;
       if (p.maxScrollExtent <= p.minScrollExtent) return;
     }
-    _scrollTimer = Timer.periodic(const Duration(milliseconds: 16), (timer) {
-      if (!widget.scrollController.hasClients) return;
-      final newOffset = widget.scrollController.offset + _scrollSpeed;
-      widget.scrollController.jumpTo(
-        newOffset.clamp(
-          widget.scrollController.position.minScrollExtent,
-          widget.scrollController.position.maxScrollExtent,
-        ),
-      );
-      if (_lastGlobalPosition != null) {
-        if (_activeItemId != null) {
-          _performUpdate(_lastGlobalPosition!);
-        } else if (_foreignDragItem != null) {
-          // Cross-grid hover: re-anchor with the dragged item's size, not the
-          // DragTarget placeholder size.
-          _showPlaceholderAt(
-            _lastGlobalPosition!,
-            w: _foreignDragItem!.w,
-            h: _foreignDragItem!.h,
-            grabFraction: _nestedCoordinator?.sessionGrabFraction ?? Offset.zero,
-          );
-        } else if (widget.controller.currentDragPlaceholder != null) {
-          // External DragTarget hover only; never resurrect a placeholder
-          // from a stale position (e.g. when scrolled by delegation).
-          final p = widget.controller.currentDragPlaceholder!;
-          _showPlaceholderAt(
-            _lastGlobalPosition!,
-            w: p.w,
-            h: p.h,
-          );
-        }
+    _lastScrollTick = Duration.zero;
+    (_scrollTicker ??= createTicker(_onScrollTick)).start();
+  }
+
+  void _onScrollTick(Duration elapsed) {
+    // Reason: a frame stall (debugger, backgrounded app) must not turn into
+    // one giant jump; 100 ms caps a step at 10 frames' worth of travel.
+    final dt = (elapsed - _lastScrollTick).inMicroseconds.clamp(0, 100000) / 1e6;
+    _lastScrollTick = elapsed;
+    if (!widget.scrollController.hasClients || dt == 0) return;
+    // Reason: mouse-wheel semantics. Under a NestedScrollView the grid's
+    // position is the coordinator's inner one, and a jumpTo there moves the
+    // whole coordinator: the header snapped shut in one frame. pointerScroll
+    // lets the coordinator consume the delta in the header first, step by
+    // step; on a plain position it is a clamped jump.
+    widget.scrollController.position.pointerScroll(_scrollSpeed * dt);
+    if (_lastGlobalPosition != null) {
+      if (_activeItemId != null) {
+        _performUpdate(_lastGlobalPosition!);
+      } else if (_foreignDragItem != null) {
+        // Cross-grid hover: re-anchor with the dragged item's size, not the
+        // DragTarget placeholder size.
+        _showPlaceholderAt(
+          _lastGlobalPosition!,
+          w: _foreignDragItem!.w,
+          h: _foreignDragItem!.h,
+          grabFraction: _nestedCoordinator?.sessionGrabFraction ?? Offset.zero,
+        );
+      } else if (widget.controller.currentDragPlaceholder != null) {
+        // External DragTarget hover only; never resurrect a placeholder
+        // from a stale position (e.g. when scrolled by delegation).
+        final p = widget.controller.currentDragPlaceholder!;
+        _showPlaceholderAt(
+          _lastGlobalPosition!,
+          w: p.w,
+          h: p.h,
+        );
       }
-    });
+    }
   }
 
   void _stopScrollTimer() {
@@ -2690,8 +2811,7 @@ class _DashboardOverlayState<T extends Object> extends State<DashboardOverlay<T>
     _delegatedAutoScroll?.stopAutoScroll();
     _delegatedAutoScroll = null;
 
-    _scrollTimer?.cancel();
-    _scrollTimer = null;
+    _scrollTicker?.stop();
     _scrollSpeed = 0.0;
   }
 
@@ -3323,4 +3443,49 @@ class _HoverGridIndex {
 
   /// Packed cell key -> covering item.
   final Map<int, LayoutItem> buckets;
+}
+
+/// A [LongPressGestureRecognizer] whose hold duration can change without
+/// replacing the recognizer.
+///
+/// Reason: the stock recognizer fixes its deadline at construction, and
+/// `RawGestureDetector` keeps a recognizer per type for its whole life, so a
+/// new `longPressDelay` would otherwise be ignored. Keying the detector on the
+/// delay instead would remount the grid's scroll view. The deadline is read
+/// when a pointer is added, so a change applies to the next press.
+class _DelayedLongPressGestureRecognizer extends LongPressGestureRecognizer {
+  _DelayedLongPressGestureRecognizer({super.debugOwner});
+
+  /// The hold duration applied to the next press.
+  Duration delay = kLongPressTimeout;
+
+  /// Decides, at pointer-down, whether this recognizer competes at all. A
+  /// refused pointer never enters the arena, so it cannot win by deadline
+  /// over a long press the application put on the tile.
+  bool Function(Offset globalPosition)? accepts;
+
+  @override
+  Duration? get deadline => delay;
+
+  @override
+  bool isPointerAllowed(PointerDownEvent event) =>
+      super.isPointerAllowed(event) && (accepts?.call(event.position) ?? true);
+}
+
+/// Shows `emptyBuilder` while the grid has no item and is not being edited.
+///
+/// A widget of its own so the layout watch rebuilds this leaf only, never the
+/// overlay. In edit mode the empty grid stays a drop and tap surface.
+class _EmptyGridLayer extends StatelessWidget {
+  const _EmptyGridLayer({required this.controller, required this.builder});
+
+  final DashboardController controller;
+  final WidgetBuilder builder;
+
+  @override
+  Widget build(BuildContext context) {
+    final isEmpty = controller.layout.watch(context).isEmpty;
+    final isEditing = controller.isEditing.watch(context);
+    return isEmpty && !isEditing ? builder(context) : const SizedBox.shrink();
+  }
 }

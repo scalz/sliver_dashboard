@@ -103,6 +103,14 @@ abstract class DashboardController {
   /// vertically, columns when scrolling horizontally). Null = unbounded.
   WritableBeacon<int?> get maxRows;
 
+  /// Whether [maxRows] is a hard ceiling for collision pushes too (a fixed
+  /// board). When true, a drag, a resize or an external / cross-grid hover
+  /// whose push cascade would send any item past [maxRows] is refused for
+  /// that position: the layout stays on the last accepted one. Never makes
+  /// a layout that already exceeds the cap worse, and never moves an item
+  /// out of such a layout. Off by default (pushes are not truncated).
+  WritableBeacon<bool> get strictMaxRows;
+
   /// A reactive property to control collision behavior.
   /// If `true` (default), items will push each other on drag/resize.
   /// If `false`, items will be allowed to overlap.
@@ -187,6 +195,18 @@ abstract class DashboardController {
 
   // --- PUBLIC METHODS ---
 
+  /// Whether [candidate] fits the current layout exactly as given, without
+  /// pushing anything: inside the grid's columns (rows on a horizontal grid),
+  /// under [maxRows], within its own min/max constraints, on a size the
+  /// [policy] allows ([DashboardPolicy.isSizeAllowed]), and overlapping no
+  /// other item, static ones included.
+  ///
+  /// The layout's item sharing the candidate's id is never an obstacle: to
+  /// test a move or a resize, pass the item's updated copy. To test a new
+  /// item, give it explicit coordinates (not `-1`). Pure query: reads the
+  /// state without subscribing to it.
+  bool canPlace(LayoutItem candidate);
+
   /// Adds multiple items to the dashboard.
   ///
   /// If an item has x = -1 or y = -1, it will be automatically placed
@@ -205,6 +225,25 @@ abstract class DashboardController {
   /// The new item is added, and the layout is re-compacted to find a suitable
   /// position for it.
   void addItem(
+    LayoutItem newItem, {
+    engine.CompactType? overrideCompactType,
+    AutoPlacementStrategy strategy = AutoPlacementStrategy.appendBottom,
+  });
+
+  /// Adds [items] only if ALL of them fit: placed exactly as [addItems]
+  /// would (auto-placement, compaction), the result must stay within
+  /// [maxRows] (or, when the layout already exceeds it, not grow further).
+  /// Returns false and changes nothing otherwise: no [onLayoutChanged], no
+  /// history entry. Without [maxRows], equivalent to [addItems] returning
+  /// true.
+  bool tryAddItems(
+    List<LayoutItem> items, {
+    engine.CompactType? overrideCompactType,
+    AutoPlacementStrategy strategy = AutoPlacementStrategy.appendBottom,
+  });
+
+  /// Single-item [tryAddItems].
+  bool tryAddItem(
     LayoutItem newItem, {
     engine.CompactType? overrideCompactType,
     AutoPlacementStrategy strategy = AutoPlacementStrategy.appendBottom,
@@ -279,6 +318,9 @@ abstract class DashboardController {
   /// the cap when the bounded area is full, never losing items). Collision
   /// pushes are not truncated.
   void setMaxRows(int? value);
+
+  /// Sets [strictMaxRows].
+  void setStrictMaxRows(bool value);
 
   /// Sets the collision behavior for the dashboard.
   void setPreventCollision(bool prevent);
@@ -356,6 +398,12 @@ abstract class DashboardController {
   /// require a modifier key and restyle the rectangle.
   LassoStyle get lassoStyle;
   set lassoStyle(LassoStyle value);
+
+  /// Edge auto-scroll during a drag. Defaults to [AutoScrollConfig.byDefault];
+  /// assign [AutoScrollConfig.off] to disable it. Read on every pointer
+  /// event, so a change applies to the next one.
+  AutoScrollConfig get autoScroll;
+  set autoScroll(AutoScrollConfig value);
 
   /// Sets whether moving items can dynamically shrink their neighbors to avoid pushes.
   void setAllowAutoShrink({required bool allow});

@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:sliver_dashboard/sliver_dashboard.dart';
+import 'package:sliver_dashboard/src/controller/dashboard_controller_impl.dart';
 import 'package:sliver_dashboard/src/controller/utility.dart';
 import 'package:sliver_dashboard/src/view/dashboard_feedback_widget.dart'
     show DashboardFeedbackItem;
@@ -1120,6 +1121,83 @@ void main() {
       ),
     );
   }
+
+  // `findChildIndexCallback` remaps a keyed child to its new geometric index
+  // in `performRebuild`, BEFORE layout: a tile that jumps far in the sorted
+  // view leaves the child list non-contiguous (e.g. {0..4, 49}). Garbage
+  // must count real children; an index-span count over-counts and
+  // `collectGarbage` asserts (debug) / null-checks `lastChild!` (release).
+  group('SliverDashboard non-contiguous child list', () {
+    String id(int i) => 'i${i.toString().padLeft(2, '0')}';
+
+    Future<(DashboardControllerImpl, ScrollController)> pumpColumn(
+      WidgetTester tester,
+    ) async {
+      final controller = DashboardController(
+        initialSlotCount: 1,
+        initialLayout: List.generate(
+          50,
+          (i) => LayoutItem(id: id(i), x: 0, y: i, w: 1, h: 1),
+        ),
+      ) as DashboardControllerImpl;
+      addTearDown(controller.dispose);
+      final scrollController = ScrollController();
+      addTearDown(scrollController.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: CustomScrollView(
+              controller: scrollController,
+              slivers: [
+                SliverDashboard(
+                  controller: controller,
+                  slotAspectRatio: 5,
+                  itemBuilder: (context, item) => Text(item.id),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+      return (controller, scrollController);
+    }
+
+    List<LayoutItem> moved(String movedId, int newY) => [
+          for (var i = 0; i < 50; i++)
+            LayoutItem(id: id(i), x: 0, y: id(i) == movedId ? newY : i, w: 1, h: 1),
+        ];
+
+    testWidgets('a visible tile jumping past the window is collected (trailing gap)',
+        (tester) async {
+      final (controller, _) = await pumpColumn(tester);
+      expect(find.text('i00'), findsOneWidget);
+
+      controller.layout.value = moved('i00', 100);
+      await tester.pump();
+
+      expect(tester.takeException(), isNull);
+      expect(find.text('i00', skipOffstage: false), findsNothing);
+      expect(find.text('i01'), findsOneWidget);
+    });
+
+    testWidgets('a visible tile jumping before the window is collected (leading gap)',
+        (tester) async {
+      final (controller, scrollController) = await pumpColumn(tester);
+      scrollController.jumpTo(scrollController.position.maxScrollExtent);
+      await tester.pump();
+      expect(find.text('i49'), findsOneWidget);
+      expect(find.text('i00', skipOffstage: false), findsNothing);
+
+      // Sorted view becomes i00, i49, i01..i48: child list {1, 45..49}.
+      controller.layout.value = moved('i49', 0);
+      await tester.pump();
+
+      expect(tester.takeException(), isNull);
+      expect(find.text('i49', skipOffstage: false), findsNothing);
+      expect(find.text('i48'), findsOneWidget);
+    });
+  });
 
   group('SliverDashboard Integration Tests', () {
     late DashboardController controller;

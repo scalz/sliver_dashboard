@@ -11,7 +11,7 @@
 
 **A high-performance and scalable dashboard engine for Flutter, built on Slivers.**
 
-`sliver_dashboard` is a sliver-native layout engine for building interactive, user-configurable dashboards with drag & drop, resizing, nested grids, and viewport virtualization. Designed as an engine rather than a monolithic widget, it composes naturally with Flutter's scrolling system while remaining responsive with hundreds or thousands of tiles.
+`sliver_dashboard` is a sliver-native layout engine for building interactive, user-configurable dashboards with drag & drop, resizing, nested grids, and viewport virtualization. Designed as an engine rather than a monolithic widget, it composes naturally with Flutter's scrolling system while remaining responsive with hundreds or thousands of tiles. Use it as a regular widget (`Dashboard` builds the scroll view for you), or drop `SliverDashboard` into your own `CustomScrollView` when you need to compose with app bars and lists.
 
 Ideal for analytics platforms, IoT control panels, project management tools, no-code builders, and any application requiring complex, interactive layouts across mobile, desktop, and web.
 
@@ -19,19 +19,24 @@ Ideal for analytics platforms, IoT control panels, project management tools, no-
   <img src="https://raw.githubusercontent.com/scalz/sliver_dashboard/main/img/single_grid.gif" alt="Sliver Dashboard Demo" width="500"/>
 </p>
 
+## Why sliver-native matters
+
+- **A real sliver.** A `RenderSliverMultiBoxAdaptor` sized to its content. Virtualization comes from the sliver protocol itself: the viewport's constraints decide which tiles exist, with no scroll listener. With 1,000 tiles, only those near the screen are built.
+- **Composes like any sliver.** A `SliverAppBar` collapses over the grid, a `SliverList` starts exactly where the grid's content ends, and tiles can be dragged between sibling grids sharing one `CustomScrollView`.
+- **Fast at scale.** A drag step on 1,000 tiles takes about 1 ms on the web, and tile content is not rebuilt during a drag or a resize. Layout invariants are fuzz-tested ([benchmarks](BENCHMARK.md)).
+
 ## Features
 
-- **High Performance:** Built on Flutter's `Sliver` protocol with **smart caching**. It only renders visible items and prevents unnecessary rebuilds of children during drag/resize operations.
-- **Sliver Composition:** Integrate the dashboard's grid seamlessly with other slivers like `SliverAppBar` and `SliverList` within a single `CustomScrollView`.
 - **Nested Grids:** Embed full dashboards inside grid items (`NestedDashboard`) at any depth, and **drag items between grids** (parent ↔ child ↔ siblings) with a live push-preview placeholder. Supports auto-sizing hosts, dynamic sub-grid creation, and one-call recursive save/load.
 - **Cross-Sliver Drag & Drop:** drag tiles between independent sibling `SliverDashboard`s sharing one `CustomScrollView`, with **dimension projection policies** (`preserveLogicalSize`, `preserveVisualProportion`, or a custom callback) translating item sizes between grids of different column counts.
 - **Fully Customizable:** Control the number of columns, aspect ratio, spacing, grid and handles style. Items can be draggable, resizable, and static. Support for dedicated **Drag Handles** (`DashboardDragStartListener`) and configurable mobile drag start gestures (long-press, tap, or handle-only).
 - **Declarative Interaction Policies (`DashboardPolicy`):** Inject granular business rules (e.g., "charts cannot push system KPIs", "block dragging on Row 0") on-the-fly without having to write custom compaction delegates.
 - **Segmented Grids (Section Barriers):** Divide your grid into organized visual sections using static section barriers with custom header builders while maintaining strict collision boundaries.
+- **Fixed Boards:** a hard row ceiling, a whitelist of tile sizes, and `canPlace` / `tryAddItem` — for wall panels and kiosks.
 - **Horizontal & Vertical Layouts:** Supports both vertical (default) and horizontal scrolling directions.
 - **Smart Collision Detection:** Choose your desired behavior:
   - **Push:** Items push each other out of the way to avoid overlap.
-  - **Push or Shrink:** Items can be shrinked or pushed when resizing a neighbour item.
+  - **Push or Shrink:** Items can be shrunk or pushed when resizing a neighbour item.
   - **Auto-Shrink on Drag:** Move large widgets over smaller items, and the engine automatically contracts neighboring elements to clear room.
 - **Compaction:** Choose your desired behavior:
   - **None:** Free positioning. Items are not compacted.
@@ -39,10 +44,12 @@ Ideal for analytics platforms, IoT control panels, project management tools, no-
   - **Horizontal:** Items are compacted to left.
   - **Custom:** Implement `CompactorDelegate` to define custom rules (e.g., specific gravity, fixed zones).
 - **Built-in Trash:** Easy-to-implement drag-to-delete functionality. Or implement your own using available callbacks.
-- **Custom Feedback:** Customize the appearance of items while they are being dragged. Use onInteractionStart callback for haptic feedback...
+- **Tile Actions:** per-tile edit buttons (delete, duplicate), custom resize handles, buttons inside tiles that never start a drag, and an empty-grid placeholder.
+- **Custom Feedback:** Customize the appearance of items while they are being dragged. Use `onInteractionStart` callback for haptic feedback.
 - **Reflow Animations:** pushed/compacted tiles slide to their new slot.
 - **Fluid Resize:** opt-in pixel-tracking resize. Tiles resize fluidly in raw pixels and smoothly animate into their snapped slot on release.
 - **Drag From Outside:** Drop new items from external sources directly into the grid with auto-scrolling support.
+- **Edge Auto-Scroll:** smooth at any refresh rate, with a configurable zone and speed; works under a `NestedScrollView`.
 - **Guidance:** Optional contextual tooltips/guidance messages.
 - **Responsive Layouts:** Automatically adapt the number of columns (`slotCount`) based on the screen width using the built-in `breakpoints` property.
 - **Accessibility:** Full keyboard navigation support (Tab, Arrows, Space, Enter, customizable keys) and Screen Reader announcements (TalkBack/VoiceOver).
@@ -79,7 +86,9 @@ The package is WebAssembly (WASM) compatible. Building your production applicati
   - [Dragging From Outside](#dragging-from-outside)
   - [Persisting Layout Changes](#persisting-layout-changes)
   - [Drag to Delete (Trash Bin)](#drag-to-delete-trash-bin)
+  - [Tile Actions, Buttons in Tiles & Empty Grids](#tile-actions-buttons-in-tiles--empty-grids)
   - [Custom Drag Handles & Mobile Gestures](#custom-drag-handles--mobile-gestures)
+  - [Edge Auto-Scroll](#edge-auto-scroll)
   - [Custom Drag Feedback](#custom-drag-feedback)
   - [Haptic Feedback](#haptic-feedback)
   - [Multi Selection and Cluster Drag](#multi-selection-and-cluster-drag)
@@ -93,6 +102,7 @@ The package is WebAssembly (WASM) compatible. Building your production applicati
   - [Custom Section Headers](#custom-section-headers)
   - [Scroll direction](#scroll-direction)
   - [Allowing free positioning](#allowing-free-positioning)
+  - [Fixed Boards (row ceiling, allowed sizes)](#fixed-boards-row-ceiling-allowed-sizes)
   - [Auto Layout bulk add](#auto-layout-bulk-add)
   - [Responsive Layouts](#responsive-layouts)
   - [Layout Optimizer](#layout-optimizer)
@@ -145,7 +155,7 @@ final controller = DashboardController(
 
 ### 3. Build the Dashboard Widget
 
-For basic usage, use the `Dashboard` widget. It handles the scroll view creation for you.
+For basic usage, use the `Dashboard` widget. It handles the scroll view creation for you, no sliver knowledge required.
 
 ```dart
 import 'package:flutter/material.dart';
@@ -618,6 +628,86 @@ onItemsDeleted: (items) async {
 },
 ```
 
+### Tile Actions, Buttons in Tiles & Empty Grids
+
+**Edit-mode overlay.** `editOverlayBuilder` lays a widget over every tile while editing (a close
+button, a menu…), above the content and the resize handles. Its `DashboardTileActions` go through the
+grid's own pipeline, exactly like the keyboard shortcuts: `delete()` asks `onWillDelete`, removes the
+tile as one undo step and calls `onItemsDeleted`; `duplicate()` uses `onCloneRequested`. Both act on
+that tile only, never on the rest of the selection.
+
+```dart
+Dashboard(
+  controller: controller,
+  onWillDelete: (items) => confirmDelete(context, items),
+  editOverlayBuilder: (context, item, actions) => Align(
+    alignment: Alignment.topRight,
+    child: IconButton(icon: const Icon(Icons.close), onPressed: actions.delete),
+  ),
+  itemBuilder: (context, item) => MyCard(item),
+)
+```
+
+**Buttons inside tiles.** A press on a tile starts a drag or a resize at once on desktop, so a button
+placed in a tile used to fight the grid. Wrap it in `DashboardGestureExclusion`: a press on it starts
+no drag, resize, selection change or lasso, and the rest of the tile still drags. The edit overlay is
+wrapped for you. Only the area where the child is actually hit is excluded, so avoid an opaque
+full-tile background in there.
+
+```dart
+itemBuilder: (context, item) => Column(
+  children: [
+    Text(item.id),
+    DashboardGestureExclusion(
+      child: TextButton(onPressed: () => openSettings(item), child: const Text('Settings')),
+    ),
+  ],
+),
+```
+
+**Custom resize handles.** `resizeHandleBuilder` draws each active handle in place of the default
+corners and bars (round grips, icons…). It only changes the look: the box it paints in is never larger
+than the handle's press zone, so the resize cursor still matches where a press resizes, and which handles
+exist stays with `resizeZoneResolver`.
+
+```dart
+Dashboard(
+  controller: controller,
+  resizeHandleBuilder: (context, item, handle, size) => DecoratedBox(
+    decoration: BoxDecoration(color: Colors.blue, shape: BoxShape.circle),
+  ),
+  itemBuilder: (context, item) => MyCard(item),
+)
+```
+
+The builder is called once per handle with its `ResizeHandle`, so each corner and edge can have its own
+look:
+
+```dart
+resizeHandleBuilder: (context, item, handle, size) => switch (handle) {
+  // A grip icon on the corner users reach for first.
+  ResizeHandle.bottomRight => Icon(Icons.open_in_full, size: size),
+  // Dots on the other corners.
+  ResizeHandle.topLeft || ResizeHandle.topRight || ResizeHandle.bottomLeft =>
+    const DecoratedBox(
+      decoration: BoxDecoration(color: Colors.blue, shape: BoxShape.circle),
+    ),
+  // Thin bars on the edges.
+  _ => const ColoredBox(color: Colors.blueGrey),
+},
+```
+
+**Empty grid.** `emptyBuilder` is shown over the grid while it has no tile and is not being edited; in
+edit mode the empty grid stays a drop and tap surface.
+
+```dart
+Dashboard(
+  controller: controller,
+  emptyBuilder: (context) => const Center(child: Text('Tap "Edit" to add your first widget')),
+  itemBuilder: (context, item) => MyCard(item),
+)
+```
+
 ### Drag to Delete (Trash Bin)
 
 The package handles the logic for detecting when an item is dropped over a specific area.
@@ -775,6 +865,43 @@ Dashboard(
 )
 ```
 *Note: Use `DashboardDelayedDragStartListener` if you want your custom handle to require a long-press to start dragging.*
+
+#### 3. Long-press delay
+`longPressDelay` sets how long a finger must be held on a tile to pick it up (with
+`DragStartGesture.longPress`), and on an empty slot to fire `onSlotLongPress`. It defaults to Flutter's
+`kLongPressTimeout` (500 ms); a finger that moves first scrolls the grid instead.
+
+```dart
+Dashboard(
+  controller: controller,
+  longPressDelay: const Duration(milliseconds: 350),
+  itemBuilder: (context, item) => MyCard(item),
+)
+```
+
+### Edge Auto-Scroll
+
+Dragging a tile, an external payload or a cross-grid item close to the start or end of the viewport
+scrolls the grid. The speed grows with the depth into the edge zone and is applied per frame (speed x
+frame time), so it is smooth at 60, 90 or 120 Hz. Tune or disable it on the controller:
+
+```dart
+controller.autoScroll = const AutoScrollConfig(
+  edgeExtent: 64, // depth of the hot zone at each edge, in logical pixels
+  maxSpeed: 1200, // logical pixels per second at the very edge
+);
+
+controller.autoScroll = AutoScrollConfig.off; // no edge auto-scroll
+```
+
+**How far it scrolls depends on compaction.** With `CompactType.vertical` (the default) or `horizontal`, a
+tile cannot be dropped past the end of the content (it would compact straight back), so the grid does
+not grow under the pointer and the auto-scroll stops at the end of the content. With
+`CompactType.none`, the grid grows under the dragged tile and the auto-scroll keeps going.
+
+A nested grid that cannot scroll delegates to its parent grid, which applies its own configuration.
+Under a `NestedScrollView` whose body grid uses the `PrimaryScrollController`, the auto-scroll
+collapses the header first, step by step, then scrolls the grid, as a mouse wheel would.
 
 ### Custom Drag Feedback
 
@@ -1196,6 +1323,58 @@ controller.setCompactionType(CompactType.vertical);
 > * **For automatic gap filling:** Use `CompactType.vertical` or `CompactType.horizontal` compaction for self-healing layouts.
 > * **For on-demand cleanup in free mode:** Call **`controller.optimizeLayout()`** to defragment the grid and compact empty gaps on demand,
     > or use **`controller.availableFreeAreas`** / **`controller.firstFreeArea`** to inspect open slots programmatically.
+
+### Fixed Boards (row ceiling, allowed sizes)
+
+A wall panel or a kiosk has a fixed screen: say 10 x 6 square slots, where only a few tile sizes
+make sense. Four opt-in pieces cover it; with the defaults nothing changes.
+
+```dart
+class PanelSizes extends DashboardPolicy {
+  const PanelSizes();
+
+  static const _sizes = {(1, 1), (2, 2), (4, 2)};
+
+  @override
+  bool isSizeAllowed(LayoutItem item, int w, int h) => _sizes.contains((w, h));
+}
+
+final controller = DashboardController(initialSlotCount: 10)
+  ..setCompactionType(CompactType.none) // a stored layout loads exactly as saved
+  ..setMaxRows(6)                       // no tile below row 5
+  ..setStrictMaxRows(true)              // ...not even a pushed one
+  ..policy = const PanelSizes();
+```
+
+- **`maxRows`** caps drag targets, resizes and auto-placement on the main axis.
+- **`strictMaxRows`** makes it a hard ceiling for collision pushes too: a drag, a resize or an
+external / cross-grid hover whose push cascade would send a tile past the ceiling is refused for
+that cell, and the last accepted layout stays. A layout that already exceeds the ceiling may move
+but never grow.
+- **`DashboardPolicy.isSizeAllowed(item, w, h)`** restricts tile sizes. A resize snaps to the
+allowed size nearest to the pointer and skips refused ones (the fluid ghost keeps following the
+pointer, then settles on the allowed size); auto-shrink never shrinks a neighbour to a refused size;
+an item dragged in from another grid takes the nearest size that grid allows. An item's own size
+is always accepted, so a tile stored with a size you no longer allow can still be moved.
+- **`canPlace(item)`** tells whether an item fits exactly where it is (columns, ceiling, own
+min/max, allowed size, no overlap) without pushing anything. **`tryAddItem` / `tryAddItems`**
+add only if the result stays under `maxRows` (all-or-nothing) and return `false` otherwise, with
+no layout change, no `onLayoutChanged` and no history entry. `addItem` keeps its overflow
+behaviour.
+
+Combine it with [`onSlotTap`](#empty-slot-interactions--business-metadata) to add a tile where the
+user taps:
+
+```dart
+Dashboard(
+  controller: controller,
+  onSlotTap: (x, y) {
+    final tile = LayoutItem(id: newId(), x: x, y: y, w: 2, h: 2);
+    if (!controller.tryAddItem(tile)) showSnackBar('No room here');
+  },
+  itemBuilder: (context, item) => PanelTile(item),
+)
+```
 
 ### Auto Layout bulk add
 
