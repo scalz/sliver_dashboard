@@ -27,6 +27,9 @@ mode).
 
 - Horizontal grids: `importLayout`, `addItems` and breakpoint changes bounded the wrong axis.
 - Under a `NestedScrollView`, auto-scroll no longer snaps the header shut in one frame.
+- **Release crash in `collectGarbage` (`Null check operator used on a null value`)**, present since
+2.8.0. When a visible tile moved far in the layout order (a removal, an import, a programmatic move),
+the sliver removed more off-screen children than it had.
 
 ## 2.10.0
 
