@@ -26,8 +26,7 @@ Ideal for analytics platforms, IoT control panels, project management tools, no-
 `CustomScrollView`.
 - **RenderObject-level virtualization.** The sliver's child manager creates tiles lazily and
 garbage-collects them as they leave the cache extent.
-- **A high-performance engine for complex interactive dashboards.** Indexed collision cascade and
-fuzz-tested invariants: a drag step on 1,000 tiles takes under 1 ms on the web
+- **Fast at scale**. A drag step on 1,000 tiles takes about 1 ms on the web, with fuzz-tested layout invariants (benchmarks).
 ([benchmarks](BENCHMARK.md)).
 
 ## Features
